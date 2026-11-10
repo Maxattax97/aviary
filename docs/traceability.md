@@ -140,3 +140,19 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-053 | V1 | As an agent operating across a network, I want to recover relevant pending communications after losing connectivity | SYS-033 |
 | US-054 | Future | As a human operator, I want communication between machines to be restricted to authorized participants | SYS-034, SYS-035 |
 | US-055 | Future | Multiple users share a deployment with separated communications. | SYS-037 |
+
+## Proposed workflow amendment traceability (review required)
+
+These mappings are candidate scope, not implemented or approved acceptance. Existing SYS-005 and SYS-045 may need revision after the deferred-work and shared-queue choices are settled; their existing evidence still describes the current implementation.
+
+| Story | Candidate requirement / existing requirement | Planned verification | Proposed ticket |
+|---|---|---|---|
+| US-072 | SYS-058 | T-058 | P-01 |
+| US-073 | SYS-059–060 | T-059–060 | P-01 |
+| US-006, US-074 | SYS-005; candidate SYS-068 if retained | T-005, T-068 | P-02 |
+| US-056, US-075 | SYS-061; revision of SYS-045 | T-061, revised T-045 | P-03 |
+| US-076 | SYS-062–063 | T-062–063 | P-03 |
+| US-077 | SYS-064; SYS-048–049, SYS-052–053 | T-064; T-048–049, T-052–053 | P-04 |
+| US-078 | SYS-065; SYS-055–056 | T-065; T-055–056 | P-04 |
+| US-079 | SYS-066; SYS-054 | T-066, T-054 | P-05 |
+| US-056, US-069 | SYS-067; SYS-057 | T-067, T-057 | P-05 |

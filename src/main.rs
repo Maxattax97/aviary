@@ -1,3 +1,5 @@
+//! Aviary service, command-line client, and operator terminal interface.
+
 mod client;
 mod error;
 mod network;

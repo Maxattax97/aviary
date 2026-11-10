@@ -1,6 +1,6 @@
 # Agent attention and messaging system — user stories
 
-**Status:** Working baseline v0.2 (2026-11-09); amended after stakeholder review
+**Status:** Working baseline v0.2 with proposed 2026-11-10 operator-workflow amendments; the new queue and deferral semantics require stakeholder review before implementation.
 
 **Working name:** Undecided (candidates: Aviary, Coop, Flockbox, Chirrup)
 
@@ -18,7 +18,7 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **V2:** Desired near-term follow-up.
 - **Future:** Preserve as a design consideration; not a V1 commitment.
 
-**Counts:** 70 stories: 47 V1, 14 V2, 9 Future.
+**Counts:** 78 stories: 55 V1, 14 V2, 9 Future (including eight proposed V1 stories).
 
 ## User stories
 
@@ -29,7 +29,10 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-003 [V1]** As a human operator, I want requests ordered by importance so that I can work on the most consequential matters first.
 - **US-004 [V1]** As a human operator, I want to see a concise explanation of each request so that I can make a decision without reading an agent's entire conversation.
 - **US-005 [V1]** As a human operator, I want to inspect supporting context on demand so that I can investigate decisions that require more information.
-- **US-006 [V1]** As a human operator, I want to defer a request without losing it so that I can focus on a more important activity.
+- **US-006 [V1]** As a human operator, I want to put a request aside without losing it so that I can focus on more important work. **Open:** whether to remove deferral or retain it with requester notification and lower queue placement; exact placement is undecided.
+- **US-072 [V1, proposed]** As an agent, I want to list the operator decision queue, including through bounded pages, so that I can understand the work awaiting attention.
+- **US-073 [V1, proposed]** As an agent, I want to swap the positions of two decisions at the same importance so that I can refine their order without changing their importance.
+- **US-074 [V1, proposed]** As a requesting agent, I want to learn when my decision has been deferred, if deferral remains available, so that I can adjust my work without mistaking deferral for an answer.
 - **US-062 [V1]** As a human operator, I want a concise overview of pending decisions, messages and completions so that I can understand where attention may be needed without visiting every view.
 - **US-063 [V1]** As a human operator, I want to find communications by recognizable text, agent or work context so that I can return to an item without knowing its numeric ID.
 - **US-070 [V2]** As a human operator, I want to distinguish new or changed items from those I have already seen so that I can find what needs another look after returning.
@@ -58,7 +61,9 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-023 [V1]** As an agent, I want to retrieve an outstanding response later so that I can continue after an interruption or restart.
 - **US-024 [V1]** As a human operator, I want to receive completion notifications so that I know when an agent has finished meaningful work.
 - **US-025 [V1]** As a human operator, I want completion notifications to identify the relevant work and its results so that I can inspect the outcome if desired.
-- **US-056 [V1]** As a human operator, I want to send an instruction by entering only its text, with its identity and the shared destination selected automatically, so that I can quickly direct work to the team or a First Mate.
+- **US-056 [V1]** As a human operator, I want to send an instruction by entering only its text, with its identity and the shared work-queue destination selected automatically and without a separate review page, so that an available agent can take up the work.
+- **US-075 [V1, proposed]** As a human operator, I want instructions sent to `all` to wait as shared work even when no agent is currently listening, so that an agent can take them up later.
+- **US-076 [V1, proposed]** As a participating agent, I want to discover and take up outstanding shared instructions and remove resolved work from the active queue so that agents can coordinate without treating that queue as permanent chat history.
 - **US-057 [V2]** As a human operator, I want to adjust the generated identity, channel or recipient when composing an instruction so that I can handle exceptional routing needs.
 - **US-026 [V2]** As an agent, I want to exchange requests and responses directly with other agents so that coordination does not always require a human intermediary.
 
@@ -68,8 +73,11 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-029 [V1]** As a human operator, I want consistent keyboard shortcuts for selection, confirmation, deferral, and navigation so that repeated actions become effortless.
 - **US-030 [V1]** As a human operator, I want the interface to update as new requests arrive so that I do not need to manually refresh it.
 - **US-031 [V1]** As a human operator, I want the interface to work inside an ordinary terminal or tmux pane so that I can integrate it with my existing workflow.
+- **US-077 [V1, proposed]** As a human operator, I want a vertically navigable item list and visually distinct, vertically arranged details so that I can scan work and read its content without parsing separator-heavy text.
+- **US-078 [V1, proposed]** As a human operator, I want to navigate the inbox and long content continuously while the interface loads data in the background so that pagination is not an extra navigation task.
+- **US-079 [V1, proposed]** As a human operator, I want a brief, understandable success notification that disappears on its own so that confirmation does not clutter the interface; errors and uncertain outcomes must remain understandable and actionable.
 - **US-058 [V1]** As a human operator, I want keyboard shortcuts available on demand, with at most concise contextual hints in the normal interface, so that I can discover controls without a permanent wall of keybindings crowding my work.
-- **US-060 [V1]** As a human operator, I want Aviary to use colors from a standardized color system that respects my terminal's scheme, so that the interface fits my environment instead of imposing its own palette.
+- **US-060 [V1]** As a human operator, I want Aviary to use color throughout its interface from a standardized color system that respects my terminal's scheme, so that the interface guides my attention and fits my environment instead of imposing its own palette.
 - **US-061 [V1]** As a human operator, I want the interface to remain usable on terminals without 256-color support, so that limited terminal environments do not prevent me from operating Aviary.
 - **US-064 [V1]** As a human operator, I want a useful preview of the selected item while browsing a list so that I can decide whether to inspect its full details.
 - **US-065 [V1]** As a human operator, I want to identify my current view, selection and relevant next action so that I know what an action will affect.
@@ -127,7 +135,7 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - The UI favors keyboard-first, low-friction navigation; Vim-like bindings are a suggested default rather than a hard architectural constraint.
 - V1 is a single-user service that listens on localhost by default, with an explicit option to listen on a network interface for a trusted local cluster. V1 has no application authentication. Future network authorization and multi-user deployments require security and isolation, without assuming a traditional username/password system.
 - Communication uses topics or channels to support one-to-one, one-to-many, many-to-many, and many-to-one exchange. Individual and group targeting remain required.
-- The normal instruction destination is the `all` channel, addressed to its group; a First Mate may monitor it, but this is a deployment choice, not a mandatory hierarchy. The operator enters instruction text while the system supplies the identity and routing defaults. Per-message adjustments are V2.
+- The proposed normal instruction destination is `all` as a shared work queue, not group fan-out: instructions wait without a currently listening agent and leave the active queue when resolved. Claiming, recovery and retention semantics require review; a First Mate is not mandatory. The operator enters instruction text while the system supplies identity and routing defaults. Per-message adjustments are V2. Existing direct and group messaging remain distinct.
 - Human-facing interaction should not evolve into a general-purpose ongoing chat client. Message correlation and historical tracing are still required.
 - Project, activity, and request relationships should be represented without assuming a strict one-to-many tree or building a project-management system.
 - AI-driven scheduling, repeated resurfacing, and elaborate attention policies are V2 explorations rather than core protocol requirements.
@@ -155,3 +163,12 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - NASA Systems Engineering Handbook, technical requirements: https://www.nasa.gov/reference/4-2-technical-requirements-definition/
 - NASA Systems Engineering Handbook, requirements management and traceability: https://www.nasa.gov/reference/6-2-requirements-management/
 - ISO/IEC/IEEE 29148:2018 (active standard as of 2026-11-09): https://committee.iso.org/standard/72089.html
+
+## Proposed workflow questions (2026-11-10)
+
+These amendments supersede neither the existing acceptance baseline nor current behavior until reviewed. The operator requested position swaps within an importance level, continuous rather than UI-visible pagination, structured vertical content, visual framing and color, a transient success notification, and `all` as an active shared work queue. The operator prefers no separate instruction review page; retain an explicit send action and visible destination unless the confirmation requirement is separately changed.
+
+- **Work distribution:** Is each instruction claimed by one agent or intended for all agents? Define claim ownership, concurrent claim arbitration, retry and failure/recovery, resolution and whether resolved payloads remain in any separate history. The current group fan-out and recipient snapshots do not implement this proposed behavior.
+- **Deferral:** Remove it, or retain it while notifying the requester and moving the item lower? Its exact placement, repeated deferral, restoration, agent visibility and behavior after answer remain open. Do not silently equate deferral with an answer.
+- **Ordering:** Decide what happens if priorities or queue contents change between listing and swapping; preserve explicit operator importance overrides. Define how a swap is validated and persisted, and how stale callers reconcile without accidentally moving a different item.
+- **Continuous interface:** Background pagination remains allowed and necessary for bounded resource use. Define behavior for loading failures, partial data and concurrent insertions/removals without claiming a complete snapshot. Verify legibility and non-color cues across supported panes.

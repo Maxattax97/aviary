@@ -1,3 +1,5 @@
+//! Integration tests for Aviary's service and communication workflows.
+
 use serde_json::{json, Value};
 use std::{
     error::Error,

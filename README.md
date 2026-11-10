@@ -23,6 +23,15 @@ cargo build --locked
 
 Run `aviary --help` or `aviary <command> --help` for the command-line interface.
 
+To explore the interface with sample work, start a service and run this in another terminal:
+
+```sh
+python3 scripts/seed_demo.py
+./target/debug/aviary tui
+```
+
+The script adds five decisions, five operator messages and three completion notices to the service at `127.0.0.1:7432`. Pass a different `host:port` to seed another service. The sample records persist in that service's database, and no agents are actually waiting for replies. Each run adds a fresh set; use a disposable database if you do not want sample records in your regular one.
+
 The service defaults to `aviary.sqlite` and `127.0.0.1:7432`. To choose both the database and listener:
 
 ```sh

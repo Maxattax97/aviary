@@ -79,3 +79,15 @@ These are discovery or future implementation outlines, not V1 commitments. V2 an
 | L-16 | Design per-message overrides for the generated compose identity, channel and recipient, preserving safe retries and clear routing. | US-057; no V1 requirement | V2; V1-09 |
 | L-17 | Define seen/new/changed semantics, persistence and operator controls without confusing arrivals with unread state. | US-070; no V1 requirement | V2; V1-24 |
 | L-18 | Design preferred-editor integration for substantial text, including failure and unsent-draft handling. | US-071; no V1 requirement | V2; V1-09, V1-30 |
+
+## Proposed workflow follow-up (not authorized for implementation)
+
+These planning tickets depend on stakeholder review of the proposed stories and requirements, especially the incompatible `all` semantics and unresolved deferral and work-claim decisions. Existing ticket results remain evidence for existing behavior, not these targets.
+
+| Ticket | Proposed scope and acceptance | Trace | State / dependencies |
+|---|---|---|---|
+| P-01 | Specify and implement bounded agent queue listing and atomic, stale-safe same-importance swaps; preserve priority overrides, records, retries and restart ordering. | US-072–073; SYS-058–060; T-058–060 | Proposed; settle ordering authority, concurrency contract and pagination before implementation. |
+| P-02 | Decide whether to remove deferral or retain it with agent-visible state and lower placement; design migration of existing deferred records and verify pending versus answered semantics. | US-006, US-074; SYS-005, candidate SYS-068; T-005/T-068 | Blocked on stakeholder policy, placement and notification semantics; no code authorized. |
+| P-03 | Specify shared `all` queue lifecycle, no-listener submission, agent participation, resolution, recovery, retention and retry behavior; preserve existing direct/group communication and data. | US-056, US-075–076; SYS-061–063, revised SYS-045; T-061–063 | Proposed; settle claimant model, failure recovery, retention, coexistence and migration before implementation. |
+| P-04 | Design and build vertical, visually structured lists/details, continuous navigation and background fetch; include focus, bounded resources, narrow panes, loading/failure and terminal-scheme-aware color with non-color cues. | US-077–078; SYS-048–049, SYS-064–065; T-048–049, T-064–065 | Proposed; mockup and operator review before implementation; coordinate V1-22, V1-26 and V1-29. |
+| P-05 | Replace raw success results with transient human-readable feedback and eliminate the separate instruction review page while retaining explicit send, visible target and safe unknown-outcome retry. | US-056, US-066, US-069, US-079; SYS-054, SYS-057, SYS-066–067; T-054, T-057, T-066–067 | Proposed; coordinate with P-03 and existing action safety. |
