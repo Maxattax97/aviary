@@ -261,3 +261,5 @@ On local Linux x86-64, `python3 tests/default_listener.py` started `aviary serve
 ## Independent terminal refreshes (2026-11-10)
 
 `python3 tests/terminal_partial_refresh.py` inserted deliberately oversized legacy records into an isolated local test database. An unreadable notice page produced a warning while an ordinary decision remained visible; after that fixture was removed, an unreadable decision page produced a warning while the operator inbox remained usable. The normal terminal, reconnect, history, tmux and Rust regressions also passed. This checks two local page failures, not arbitrary network or database failures, cross-view snapshot consistency or representative operator use.
+
+The local tmux test additionally checks a failed notice refresh at 40×12: the compact warning, decision heading, question, selected recommendation and confirmation help are visible together, and Enter records the recommendation. It does not cover every combination of failures, text width or pane dimensions.

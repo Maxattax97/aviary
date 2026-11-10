@@ -130,6 +130,8 @@ The terminal retains its current view and unsent custom draft when polling fails
 
 Decision, notice and open-inbox refreshes are independent: a failed page is identified in the refresh warning while successful pages update normally. Failed views retain their prior contents until a successful read; those contents may be stale. Each read is a separate request and snapshot, so this does not provide a cross-view consistent snapshot or a latency guarantee.
 
+In panes narrower than 60 columns the warning names the affected views without the full error text; wider panes show the detailed errors. The compact decision heading and help reserve space for that warning. This is an initial layout for narrow panes, not a guarantee for all dimensions or content.
+
 While a custom answer is being edited, a refresh whose current page no longer contains its request retains the displayed request and draft and warns the operator. The request may have been answered or deferred elsewhere; submission remains subject to current service state. Leaving the editor permits the next refresh to reconcile the queue and discard the draft if the request is absent. Drafts are not persisted across interface exit.
 
 

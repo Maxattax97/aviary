@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Exercise a decision in an isolated tmux server and real Aviary service."""
 
+import json
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -150,6 +152,52 @@ def main() -> None:
                 "narrow recommended answer",
             )
             wait_for_screen("No active requests")
+            oversized = {
+                "identity": "tmux-bad-notice",
+                "agent": "agent",
+                "work": "work",
+                "result": "x" * 3_200_000,
+            }
+            with sqlite3.connect(
+                Path(service.directory.name) / "state.sqlite"
+            ) as connection:
+                connection.execute(
+                    "INSERT INTO completion_notices (identity, payload) VALUES (?, ?)",
+                    (oversized["identity"], json.dumps(oversized)),
+                )
+            warning_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-warning-decision",
+                        "agent": "agent",
+                        "question": "Proceed?",
+                        "options": ["No", "Yes"],
+                        "recommendation": 1,
+                        "reason": "Ready",
+                        "explanation": "Short explanation",
+                    },
+                }
+            )["id"]
+            screen = wait_for_screen("> 1. [rec] Yes")
+            assert "Refresh: notices" in screen, screen
+            assert "Active queue:" in screen and "Proceed?" in screen, screen
+            assert "> 1. [rec] Yes" in screen and "Enter confirms" in screen, screen
+            assert service.call({"op": "get", "id": warning_id})["answer"] is None
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            service.wait_for(
+                lambda: service.call({"op": "get", "id": warning_id})["answer"]
+                == {"type": "suggested", "index": 1, "value": "Yes"},
+                "decision with failed notice refresh",
+            )
+            with sqlite3.connect(
+                Path(service.directory.name) / "state.sqlite"
+            ) as connection:
+                connection.execute(
+                    "DELETE FROM completion_notices WHERE identity = ?",
+                    (oversized["identity"],),
+                )
+            wait_for_screen("Open completion notices: 0")
             notice_id = service.call(
                 {
                     "op": "submit_notice",
@@ -176,9 +224,12 @@ def main() -> None:
                 lambda: service.call({"op": "list_notices"})["notices"] == [],
                 "narrow notice dismissal",
             )
-            assert service.call({"op": "list_notices", "include_dismissed": True})[
-                "notices"
-            ][0]["id"] == notice_id
+            assert (
+                service.call({"op": "list_notices", "include_dismissed": True})[
+                    "notices"
+                ][0]["id"]
+                == notice_id
+            )
             tmux("send-keys", "-t", "aviary:", "q")
             wait_for_screen("No active requests")
             long_answer = "z" * 280 + " END-OPTION"

@@ -290,6 +290,7 @@ struct View {
     composer: Option<Composer>,
     status: Option<String>,
     poll_error: Option<String>,
+    poll_summary: Option<String>,
     busy: bool,
     history: Option<HistoryView>,
     history_lookup: Option<HistoryLookup>,
@@ -334,6 +335,7 @@ impl View {
             composer: None,
             status: None,
             poll_error: None,
+            poll_summary: None,
             busy: false,
             history: None,
             history_lookup: None,
@@ -1109,19 +1111,21 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let mut changed = false;
                 match requests {
                     Ok(page) => changed |= view.update_request_page(page),
-                    Err(error) => errors.push(format!("decisions: {error}")),
+                    Err(error) => errors.push(("decisions", error.to_string())),
                 }
                 match notices {
                     Ok(page) => changed |= view.update_notices(page),
-                    Err(error) => errors.push(format!("notices: {error}")),
+                    Err(error) => errors.push(("notices", error.to_string())),
                 }
                 if let Some(messages) = messages {
                     match messages {
                         Ok(page) => changed |= view.update_inbox(page),
-                        Err(error) => errors.push(format!("inbox: {error}")),
+                        Err(error) => errors.push(("inbox", error.to_string())),
                     }
                 }
-                let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; retrying", errors.join("; "))) };
+                let summary = if errors.is_empty() { None } else { Some(format!("Refresh: {}", errors.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", "))) };
+                let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; retrying", errors.iter().map(|(name, error)| format!("{name}: {error}")).collect::<Vec<_>>().join("; "))) };
+                if view.poll_summary != summary { view.poll_summary = summary; changed = true; }
                 if view.poll_error != error { view.poll_error = error; changed = true; }
                 if changed { display(&view)?; }
             }
@@ -1425,7 +1429,13 @@ fn display(view: &View) -> Result<()> {
         println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
     }
     if let Some(error) = &view.poll_error {
-        println!("{}\r", safe(error));
+        let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
+        let text = if width > 0 && width < 60 {
+            view.poll_summary.as_deref().unwrap_or(error)
+        } else {
+            error
+        };
+        println!("{}\r", safe(text));
     }
     if let Some(composer) = &view.composer {
         let labels = [
@@ -1605,10 +1615,15 @@ fn display(view: &View) -> Result<()> {
     } else {
         view.notices.len().to_string()
     };
-    println!(
-        "Open completion notices: {} (n to view); i inbox; m compose\r",
-        notice_count
-    );
+    let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
+    if width > 0 && width < 60 {
+        println!("Open completion notices: {} (n)\r", notice_count);
+    } else {
+        println!(
+            "Open completion notices: {} (n to view); i inbox; m compose\r",
+            notice_count
+        );
+    }
     if let Some(status) = &view.status {
         println!("{}\r", safe(status));
     }
@@ -1638,7 +1653,7 @@ fn display(view: &View) -> Result<()> {
             return Ok(());
         }
         println!(
-            "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r\n",
+            "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r",
             if view.deferred_view {
                 "Deferred"
             } else {
@@ -1713,7 +1728,9 @@ fn display(view: &View) -> Result<()> {
         } else {
             let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
             if width > 0 && width < 60 {
-                println!("\r\nj/k select; Enter confirms; c/o detail\r\nh/l requests; d defer; Tab; q quit");
+                println!(
+                    "j/k select; Enter confirms; c/o detail\r\nh/l requests; d defer; Tab; q quit"
+                );
             } else {
                 println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; H history; g lookup; Tab queues; q quits.");
             }
