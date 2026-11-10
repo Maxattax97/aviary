@@ -552,6 +552,17 @@ fn safe(text: &str) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
+// Reserve rows for headers and controls, and allow two terminal columns per
+// character so ordinary wide characters do not crowd the controls off screen.
+fn detail_page_size() -> usize {
+    let (width, height) = terminal::size().unwrap_or((80, 24));
+    let width = if width == 0 { 80 } else { width };
+    let height = if height == 0 { 24 } else { height };
+    (usize::from(width.saturating_sub(1)) / 2)
+        .max(1)
+        .saturating_mul(usize::from(height.saturating_sub(6)).max(1))
+        .clamp(1, 200)
+}
 fn detail_pages(request: &crate::protocol::DecisionRequest) -> Vec<String> {
     let explanation = request.explanation.as_deref().unwrap_or("(none supplied)");
     let context = request.context.as_deref().unwrap_or("(none supplied)");
@@ -562,7 +573,7 @@ fn detail_pages(request: &crate::protocol::DecisionRequest) -> Vec<String> {
     );
     let chars: Vec<char> = content.chars().collect();
     chars
-        .chunks(200)
+        .chunks(detail_page_size())
         .map(|part| part.iter().collect())
         .collect()
 }
@@ -575,7 +586,7 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
     );
     let chars: Vec<char> = content.chars().collect();
     chars
-        .chunks(200)
+        .chunks(detail_page_size())
         .map(|part| part.iter().collect())
         .collect()
 }
@@ -613,7 +624,8 @@ fn display(view: &View) -> Result<()> {
     if view.notice_view {
         if let Some(notice) = view.notices.get(view.notice_current) {
             let pages = notice_pages(notice);
-            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", view.notice_current + 1, view.notices.len(), safe(&notice.notice.agent), view.notice_page + 1, pages.len(), pages.get(view.notice_page).map(String::as_str).unwrap_or(""));
+            let page = view.notice_page.min(pages.len().saturating_sub(1));
+            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", view.notice_current + 1, view.notices.len(), safe(&notice.notice.agent), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
         } else {
             println!("No open completion notices. n or q returns.");
         }
@@ -631,6 +643,7 @@ fn display(view: &View) -> Result<()> {
         let request = &pending.request;
         if let Some(page) = view.detail_page {
             let pages = detail_pages(request);
+            let page = page.min(pages.len().saturating_sub(1));
             println!(
                 "Request {} details, page {}/{}\r\n\r\n{}\r\n\r\nj/k pages; c, q or Esc returns.",
                 pending.id,

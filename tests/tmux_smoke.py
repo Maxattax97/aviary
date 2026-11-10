@@ -98,6 +98,31 @@ def main() -> None:
                 "tmux custom answer",
             )
             wait_for_screen("No active requests")
+            detail_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-narrow-context",
+                        "agent": "tmux-agent",
+                        "question": "Narrow detail",
+                        "options": ["Yes"],
+                        "explanation": "Why",
+                        "context": "x" * 280 + " END-CONTEXT",
+                    },
+                }
+            )["id"]
+            tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
+            wait_for_screen("Narrow detail")
+            tmux("send-keys", "-t", "aviary:", "c")
+            screen = wait_for_screen("page 1/")
+            assert "j/k pages" in screen, screen
+            for _ in range(4):
+                tmux("send-keys", "-t", "aviary:", "j")
+            screen = wait_for_screen("END-CONTEXT")
+            assert "j/k pages" in screen, screen
+            assert service.call({"op": "get", "id": detail_id})["answer"] is None
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("Narrow detail")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -108,9 +133,7 @@ def main() -> None:
                 raise AssertionError("tmux client did not exit")
         finally:
             tmux("kill-server", check=False)
-        print(
-            "tmux: recommendation and long-choice custom answer confirmed; client exited"
-        )
+        print("tmux: decisions and narrow context passed; client exited")
 
 
 if __name__ == "__main__":

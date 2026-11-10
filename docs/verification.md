@@ -102,3 +102,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local choice viewport evidence (2026-11-10)
 
 `python3 tests/tmux_smoke.py` passed with tmux 3.7c on local Linux. After a recommended decision, it submitted a request with twelve short options, resized the pane from 100×30 to 100×15, observed a redraw showing the first five choices, navigated to the visible thirteenth custom choice, and submitted and retrieved its exact text. `python3 tests/terminal_pty.py` also passed the existing local terminal workflows. This is not proof of usable layout for long wrapped content, smaller dimensions, other terminals, accessibility, or representative operators.
+
+
+## Local narrow detail evidence (2026-11-10)
+
+`python3 tests/tmux_smoke.py` passed on local Linux with tmux 3.7c. In a 40×12 pane, the test opened a request with long supporting context, observed page navigation instructions and reached the final marker without answering. The existing `python3 tests/terminal_pty.py` suite also passed. This checks one ASCII context and terminal size, not every Unicode width, long header, resize during reading, notice contents, or a complete supported terminal matrix.

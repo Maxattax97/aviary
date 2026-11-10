@@ -64,12 +64,12 @@ A decision submission may specify an integer importance from 0 through 5, defaul
 
 ## Decision explanation and context
 
-Decision requests may carry optional explanation and supporting-context strings. The queue shows the first 160 displayed characters of the explanation, with an ellipsis when truncated; c opens the complete explanation and context in 200-character pages. Control characters are rendered as spaces to prevent terminal injection; stored text is unchanged. The transport frame limit applies, and terminal-size-aware layout and queue pagination remain open.
+Decision requests may carry optional explanation and supporting-context strings. The queue shows the first 160 displayed characters of the explanation, with an ellipsis when truncated; c opens the complete explanation and context in pages of at most 200 characters sized conservatively for the current terminal dimensions. Control characters are rendered as spaces to prevent terminal injection; stored text is unchanged. The transport frame limit applies, and terminal-size-aware layout and queue pagination remain open.
 
 
 ## Completion notice lifecycle
 
-An explicit `submit_notice` represents a meaningful completion and requires agent, work and result text; routine messages do not become notices. It uses the deployment-scoped retry identity. Open notices are indicated by count in the decision interface and viewed separately with n. An operator dismisses a notice with d; it remains stored and can be listed with dismissed entries. There is no automatic deletion or resurfacing. Work, result and optional activity are displayed in 200-character pages with control characters rendered as spaces. Full queue pagination and broader operator validation remain open.
+An explicit `submit_notice` represents a meaningful completion and requires agent, work and result text; routine messages do not become notices. It uses the deployment-scoped retry identity. Open notices are indicated by count in the decision interface and viewed separately with n. An operator dismisses a notice with d; it remains stored and can be listed with dismissed entries. There is no automatic deletion or resurfacing. Work, result and optional activity are displayed in pages of at most 200 characters sized conservatively for the current terminal dimensions with control characters rendered as spaces. Full queue pagination and broader operator validation remain open.
 
 
 ## Operator instruction composition
@@ -100,3 +100,8 @@ On POSIX, SIGINT and SIGTERM request service shutdown. Once the signal is observ
 ## Answer choice viewport
 
 The decision view estimates the available choice rows from terminal height, keeps the selected choice in that window, and redraws on resize. The custom answer is included as the last choice. This is an initial row-count approximation: wrapped question, explanation, option and help text can still consume extra rows, and very small panes are not supported by an established minimum. Full terminal-size-aware layout remains open.
+
+
+## Detail page sizing
+
+Decision context and notice detail pages use the terminal dimensions to estimate available space, reserving rows for headings and navigation and allowing two columns per character, capped at 200 characters per page. Resize recalculates page boundaries; the current page index is clamped if needed, so a reader may need to navigate again after a resize. This approximation does not establish a supported minimum size or handle every possible Unicode width and wrapped header.
