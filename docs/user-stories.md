@@ -1,7 +1,9 @@
 # Agent attention and messaging system — user stories
 
-**Status:** Working baseline v0.2 (2026-11-09); amended after stakeholder review  
-**Working name:** Undecided (candidates: Aviary, Coop, Flockbox, Chirrup)  
+**Status:** Working baseline v0.2 (2026-11-09); amended after stakeholder review
+
+**Working name:** Undecided (candidates: Aviary, Coop, Flockbox, Chirrup)
+
 **Purpose:** Input for systems requirements engineering, verification planning, architecture, and implementation backlog.
 
 ## Product intent
@@ -16,7 +18,7 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **V2:** Desired near-term follow-up.
 - **Future:** Preserve as a design consideration; not a V1 commitment.
 
-**Counts:** 54 stories: 34 V1, 11 V2, 9 Future.
+**Counts:** 70 stories: 47 V1, 14 V2, 9 Future.
 
 ## User stories
 
@@ -28,6 +30,9 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-004 [V1]** As a human operator, I want to see a concise explanation of each request so that I can make a decision without reading an agent's entire conversation.
 - **US-005 [V1]** As a human operator, I want to inspect supporting context on demand so that I can investigate decisions that require more information.
 - **US-006 [V1]** As a human operator, I want to defer a request without losing it so that I can focus on a more important activity.
+- **US-062 [V1]** As a human operator, I want a concise overview of pending decisions, messages and completions so that I can understand where attention may be needed without visiting every view.
+- **US-063 [V1]** As a human operator, I want to find communications by recognizable text, agent or work context so that I can return to an item without knowing its numeric ID.
+- **US-070 [V2]** As a human operator, I want to distinguish new or changed items from those I have already seen so that I can find what needs another look after returning.
 - **US-007 [V2]** As a human operator, I want to identify my primary objective or "big rock" so that requests supporting it receive greater attention.
 - **US-008 [V2]** As a human operator, I want low-priority requests to resurface periodically so that neglected but worthwhile work is not forgotten.
 - **US-009 [V2]** As a human operator, I want related or duplicate requests consolidated so that multiple agents do not demand my attention for the same issue.
@@ -53,6 +58,8 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-023 [V1]** As an agent, I want to retrieve an outstanding response later so that I can continue after an interruption or restart.
 - **US-024 [V1]** As a human operator, I want to receive completion notifications so that I know when an agent has finished meaningful work.
 - **US-025 [V1]** As a human operator, I want completion notifications to identify the relevant work and its results so that I can inspect the outcome if desired.
+- **US-056 [V1]** As a human operator, I want to send an instruction by entering only its text, with its identity and the shared destination selected automatically, so that I can quickly direct work to the team or a First Mate.
+- **US-057 [V2]** As a human operator, I want to adjust the generated identity, channel or recipient when composing an instruction so that I can handle exceptional routing needs.
 - **US-026 [V2]** As an agent, I want to exchange requests and responses directly with other agents so that coordination does not always require a human intermediary.
 
 ### D. Terminal ergonomics
@@ -61,6 +68,15 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-029 [V1]** As a human operator, I want consistent keyboard shortcuts for selection, confirmation, deferral, and navigation so that repeated actions become effortless.
 - **US-030 [V1]** As a human operator, I want the interface to update as new requests arrive so that I do not need to manually refresh it.
 - **US-031 [V1]** As a human operator, I want the interface to work inside an ordinary terminal or tmux pane so that I can integrate it with my existing workflow.
+- **US-058 [V1]** As a human operator, I want keyboard shortcuts available on demand, with at most concise contextual hints in the normal interface, so that I can discover controls without a permanent wall of keybindings crowding my work.
+- **US-060 [V1]** As a human operator, I want Aviary to use colors from a standardized color system that respects my terminal's scheme, so that the interface fits my environment instead of imposing its own palette.
+- **US-061 [V1]** As a human operator, I want the interface to remain usable on terminals without 256-color support, so that limited terminal environments do not prevent me from operating Aviary.
+- **US-064 [V1]** As a human operator, I want a useful preview of the selected item while browsing a list so that I can decide whether to inspect its full details.
+- **US-065 [V1]** As a human operator, I want to identify my current view, selection and relevant next action so that I know what an action will affect.
+- **US-067 [V1]** As a human operator, I want long content to wrap and scroll by visible lines so that I can read continuously and keep my place when the pane is resized.
+- **US-068 [V1]** As a human operator, I want my selection, reading position and unsent drafts preserved when navigating or temporarily losing connection so that I can resume my work without reconstructing it.
+- **US-069 [V1]** As a human operator, I want consequential actions to make their target and effect clear before confirmation so that I can avoid acting on the wrong item.
+- **US-071 [V2]** As a human operator, I want to use my preferred editor for substantial text so that composing long instructions is not constrained by a small input field.
 - **US-032 [V2]** As a human operator, I want configurable keybindings and filtering so that I can optimize the interface around my preferences.
 - **US-033 [V2]** As a human operator, I want to move quickly between an overview and a detailed request so that I can preserve context while processing a queue.
 
@@ -73,6 +89,8 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **US-038 [V1]** As a human operator, I want to review the history of a request, including related messages, decisions, and outcomes, so that I can understand how the work progressed.
 - **US-039 [V1]** As a human operator, I want the daemon to operate independently of the TUI so that closing my terminal does not interrupt agents.
 - **US-040 [V1]** As a human operator, I want to start the system with minimal setup so that using it does not require manually orchestrating multiple background processes.
+- **US-059 [V1]** As a human operator, I want Aviary to start its local communication service when needed and keep it running after I close the interface, so that I can use Aviary without manually starting or supervising a separate daemon.
+- **US-066 [V1]** As a human operator, I want to distinguish pending, accepted, rejected and unconfirmed actions so that I know when to continue or investigate before retrying.
 - **US-041 [Future]** As a human operator, I want to identify sources of excessive or unhelpful messages so that I can address agents that are consuming unnecessary attention.
 
 ### F. Future distributed agent collaboration
@@ -109,7 +127,7 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - The UI favors keyboard-first, low-friction navigation; Vim-like bindings are a suggested default rather than a hard architectural constraint.
 - V1 is a single-user service that listens on localhost by default, with an explicit option to listen on a network interface for a trusted local cluster. V1 has no application authentication. Future network authorization and multi-user deployments require security and isolation, without assuming a traditional username/password system.
 - Communication uses topics or channels to support one-to-one, one-to-many, many-to-many, and many-to-one exchange. Individual and group targeting remain required.
-- Outbound instructions may be handled by a First Mate, but such routing is a user deployment choice, not a mandatory agent hierarchy.
+- The normal instruction destination is the `all` channel, addressed to its group; a First Mate may monitor it, but this is a deployment choice, not a mandatory hierarchy. The operator enters instruction text while the system supplies the identity and routing defaults. Per-message adjustments are V2.
 - Human-facing interaction should not evolve into a general-purpose ongoing chat client. Message correlation and historical tracing are still required.
 - Project, activity, and request relationships should be represented without assuming a strict one-to-many tree or building a project-management system.
 - AI-driven scheduling, repeated resurfacing, and elaborate attention policies are V2 explorations rather than core protocol requirements.

@@ -74,6 +74,8 @@ An explicit `submit_notice` represents a meaningful completion and requires agen
 
 ## Operator instruction composition
 
+The following records the current implementation; the planned default below supersedes its manual-field workflow for future implementation.
+
 The terminal uses the routing label `operator`, which must be a member of the selected immutable channel. The operator supplies the deployment-unique retry identity, channel, recipient label or group, and single-line instruction text, then explicitly confirms the review. Long edit fields show a trailing preview, and the complete review is available in pages navigated with j/k. A failed or unknown send retains the unchanged draft for retry with the same identity while the interface remains open; drafts are not durable, so the operator must retain the identity and content before closing or cancelling. This label is not authenticated.
 
 
@@ -219,3 +221,25 @@ When an oversized record is encountered as lookahead after valid page entries, r
 Target mainstream Linux distributions, macOS and BSD, including glibc and musl Linux environments. Start verification on Fedora, then expand the matrix with actual installations and tests; this direction is not a claim that those targets are supported today. The terminal should work directly and inside tmux and Herdr panes, with color by default and usable non-color cues. Ratatui with Crossterm is the chosen rendering stack; Clap supplies CLI argument parsing. Exact supported versions, terminal dimensions, accessibility and the platform test matrix remain to be established. Two-machine and broader crash/transport investigations are deferred, and representative operator validation is delayed until the interface has been developed further.
 
 The terminal enters and clears an alternate screen before its first Ratatui draw, then restores the previous screen and cursor on ordinary exit or a handled termination signal. Abrupt termination may still prevent cleanup.
+
+## Default operator instruction (2026-11-10)
+
+The normal composer will require only instruction text. It will generate a new deployment-scoped submission identity for each new message, use channel `all`, and address the group (no individual recipient); the operator confirms before dispatch. A First Mate may monitor this channel through its own participant inbox. Group addressing delivers to all other members captured at acceptance, not solely to a First Mate. The channel is not authentication or authorization. Its provisioning, membership and behavior when unavailable or incompatible with existing immutable membership require design; do not silently replace an existing channel or add members. A failed or unknown send must retain the same identity and exact message for retry while the draft is open; recovery after exit remains open. Later per-message identity, channel and recipient overrides are tracked as US-057/L-16. The existing manual composer and its direct/group capabilities remain current behavior until implementation; no existing channel is renamed or migrated by this documentation decision.
+
+## On-demand keybinding help and local service startup (2026-11-10)
+
+Normal views should not carry the complete keybinding list. Show complete keyboard help on demand, with concise contextual hints in the interface where useful. The help trigger and presentation are design choices; `?` or a key combination are candidates, not selected bindings. Help must be keyboard accessible, and opening and closing it must preserve the active view and any draft. This is a target, not current behavior.
+
+The intended local operator workflow starts its service automatically if needed and reuses the intended running service; it continues independently after the interface exits. Exact process model, instance and database identification, concurrent startup, endpoint selection, stop/status controls, logging, compatibility checks and failure reporting remain open. Do not silently connect to an unrelated process, overwrite a database, or change the loopback default; an explicitly remote endpoint must not cause a local service to be launched as its replacement. The current workflow still requires the service to be started separately.
+
+## Terminal color direction (2026-11-10)
+
+Use color by default on capable terminals and derive the interface's default colors from a standardized system that respects the user's terminal scheme, rather than imposing a fixed custom palette. Basic ANSI terminal colors are a candidate because terminal themes commonly control them; the exact standard and capability detection remain to be selected and verified. Do not require 256-color or truecolor support. Provide legible text, selection and status cues in basic-color and monochrome supported environments; color can reinforce those cues. The minimum required terminal controls, behavior for unsupported or misreported capabilities, and contrast across schemes remain open. Current color rendering has not yet been verified against this target.
+
+## Operator overview, navigation and action clarity (2026-11-10)
+
+The V1 targets are a concise overview of decisions, messages and completions; search by text, agent and work context; a selected-item preview; visible view and selection context; and clear pending, accepted, explicitly rejected and unconfirmed action states. Incomplete data must not be presented as an exact count, and an unknown result is not acceptance. Exact layout, search scope and semantics, how data from separate snapshots is aggregated, and how explicit rejection differs from an unknown transport or decoding failure remain open. These targets do not imply automatic retries, agent orchestration or authorization.
+
+Long content should wrap and scroll by visible lines, retaining a useful reading position across resize. Temporary navigation and polling failures should retain the selected item and exact unsent draft; how to handle concurrent removal, closing the interface or restart needs design. Identify the target and effect of consequential actions before confirmation. An explicit confirmation remains required for sending instructions and answering decisions; action-specific interaction is to be designed without inventing extra confirmation steps for every navigation or deferral. The current implementation provides only partial evidence for these targets.
+
+A durable seen/unread model and integration with a preferred external editor are V2 explorations. Their semantics, privacy, temporary files, editor failure and draft recovery require design; the existing local arrival indicator is not a durable unread count. Existing V2 filtering and overview/detail stories remain distinct from V1 search and selected-item preview.

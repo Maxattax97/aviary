@@ -17,7 +17,20 @@
 | SYS-009 | US-014 | V1 | T-009 (test) | V1-06 | Draft / not run |
 | SYS-010 | US-015, US-028, US-029 | V1 | T-010 (test) | V1-06 | Draft / not run |
 | SYS-011 | US-016 | V1 | T-011 (test) | SL-02, SL-04, V1-06 | Partial / full acceptance not run |
-| SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Draft / not run |
+| SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Existing manual flow exercised; target default not implemented |
+| SYS-050 | US-062 | V1 | T-050 (test) | V1-24 | Planned / not implemented |
+| SYS-051 | US-063 | V1 | T-051 (test) | V1-25 | Planned / not implemented |
+| SYS-052 | US-064 | V1 | T-052 (test) | V1-26 | Planned / not implemented |
+| SYS-053 | US-065, US-058 | V1 | T-053 (test) | V1-27 | Planned / not implemented |
+| SYS-054 | US-066 | V1 | T-054 (test) | V1-28 | Planned / not implemented |
+| SYS-055 | US-067 | V1 | T-055 (test) | V1-29 | Planned / not implemented |
+| SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Planned / not implemented |
+| SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Planned / not implemented |
+| SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
+| SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |
+| SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Planned / not implemented |
+| SYS-047 | US-059, US-039, US-040 | V1 | T-047 (test) | V1-18 | Planned / not implemented |
+| SYS-045 | US-056 | V1 | T-045 (test) | V1-09 | Planned / not implemented |
 | SYS-013 | US-020 | V1 | T-013 (test) | V1-08 | Draft / not run |
 | SYS-014 | US-021 | V1 | T-014 (test) | V1-08 | Draft / not run |
 | SYS-015 | US-022 | V1 | T-015 (test) | SL-04, SL-05, V1-10 | Partial / full acceptance not run |
@@ -63,6 +76,9 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-004 | V1 | As a human operator, I want to see a concise explanation of each request | SYS-003 |
 | US-005 | V1 | As a human operator, I want to inspect supporting context on demand | SYS-004 |
 | US-006 | V1 | As a human operator, I want to defer a request without losing it | SYS-005 |
+| US-062 | V1 | Concise overview of decisions, messages and completions | SYS-050 |
+| US-063 | V1 | Find communications by text, agent or work context | SYS-051 |
+| US-070 | V2 | Distinguish new or changed items from previously seen items | L-17; no V1 requirement |
 | US-007 | V2 | As a human operator, I want to identify my primary objective or "big rock" | Deferred; no V1 requirement |
 | US-008 | V2 | As a human operator, I want low-priority requests to resurface periodically | Deferred; no V1 requirement |
 | US-009 | V2 | As a human operator, I want related or duplicate requests consolidated | Deferred; no V1 requirement |
@@ -76,6 +92,8 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-017 | V2 | As a human operator, I want to revise a pending decision request or ask for clarification without losing its context. | Deferred; no V1 requirement |
 | US-018 | V2 | As a human operator, I want to correct an accidental response when doing so can still influence the recipient's actions, | Deferred; no V1 requirement |
 | US-019 | V1 | As a human operator, I want to send instructions to my agents from a central interface | SYS-012 |
+| US-056 | V1 | Enter only instruction text for the default shared destination | SYS-045, SYS-026, SYS-041, SYS-042 |
+| US-057 | V2 | Adjust compose identity, channel or recipient | L-16; no V1 requirement |
 | US-020 | V1 | As an agent, I want to communicate with a particular agent or logical group of agents | SYS-012, SYS-013, SYS-035, SYS-040 |
 | US-021 | V1 | As an agent, I want to receive messages relevant to me or the groups I participate in | SYS-014, SYS-035, SYS-040 |
 | US-022 | V1 | As an agent, I want to request a response and wait for it | SYS-015 |
@@ -84,9 +102,18 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-025 | V1 | As a human operator, I want completion notifications to identify the relevant work and its results | SYS-018 |
 | US-026 | V2 | As an agent, I want to exchange requests and responses directly with other agents | Deferred; no V1 requirement |
 | US-028 | V1 | As a human operator, I want to navigate the queue using only my keyboard | SYS-010, SYS-019 |
-| US-029 | V1 | As a human operator, I want consistent keyboard shortcuts for selection, confirmation, deferral, and navigation | SYS-010, SYS-020 |
+| US-029 | V1 | As a human operator, I want consistent keyboard shortcuts for selection, confirmation, deferral, and navigation | SYS-010, SYS-020, SYS-046 |
+| US-058 | V1 | Discover shortcuts on demand without a persistent shortcut wall | SYS-046 |
+| US-060 | V1 | Use a standardized color system respecting the terminal scheme | SYS-048, SYS-049 |
+| US-061 | V1 | Operate in terminals without 256-color support | SYS-049 |
 | US-030 | V1 | As a human operator, I want the interface to update as new requests arrive | SYS-021 |
 | US-031 | V1 | As a human operator, I want the interface to work inside an ordinary terminal or tmux pane | SYS-022 |
+| US-064 | V1 | Preview the selected item while browsing | SYS-052 |
+| US-065 | V1 | Identify the current view, selection and next action | SYS-053 |
+| US-067 | V1 | Read long content by visible lines and retain position on resize | SYS-055 |
+| US-068 | V1 | Preserve selection, position and draft across navigation and interruption | SYS-056 |
+| US-069 | V1 | Identify target and effect before confirming consequential actions | SYS-057 |
+| US-071 | V2 | Use a preferred editor for substantial text | L-18; no V1 requirement |
 | US-032 | V2 | As a human operator, I want configurable keybindings and filtering | Deferred; no V1 requirement |
 | US-033 | V2 | As a human operator, I want to move quickly between an overview and a detailed request | Deferred; no V1 requirement |
 | US-034 | V1 | As an agent developer, I want to interact with the system using a documented CLI | SYS-023 |
@@ -94,8 +121,10 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-036 | V1 | As a human operator, I want messages and responses to survive crashes and restarts | SYS-025, SYS-036 |
 | US-037 | V1 | As an agent, I want failed or retried submissions to avoid producing duplicate requests | SYS-026, SYS-036, SYS-041, SYS-042 |
 | US-038 | V1 | As a human operator, I want to review the history of a request, including related messages, decisions, and outcomes, | SYS-027 |
-| US-039 | V1 | As a human operator, I want the daemon to operate independently of the TUI | SYS-028 |
-| US-040 | V1 | As a human operator, I want to start the system with minimal setup | SYS-029 |
+| US-039 | V1 | As a human operator, I want the daemon to operate independently of the TUI | SYS-028, SYS-047 |
+| US-040 | V1 | As a human operator, I want to start the system with minimal setup | SYS-029, SYS-047 |
+| US-059 | V1 | Start the local service automatically and keep it running after the interface closes | SYS-047, SYS-028 |
+| US-066 | V1 | Distinguish pending, accepted, rejected and unconfirmed actions | SYS-054 |
 | US-041 | Future | As a human operator, I want to identify sources of excessive or unhelpful messages | Deferred; no V1 requirement |
 | US-042 | V1 | As a human operator, I want agents operating on different machines to participate in the same communication system | SYS-030, SYS-044 |
 | US-043 | Future | As an agent, I want to discover which participants or groups can handle a particular request | Deferred; no V1 requirement |

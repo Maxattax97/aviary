@@ -8,6 +8,35 @@ Use unit and integration tests for structured data, correlation, deduplication, 
 
 Measure update delay, setup effort, accessibility, payload limits and retention once their acceptance thresholds are agreed. Until then, these remain verification gaps, not implicit performance promises. Test terminal environments and platform support against a reviewed support matrix. Validate attention reduction, one-confirmation acceptance, context switching and resumed agent work with representative operators; record observations and review findings instead of treating subjective satisfaction as a unit-test result. The proposed [operator session](operator-validation.md) provides a concrete, unexecuted protocol.
 
+## Planned default instruction verification (T-045)
+
+Not run: with an explicitly provisioned `all` channel containing `operator` and at least one agent label, open the composer, enter only instruction text and confirm; verify the exact message appears in each other member’s inbox with a generated nonempty identity. Send a second new instruction and verify a different identity. Exercise an unknown send outcome, retry the unchanged draft, and verify one accepted message with the same identity and contents; reject a conflicting reuse. Exercise an absent `all` channel and a channel without an eligible recipient or operator membership: show an unconfirmed/error outcome and retain the draft rather than claim delivery. Verify no message is accepted before confirmation. Existing manual-composer evidence below does not establish T-045. Provisioning, collision strategy, and recovery after closing the interface require implementation decisions and explicit tests.
+
+## Planned on-demand help and automatic startup (T-046, T-047)
+
+**T-046, not run:** inspect normal decision, inbox and composition views for absence of a persistent complete shortcut list; allow concise contextual hints. Open and dismiss complete keyboard help from each view using the chosen binding, verify relevant actions are discoverable, and verify the current selection and any draft survive. Exercise supported pane dimensions and cancellation without sending an instruction or answer.
+
+**T-047, not run:** from an isolated local environment with no service, start the normal operator entry point without separately launching a daemon; submit and retrieve work, exit the interface, communicate with the continuing service, reopen and retrieve the same state. Verify an existing intended service is reused, concurrent launches do not create conflicting instances, data survives restart, and startup or endpoint conflicts produce a clear error without replacing an unrelated service or database. Verify an explicitly remote endpoint is not silently replaced by a local instance. Define and test lifecycle, collision and clean-environment behavior before claiming acceptance. Existing startup evidence used a separately started service and does not satisfy T-047.
+
+## Planned terminal color verification (T-048, T-049)
+
+**T-048, not run:** select and document a standard color system and demonstrate the default interface against at least two different terminal color schemes; check that semantic colors follow the user's selected scheme rather than fixed RGB values. Record terminal, scheme and observation method. Basic ANSI palette colors are a design candidate, not a verified implementation.
+
+**T-049, not run:** exercise the same navigation, selected decision, status/error, on-demand help and decision confirmation in supported basic-color and monochrome configurations that do not advertise 256 colors. Verify the workflows remain readable and actionable without color-only cues and do not depend on 256-color sequences. Test directly and within supported multiplexers where available; record the terminal capabilities and limits rather than claiming that a capability setting proves every physical terminal works.
+
+## Planned operator interface verification (T-050–T-057)
+
+These tests are planned and have not passed. Existing local terminal checks are partial evidence only.
+
+- **T-050:** Populate decisions, messages and completions; verify each overview category, including empty, unavailable and paginated cases, without implying unverified exact counts.
+- **T-051:** Create matching and nonmatching retained records; find and open the correct item by content, originating agent and work context. Exercise result paging and no-match behavior under documented matching semantics.
+- **T-052:** Browse distinct items and verify the selected-item preview follows selection, offers full details and remains usable at supported pane sizes. Inspection must not change records.
+- **T-053:** Traverse decision, inbox and notice views; identify active view, selection and applicable actions via concise hints or on-demand help.
+- **T-054:** Exercise an in-flight action, confirmed acceptance, explicit service rejection and a missing response after possible commit. Verify each is distinguished, no unknown result is called accepted or rejected, and no action is automatically resubmitted.
+- **T-055:** Navigate long wrapped content by visible lines, resize, and verify the previously read position remains accessible; include Unicode and a supported narrow pane.
+- **T-056:** Preserve an exact draft and original item association while opening and closing help/details and during a polling failure and recovery. Verify selection and reading position on return; separately document behavior when the item disappears or the interface exits.
+- **T-057:** Inspect target and effect before confirming a decision, instruction and applicable queue action; verify navigation and inspection alone do not submit an action. Exercise concurrent item changes.
+
 ## Smallest end-to-end milestone
 
 A narrow executable slice: an agent on one machine submits a decision with a stable submission identity and recommended option; the communication service acknowledges durable state; an operator on another machine sees it in a terminal and confirms the recommendation; the waiting agent receives one correlated structured answer. Restart the service and requester around acknowledged state, retry the submission and recover the same answer without a duplicate. Use an explicitly configured network listener on a trusted test network for the cross-machine part; independently verify that the default listener is localhost-only. Demonstrate the interface may close independently. This slice exercises SYS-001, 007–008, 011, 015–016, 021, 023, 025–026, 030, 036, 043–044 in part; it does not claim the complete V1 requirements or all failure modes. Review the deployment and durability assumptions before implementation; authentication, authorization and multi-user isolation are future tests.
