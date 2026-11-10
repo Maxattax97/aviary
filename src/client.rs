@@ -321,6 +321,7 @@ struct View {
     editing: bool,
     custom_review: Option<usize>,
     custom: String,
+    draft_request_missing: bool,
 }
 impl View {
     fn new() -> Self {
@@ -359,6 +360,7 @@ impl View {
             editing: false,
             custom_review: None,
             custom: String::new(),
+            draft_request_missing: false,
         }
     }
     fn current(&self) -> Option<&PendingRequest> {
@@ -374,10 +376,23 @@ impl View {
         self.detail_page = None;
         self.detail_option = None;
         self.custom.clear();
+        self.draft_request_missing = false;
     }
     fn update(&mut self, requests: Vec<PendingRequest>) -> bool {
+        // Keep the request and draft visible if a concurrent change removes it
+        // from this queue. Submitting it can still fail; never silently retarget it.
+        if self.editing
+            && self
+                .current()
+                .is_some_and(|current| !requests.iter().any(|r| r.id == current.id))
+        {
+            let changed = !self.draft_request_missing;
+            self.draft_request_missing = true;
+            return changed;
+        }
+        let missing_changed = std::mem::take(&mut self.draft_request_missing);
         if self.requests == requests {
-            return false;
+            return missing_changed;
         }
         let previous = self.current().map(|r| r.id);
         self.current = previous
@@ -1074,7 +1089,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(_) => { view.status = None; if !is_notice { view.update(Vec::new()); } view.reset_notice_page(); }
+                        Ok(_) => { view.status = None; if !is_notice { view.reset_selection(); view.update(Vec::new()); } view.reset_notice_page(); }
                         Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
                     }
                 }
@@ -1514,6 +1529,11 @@ fn display(view: &View) -> Result<()> {
     );
     if let Some(status) = &view.status {
         println!("{}\r", safe(status));
+    }
+    if view.draft_request_missing {
+        println!(
+            "Request no longer in this queue; draft retained. Check state before submitting.\r"
+        );
     }
     if let Some(pending) = view.current() {
         let request = &pending.request;

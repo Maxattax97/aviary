@@ -130,6 +130,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 
 `python3 tests/terminal_reconnect.py` passed on Linux over loopback. It killed the service while a custom draft was open, observed the terminal report polling failure, attempted submission while offline and observed an unconfirmed outcome, restarted the service, confirmed that no answer had been stored, and explicitly submitted the retained draft. It then observed a new request arrive in the already open interface without a manual refresh, and separately exited the interface while the service was offline. This does not simulate a lost reply after commit, prove automatic answer retry, bound multi-page or submission input latency, or establish remote-machine or OS-crash behavior.
 
+The same local terminal test now also defers the request from a second client while its custom draft is open, observes the missing-request warning and retained text, restores the request, and submits the original draft. This does not establish draft persistence after leaving the editor or closing the interface.
+
 
 ## Local stalled-poll responsiveness (2026-11-10)
 

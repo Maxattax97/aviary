@@ -87,6 +87,11 @@ def main() -> None:
             terminal.expect("draft survives", timeout=8)
             time.sleep(0.5)
             assert service.call({"op": "get", "id": request_id})["answer"] is None
+            service.call({"op": "set_deferred", "id": request_id, "deferred": True})
+            terminal.expect("Request no longer in this queue; draft retained")
+            terminal.expect("draft survives")
+            service.call({"op": "set_deferred", "id": request_id, "deferred": False})
+            terminal.expect("draft survives")
             terminal.send("\r")
             service.wait_for(
                 lambda: service.call({"op": "get", "id": request_id})["answer"]
