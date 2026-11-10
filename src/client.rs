@@ -54,7 +54,11 @@ async fn fetch_requests(address: &str, deferred: bool, offset: usize) -> Result<
     let page: RequestPage = serde_json::from_value(
         network::call_with_timeout(
             address,
-            &Operation::ListPage { deferred, offset },
+            &Operation::ListPage {
+                deferred,
+                offset,
+                include_newest: true,
+            },
             POLL_TIMEOUT_MS,
         )
         .await?,
@@ -280,6 +284,25 @@ impl Composer {
     }
 }
 
+#[derive(Default)]
+struct Arrivals {
+    seen: bool,
+    highest_id: i64,
+    pending: bool,
+}
+impl Arrivals {
+    fn observe(&mut self, newest: Option<i64>) -> bool {
+        let newest = newest.unwrap_or(0);
+        let changed = self.seen && newest > self.highest_id && !self.pending;
+        if self.seen && newest > self.highest_id {
+            self.pending = true;
+        }
+        self.highest_id = self.highest_id.max(newest);
+        self.seen = true;
+        changed
+    }
+}
+
 struct View {
     page_size: usize,
     requests: Vec<PendingRequest>,
@@ -288,6 +311,7 @@ struct View {
     request_next: Option<usize>,
     request_loaded: bool,
     request_select_last: Option<bool>,
+    arrivals: Arrivals,
     composer: Option<Composer>,
     status: Option<String>,
     poll_error: Option<String>,
@@ -334,6 +358,7 @@ impl View {
             request_next: None,
             request_loaded: false,
             request_select_last: None,
+            arrivals: Arrivals::default(),
             composer: None,
             status: None,
             poll_error: None,
@@ -441,6 +466,7 @@ impl View {
         self.update(Vec::new());
     }
     fn update_request_page(&mut self, page: RequestPage) -> bool {
+        let arrival_changed = self.arrivals.observe(page.newest_id);
         if !self.editing && page.requests.is_empty() && self.request_offset > 0 {
             self.request_offset = self.request_previous.pop().unwrap_or(0);
             self.request_loaded = false;
@@ -453,7 +479,7 @@ impl View {
         let next_changed = self.request_next != page.next_offset;
         let changed = self.update(page.requests);
         if self.draft_request_missing {
-            return changed;
+            return changed || arrival_changed;
         }
         if let Some(last) = self.request_select_last.take() {
             self.current = if last {
@@ -465,7 +491,7 @@ impl View {
         }
         self.request_next = page.next_offset;
         self.request_loaded = true;
-        changed || next_changed || !was_loaded
+        changed || next_changed || !was_loaded || arrival_changed
     }
     fn update_notices(&mut self, page: NoticePage) -> bool {
         // Dismissals on earlier pages can move the end before this offset.
@@ -914,6 +940,10 @@ impl View {
         }
         if key.code == KeyCode::Tab {
             return Action::ToggleDeferred;
+        }
+        if key.code == KeyCode::Char('R') {
+            self.arrivals.pending = false;
+            return Action::Redraw;
         }
         if !self.request_loaded {
             return if key.code == KeyCode::Char('q') {
@@ -1467,6 +1497,14 @@ fn display(view: &View) -> Result<()> {
         };
         println!("{}\r", safe(text));
     }
+    let new_arrival = view.arrivals.pending;
+    if new_arrival
+        && (view.inbox_view || view.notice_view)
+        && view.composer.is_none()
+        && view.history.is_none()
+    {
+        println!("New decisions (R in queue)\r");
+    }
     if let Some(composer) = &view.composer {
         let labels = [
             "Retry identity (unique deployment-wide)",
@@ -1646,7 +1684,9 @@ fn display(view: &View) -> Result<()> {
         view.notices.len().to_string()
     };
     let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
-    if width > 0 && width < 60 {
+    if new_arrival {
+        println!("Open completion notices: {} | NEW (R)\r", notice_count);
+    } else if width > 0 && width < 60 {
         println!("Open completion notices: {} (n)\r", notice_count);
     } else {
         println!(
@@ -1850,6 +1890,7 @@ mod tests {
         view.update_request_page(RequestPage {
             requests: vec![request(None, 0)],
             next_offset: None,
+            newest_id: Some(42),
         });
         view.key(key(KeyCode::Char('j')));
         view.key(key(KeyCode::Enter));
@@ -1861,6 +1902,7 @@ mod tests {
         view.update_request_page(RequestPage {
             requests: vec![other.clone()],
             next_offset: Some(1),
+            newest_id: Some(43),
         });
         assert!(view.draft_request_missing);
         assert_eq!(view.current().map(|item| item.id), Some(42));
@@ -1871,9 +1913,37 @@ mod tests {
         view.update_request_page(RequestPage {
             requests: vec![other],
             next_offset: Some(1),
+            newest_id: Some(43),
         });
         assert_eq!(view.current().map(|item| item.id), Some(43));
         assert!(!view.draft_request_missing);
+    }
+
+    #[test]
+    fn arrival_indicator_tracks_new_ids_outside_the_current_page() {
+        let mut view = View::new();
+        let page = |newest_id| RequestPage {
+            requests: vec![request(None, 0)],
+            next_offset: Some(1),
+            newest_id,
+        };
+        view.update_request_page(page(Some(42)));
+        assert!(!view.arrivals.pending);
+        view.update_request_page(page(Some(43)));
+        assert!(view.arrivals.pending);
+        assert_eq!(view.current().map(|item| item.id), Some(42));
+        view.key(key(KeyCode::Char('j')));
+        view.key(key(KeyCode::Enter));
+        view.key(key(KeyCode::Char('R')));
+        assert_eq!(view.custom, "R");
+        assert!(view.arrivals.pending);
+        view.key(key(KeyCode::Esc));
+        view.key(key(KeyCode::Char('R')));
+        assert!(!view.arrivals.pending);
+        view.update_request_page(page(Some(43)));
+        assert!(!view.arrivals.pending);
+        view.update_request_page(page(Some(44)));
+        assert!(view.arrivals.pending);
     }
 
     #[test]

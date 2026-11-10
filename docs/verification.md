@@ -270,6 +270,8 @@ On local Linux x86-64, `python3 tests/storage_limit.py` limited only a disposabl
 
 `python3 tests/terminal_partial_refresh.py` inserted deliberately oversized legacy records into an isolated local test database. An unreadable notice page produced a warning while an ordinary decision remained visible; after that fixture was removed, an unreadable decision page produced a warning while the operator inbox remained usable. The normal terminal, reconnect, history, tmux and Rust regressions also passed. This checks two local page failures, not arbitrary network or database failures, cross-view snapshot consistency or representative operator use.
 
+`python3 tests/terminal_arrivals.py` passed locally with large decisions spanning multiple response pages. While an operator draft was open on a later page, a newly submitted higher-priority decision set the `NEW` indicator without losing or retargeting the draft. It also detected an active arrival while the deferred view was open, and checked that callers omitting `include_newest` receive the earlier response shape. A unit test checks clearing and re-triggering the indicator. This does not prove a latency bound, remote behavior, or visibility while polling is paused.
+
 The local tmux test additionally checks a failed notice refresh at 40×12: the compact warning, decision heading, question, selected recommendation and confirmation help are visible together, and Enter records the recommendation. It does not cover every combination of failures, text width or pane dimensions.
 
 ## CLI standard-input submission (2026-11-10)

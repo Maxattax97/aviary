@@ -52,11 +52,14 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
 | `c` / `o` | Open request context / selected answer detail |
 | `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
+| `R` | Clear the new-decision indicator in the decision queue |
 | `d`, Tab, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
 
 The answer list follows the selection when there are more choices than fit in the estimated available rows; resize triggers a redraw. Long wrapped text and very small panes can still displace content. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. The queue abbreviates long question, explanation and answer text; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
+
+`NEW (R)` indicates that a decision was submitted since the interface last observed or cleared the indicator, even if it belongs on a different queue page. It does not move the current selection or draft. Press `R` in the decision queue to clear it. The indicator is local to the open interface; the decision may already have been answered elsewhere, and reads pause in some editing and history views.
 
 ## Messages and notices
 
@@ -91,6 +94,7 @@ The terminal keeps its current view and retries reads when polling fails. A fail
 ```sh
 cargo test --locked
 python3 tests/terminal_pty.py
+python3 tests/terminal_arrivals.py
 python3 tests/terminal_signals.py
 python3 tests/decision_slice.py
 python3 tests/attention_smoke.py

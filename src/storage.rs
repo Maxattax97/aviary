@@ -90,7 +90,11 @@ impl Storage {
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,
-            Operation::ListPage { deferred, offset } => self.list_page(deferred, offset).await,
+            Operation::ListPage {
+                deferred,
+                offset,
+                include_newest,
+            } => self.list_page(deferred, offset, include_newest).await,
             Operation::NoticesPage {
                 include_dismissed,
                 offset,
@@ -569,29 +573,51 @@ impl Storage {
         Ok(page.finish("notices", false))
     }
 
-    async fn list_page(&self, deferred: bool, offset: usize) -> Result<Value> {
+    async fn list_page(
+        &self,
+        deferred: bool,
+        offset: usize,
+        include_newest: bool,
+    ) -> Result<Value> {
         let mut page = PageBuilder::new(offset);
-        let Ok(sql_offset) = i64::try_from(offset) else {
-            return Ok(page.finish("requests", false));
+        let mut tx = self.pool.begin().await?;
+        let newest_id: Option<i64> = if include_newest {
+            sqlx::query_scalar("SELECT MAX(id) FROM requests")
+                .fetch_one(&mut *tx)
+                .await?
+        } else {
+            None
         };
-        let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>, bool)>("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ? ORDER BY COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0) DESC, r.id LIMIT -1 OFFSET ?")
-            .bind(deferred).bind(sql_offset).fetch(&self.pool);
-        while let Some((id, payload, override_value, deferred)) = rows.try_next().await? {
-            let request: DecisionRequest = serde_json::from_str(&payload)?;
-            let importance = override_value
-                .map(|value| value as u8)
-                .unwrap_or(request.importance);
-            let item = serde_json::to_value(PendingRequest {
-                id,
-                request,
-                importance,
-                deferred,
-            })?;
-            if !page.push(item)? {
-                return Ok(page.finish("requests", true));
+        let mut more = false;
+        if let Ok(sql_offset) = i64::try_from(offset) {
+            let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>, bool)>("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ? ORDER BY COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0) DESC, r.id LIMIT -1 OFFSET ?")
+            .bind(deferred).bind(sql_offset).fetch(&mut *tx);
+            while let Some((id, payload, override_value, deferred)) = rows.try_next().await? {
+                let request: DecisionRequest = serde_json::from_str(&payload)?;
+                let importance = override_value
+                    .map(|value| value as u8)
+                    .unwrap_or(request.importance);
+                let item = serde_json::to_value(PendingRequest {
+                    id,
+                    request,
+                    importance,
+                    deferred,
+                })?;
+                if !page.push(item)? {
+                    more = true;
+                    break;
+                }
             }
         }
-        Ok(page.finish("requests", false))
+        tx.commit().await?;
+        let mut result = page.finish("requests", more);
+        if include_newest {
+            result
+                .as_object_mut()
+                .ok_or(AppError::InvalidFrame)?
+                .insert("newest_id".into(), json!(newest_id));
+        }
+        Ok(result)
     }
 
     async fn inbox(&self, participant: String) -> Result<Value> {

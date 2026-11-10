@@ -62,6 +62,8 @@ pub enum Operation {
         deferred: bool,
         #[serde(default)]
         offset: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        include_newest: bool,
     },
     NoticesPage {
         #[serde(default)]
@@ -241,6 +243,8 @@ pub enum HistoryKind {
 pub struct RequestPage {
     pub requests: Vec<PendingRequest>,
     pub next_offset: Option<usize>,
+    #[serde(default)]
+    pub newest_id: Option<i64>,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NoticePage {

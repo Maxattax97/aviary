@@ -28,7 +28,7 @@ The table lists the JSON object supplied to `call` and the success result. Strin
 | --- | --- | --- |
 | Submit decision | `{"op":"submit","request":REQUEST}` | `{"id":ID}`; see decision fields below. |
 | Get decision | `{"op":"get","id":ID}` | `{"id":ID,"answer":null}` while pending, or an answer object below. |
-| List decisions | `{"op":"list_page","deferred":false,"offset":0}` | `{"requests":[{"id":ID,"request":REQUEST,"importance":N,"deferred":false}],"next_offset":N_OR_NULL}`. Both input fields default to false/zero. `list` and `list_deferred` return the same array without pagination. |
+| List decisions | `{"op":"list_page","deferred":false,"offset":0}` | `{"requests":[{"id":ID,"request":REQUEST,"importance":N,"deferred":false}],"next_offset":N_OR_NULL}`. Inputs default to false/zero. Optional `include_newest:true` adds `newest_id`, the highest submitted decision ID across both queues, including answered decisions, or null if none; it is read in the same snapshot as the page. The field is omitted unless requested. `list` and `list_deferred` return the same array without pagination. |
 | Set priority | `{"op":"set_importance","id":ID,"importance":N}` | `{"id":ID,"importance":N}`; N is 0–5 and the request must be pending. |
 | Defer or restore | `{"op":"set_deferred","id":ID,"deferred":true}` | `{"id":ID,"deferred":true}`; use false to restore a pending request. |
 | Answer suggestion | `{"op":"answer","id":ID,"index":N}` | `{"id":ID}`; index is the **original zero-based** option index. A later `get` includes `"answer":{"type":"suggested","index":N,"value":"..."}`. |
