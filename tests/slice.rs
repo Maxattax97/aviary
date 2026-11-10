@@ -655,6 +655,38 @@ fn completion_notice_retry_and_dismissal_recover() -> TestResult<()> {
     Ok(())
 }
 
+fn assert_history_page_parity(address: &str, kind: &str, id: i64) -> TestResult<()> {
+    let history = call(address, json!({"op":"history","kind":kind,"id":id}))?;
+    for section in ["decisions", "messages", "outcomes"] {
+        let expected = history
+            .get(section)
+            .and_then(Value::as_array)
+            .ok_or("missing section")?;
+        for offset in 0..=expected.len() + 1 {
+            let page = call(
+                address,
+                json!({"op":"history_page","kind":kind,"id":id,"section":section,"offset":offset}),
+            )?;
+            let tail: Vec<Value> = expected.iter().skip(offset).cloned().collect();
+            assert_eq!(
+                page.get(section),
+                Some(&json!(tail)),
+                "{kind} {id} {section} {offset}"
+            );
+            assert_eq!(page.get("next_offset"), Some(&Value::Null));
+            assert_eq!(page.get("section"), Some(&json!(section)));
+            assert_eq!(page.get("id"), Some(&json!(id)));
+        }
+        let beyond = call(
+            address,
+            json!({"op":"history_page","kind":kind,"id":id,"section":section,"offset":usize::MAX}),
+        )?;
+        assert_eq!(beyond.get(section), Some(&json!([])));
+        assert_eq!(beyond.get("next_offset"), Some(&Value::Null));
+    }
+    Ok(())
+}
+
 #[test]
 fn request_history_links_decisions_messages_and_outcomes() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
@@ -751,6 +783,16 @@ fn request_history_links_decisions_messages_and_outcomes() -> TestResult<()> {
         );
         assert_eq!(plain_history.get("outcomes"), Some(&json!([])));
     }
+    for (kind, id) in [
+        ("decision", decision_id),
+        ("message", message_id),
+        ("message", reply_id),
+        ("message", plain_id),
+        ("message", plain_reply),
+    ] {
+        assert_history_page_parity(&address, kind, id)?;
+    }
+    assert_eq!(call(&address, json!({"op":"history_page","kind":"decision","id":999999,"section":"messages","offset":usize::MAX}))?.get("error"), Some(&json!("request not found")));
     drop(server);
     std::fs::remove_dir_all(directory)?;
     Ok(())

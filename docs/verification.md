@@ -147,3 +147,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local incremental page evidence (2026-11-10)
 
 `cargo test --locked --test slice streamed_pages_match_unpaged_order_and_offsets` compared decision, deferred, notice and inbox pages with their unpaged results at every offset, including priority overrides, ties, and offsets past the end. The existing frame-limit integration cases returned all records across multiple pages, and the terminal, tmux and skill smoke tests passed locally. These checks confirm observable ordering and paging for the fixtures, not a measured process-memory bound, SQLite sort or scan costs, concurrent offset consistency, history pagination, or remote behavior.
+
+
+## Local incremental history evidence (2026-11-10)
+
+`cargo test --locked --test slice request_history_links_decisions_messages_and_outcomes` passed with page results compared to unpaged history across all three sections and each offset for decision, request and reply roots, including direct links without activity, missing roots and offsets past the end. The existing frame-limit case checks multi-page retrieval. These fixtures do not measure memory or SQLite scan costs, verify consistent traversal under concurrent mutation, or establish remote and OS-crash behavior.

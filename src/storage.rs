@@ -122,49 +122,8 @@ impl Storage {
                 id,
                 section,
                 offset,
-            } => {
-                let field = match section {
-                    HistorySection::Decisions => "decisions",
-                    HistorySection::Messages => "messages",
-                    HistorySection::Outcomes => "outcomes",
-                };
-                let mut page = Self::page(self.history(kind, id).await?, field, offset)?;
-                let object = page.as_object_mut().ok_or(AppError::InvalidFrame)?;
-                object.insert("section".into(), json!(field));
-                object.insert("id".into(), json!(id));
-                Ok(page)
-            }
+            } => self.history_page(kind, id, section, offset).await,
         }
-    }
-
-    // Keep a page comfortably below the frame limit, with room for its envelope.
-    fn page(mut source: Value, field: &str, offset: usize) -> Result<Value> {
-        const PAGE_BYTES: usize = 900 * 1024;
-        const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_MESSAGE_BYTES as usize) - 2048;
-        let values = source
-            .get_mut(field)
-            .and_then(Value::as_array_mut)
-            .ok_or(AppError::InvalidFrame)?;
-        let mut page = Vec::new();
-        let mut bytes = 0usize;
-        for item in values.iter().skip(offset) {
-            let size = serde_json::to_vec(item)?.len() + 1;
-            if size > MAX_ITEM_BYTES {
-                return Err(AppError::InvalidFrame);
-            }
-            if !page.is_empty() && bytes.saturating_add(size) > PAGE_BYTES {
-                break;
-            }
-            bytes += size;
-            page.push(item.clone());
-        }
-        let next = offset.saturating_add(page.len());
-        let next_offset = if next < values.len() {
-            Some(next)
-        } else {
-            None
-        };
-        Ok(json!({field: page, "next_offset": next_offset}))
     }
 
     async fn submit(&self, request: DecisionRequest) -> Result<Value> {
@@ -482,6 +441,97 @@ impl Storage {
         Ok(
             json!({"root":{"kind":root_kind,"id":id}, "activity":activity, "decisions":decisions, "messages":messages, "outcomes":outcomes}),
         )
+    }
+
+    async fn history_page(
+        &self,
+        kind: HistoryKind,
+        id: i64,
+        section: HistorySection,
+        offset: usize,
+    ) -> Result<Value> {
+        // Resolve the root and the selected section in the same read snapshot.
+        let mut tx = self.pool.begin().await?;
+        let (table, root_kind) = match kind {
+            HistoryKind::Decision => ("requests", "decision"),
+            HistoryKind::Message => ("messages", "message"),
+        };
+        let root_payload: Option<String> =
+            sqlx::query_scalar(&format!("SELECT payload FROM {table} WHERE id = ?"))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let root: Value = serde_json::from_str(&root_payload.ok_or(AppError::RequestNotFound)?)?;
+        let activity = root
+            .get("activity")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let field = match section {
+            HistorySection::Decisions => "decisions",
+            HistorySection::Messages => "messages",
+            HistorySection::Outcomes => "outcomes",
+        };
+        let mut page = PageBuilder::new(offset);
+        let more = if let Ok(sql_offset) = i64::try_from(offset) {
+            match section {
+                HistorySection::Decisions => {
+                    let mut rows = sqlx::query_as::<_, (i64, String, Option<String>)>("SELECT id, payload, answer FROM requests WHERE (id = ? AND ? = 'decision') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY id LIMIT -1 OFFSET ?")
+                        .bind(id).bind(root_kind).bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    loop {
+                        match rows.try_next().await? {
+                            Some((id, payload, answer)) => {
+                                let answer = answer
+                                    .map(|value| serde_json::from_str::<Value>(&value))
+                                    .transpose()?;
+                                let item = json!({"id":id,"request":serde_json::from_str::<Value>(&payload)?,"answer":answer});
+                                if !page.push(item)? {
+                                    break true;
+                                }
+                            }
+                            None => break false,
+                        }
+                    }
+                }
+                HistorySection::Messages => {
+                    let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>)>("SELECT m.id, m.payload, r.request_id FROM messages m LEFT JOIN message_responses r ON r.response_id = m.id WHERE (m.id = ? AND ? = 'message') OR (r.request_id = ? AND ? = 'message') OR (m.id = (SELECT request_id FROM message_responses WHERE response_id = ?) AND ? = 'message') OR (? IS NOT NULL AND json_extract(m.payload, '$.activity') = ?) ORDER BY m.id LIMIT -1 OFFSET ?")
+                        .bind(id).bind(root_kind).bind(id).bind(root_kind).bind(id).bind(root_kind).bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    loop {
+                        match rows.try_next().await? {
+                            Some((id, payload, reply_to)) => {
+                                let item = json!({"id":id,"message":serde_json::from_str::<Value>(&payload)?,"reply_to":reply_to});
+                                if !page.push(item)? {
+                                    break true;
+                                }
+                            }
+                            None => break false,
+                        }
+                    }
+                }
+                HistorySection::Outcomes => {
+                    let mut rows = sqlx::query_as::<_, (i64, String, bool)>("SELECT id, payload, dismissed FROM completion_notices WHERE ? IS NOT NULL AND json_extract(payload, '$.activity') = ? ORDER BY id LIMIT -1 OFFSET ?")
+                        .bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    loop {
+                        match rows.try_next().await? {
+                            Some((id, payload, dismissed)) => {
+                                let item = json!({"id":id,"notice":serde_json::from_str::<Value>(&payload)?,"dismissed":dismissed});
+                                if !page.push(item)? {
+                                    break true;
+                                }
+                            }
+                            None => break false,
+                        }
+                    }
+                }
+            }
+        } else {
+            false
+        };
+        tx.commit().await?;
+        let mut result = page.finish(field, more);
+        let object = result.as_object_mut().ok_or(AppError::InvalidFrame)?;
+        object.insert("section".into(), json!(field));
+        object.insert("id".into(), json!(id));
+        Ok(result)
     }
 
     async fn inbox_page(&self, participant: String, offset: usize) -> Result<Value> {
