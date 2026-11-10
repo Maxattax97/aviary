@@ -170,3 +170,95 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+fn dealer(context: &zmq::Context, address: &str) -> TestResult<zmq::Socket> {
+    let socket = context.socket(zmq::DEALER)?;
+    socket.set_linger(0)?;
+    socket.set_sndtimeo(5_000)?;
+    socket.set_rcvtimeo(5_000)?;
+    socket.connect(&format!("tcp://{address}"))?;
+    Ok(socket)
+}
+
+fn send_request(socket: &zmq::Socket, correlation: &str, operation: Value) -> TestResult<()> {
+    let envelope = json!({"version":1,"correlation":correlation,"operation":operation});
+    socket.send(envelope.to_string().as_bytes(), 0)?;
+    Ok(())
+}
+
+fn receive_reply(socket: &zmq::Socket) -> TestResult<Value> {
+    Ok(serde_json::from_slice(&socket.recv_bytes(0)?)?)
+}
+
+#[test]
+fn correlation_lost_reply_and_reconnect() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-transport-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let database_path = directory.join("test.sqlite");
+    let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let context = zmq::Context::new();
+    let socket = dealer(&context, &address)?;
+
+    // Multiple requests on one connection retain their distinct correlations.
+    send_request(&socket, "first", json!({"op":"list"}))?;
+    send_request(&socket, "second", json!({"op":"list"}))?;
+    let replies = [receive_reply(&socket)?, receive_reply(&socket)?];
+    let correlations: std::collections::HashSet<_> = replies
+        .iter()
+        .filter_map(|reply| reply.get("correlation").and_then(Value::as_str))
+        .collect();
+    assert_eq!(correlations, ["first", "second"].into_iter().collect());
+    assert!(replies
+        .iter()
+        .all(|reply| reply.pointer("/result/requests").is_some()));
+
+    // Observe the committed row independently before discarding the unread reply.
+    let request = json!({"identity":"lost-reply", "agent":"agent", "question":"Proceed?", "options":["No","Yes"], "recommendation":1, "reason":"Ready"});
+    send_request(
+        &socket,
+        "discarded",
+        json!({"op":"submit","request":request}),
+    )?;
+    let mut observed_id = None;
+    for _ in 0..100 {
+        let list = call(&address, json!({"op":"list"}))?;
+        observed_id = list.pointer("/requests/0/id").and_then(Value::as_i64);
+        if observed_id.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let id = observed_id.ok_or("submission did not commit")?;
+    drop(socket);
+    let retry = call(&address, json!({"op":"submit","request":request}))?;
+    assert_eq!(retry.get("id"), Some(&json!(id)));
+    assert_eq!(
+        call(&address, json!({"op":"list"}))?
+            .pointer("/requests")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+
+    // A DEALER that survives a service restart reconnects and can issue a new request.
+    let socket = dealer(&context, &address)?;
+    send_request(&socket, "before", json!({"op":"get","id":id}))?;
+    assert_eq!(
+        receive_reply(&socket)?.get("correlation"),
+        Some(&json!("before"))
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    send_request(&socket, "after", json!({"op":"get","id":id}))?;
+    let reply = receive_reply(&socket)?;
+    assert_eq!(reply.get("correlation"), Some(&json!("after")));
+    assert_eq!(reply.pointer("/result/id"), Some(&json!(id)));
+    drop(socket);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
