@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 
 pub const MAX_MESSAGE_BYTES: u64 = 1_048_576;
+fn is_zero(value: &u8) -> bool {
+    *value == 0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -11,6 +14,8 @@ pub struct DecisionRequest {
     pub agent: String,
     pub question: String,
     pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub importance: u8,
     #[serde(default)]
     pub recommendation: Option<usize>,
     #[serde(default)]
@@ -23,6 +28,7 @@ impl DecisionRequest {
             || self.agent.is_empty()
             || self.question.is_empty()
             || self.options.iter().any(String::is_empty)
+            || self.importance > 5
             || self
                 .recommendation
                 .is_some_and(|index| index >= self.options.len())
@@ -40,6 +46,9 @@ impl DecisionRequest {
 pub enum Operation {
     Submit { request: DecisionRequest },
     List,
+    ListDeferred,
+    SetImportance { id: i64, importance: u8 },
+    SetDeferred { id: i64, deferred: bool },
     Get { id: i64 },
     Answer { id: i64, index: usize },
     AnswerCustom { id: i64, value: String },
@@ -54,6 +63,8 @@ pub enum Operation {
 pub struct PendingRequest {
     pub id: i64,
     pub request: DecisionRequest,
+    pub importance: u8,
+    pub deferred: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

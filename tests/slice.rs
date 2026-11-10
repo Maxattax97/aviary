@@ -514,3 +514,72 @@ fn targeted_request_reply_wait_and_restart() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn priority_override_and_deferred_recovery() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-attention-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let mut ids = Vec::new();
+    for (identity, agent, importance) in [("low", "a", 1), ("high", "b", 4), ("tie", "a", 4)] {
+        let result = call(
+            &address,
+            json!({"op":"submit","request":{"identity":identity,"agent":agent,"question":"Choose","options":[],"importance":importance}}),
+        )?;
+        ids.push(
+            result
+                .get("id")
+                .and_then(Value::as_i64)
+                .ok_or("missing id")?,
+        );
+    }
+    let queue_ids = |op: &str| -> TestResult<Vec<i64>> {
+        let result = call(&address, json!({"op":op}))?;
+        Ok(result
+            .get("requests")
+            .and_then(Value::as_array)
+            .ok_or("missing requests")?
+            .iter()
+            .filter_map(|item| item.get("id").and_then(Value::as_i64))
+            .collect())
+    };
+    let low = *ids.first().ok_or("missing low")?;
+    let high = *ids.get(1).ok_or("missing high")?;
+    let tie = *ids.get(2).ok_or("missing tie")?;
+    assert_eq!(queue_ids("list")?, vec![high, tie, low]);
+    call(
+        &address,
+        json!({"op":"set_importance","id":low,"importance":5}),
+    )?;
+    assert_eq!(queue_ids("list")?, vec![low, high, tie]);
+    call(
+        &address,
+        json!({"op":"set_deferred","id":low,"deferred":true}),
+    )?;
+    assert_eq!(queue_ids("list")?, vec![high, tie]);
+    assert_eq!(queue_ids("list_deferred")?, vec![low]);
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(queue_ids("list_deferred")?, vec![low]);
+    call(
+        &address,
+        json!({"op":"set_deferred","id":low,"deferred":false}),
+    )?;
+    assert_eq!(queue_ids("list")?, vec![low, high, tie]);
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"set_importance","id":low,"importance":6})
+        )?
+        .get("error"),
+        Some(&json!("invalid request"))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

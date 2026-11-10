@@ -32,3 +32,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local agent request/reply evidence (2026-11-09)
 
 `cargo test --locked` passed a local ZeroMQ integration test that starts a `wait-message` CLI before a directly addressed response, checks the correlated response and sender inbox, rejects an unrelated responder label and a second response, retries an identical response, then restarts both service and waiter and retrieves the same response. Label checks do not establish authentication. Group request/reply, network partitions, remote machines and OS-crash behavior are not covered by this test.
+
+
+## Local decision priority and deferral evidence (2026-11-09)
+
+`cargo test --locked` passed priority ordering across agents, submission-order ties, a persistent override, active/deferred separation, and service restart recovery. `python3 tests/terminal_pty.py` additionally deferred a decision, closed and reopened the interface, switched to the deferred view, changed priority, and restored it, with terminal settings restored on normal exit. This does not establish completion-notice behavior, the full attention interface, representative operator validation, tmux, other platforms or OS-crash recovery.

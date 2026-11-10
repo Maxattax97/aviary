@@ -65,6 +65,9 @@ impl Drop for TerminalGuard {
 
 struct View {
     requests: Vec<PendingRequest>,
+    current: usize,
+    deferred_view: bool,
+    priority_edit: bool,
     selected: Option<usize>,
     editing: bool,
     custom: String,
@@ -73,28 +76,43 @@ impl View {
     fn new() -> Self {
         Self {
             requests: Vec::new(),
+            current: 0,
+            deferred_view: false,
+            priority_edit: false,
             selected: None,
             editing: false,
             custom: String::new(),
         }
     }
+    fn current(&self) -> Option<&PendingRequest> {
+        self.requests.get(self.current)
+    }
+    fn reset_selection(&mut self) {
+        self.selected = self
+            .current()
+            .and_then(|r| r.request.recommendation.map(|_| 0));
+        self.editing = false;
+        self.priority_edit = false;
+        self.custom.clear();
+    }
     fn update(&mut self, requests: Vec<PendingRequest>) -> bool {
         if self.requests == requests {
             return false;
         }
-        if self.requests.first().map(|r| r.id) != requests.first().map(|r| r.id) {
-            self.selected = requests
-                .first()
-                .and_then(|r| r.request.recommendation.map(|_| 0));
-            self.editing = false;
-            self.custom.clear();
-        }
+        let previous = self.current().map(|r| r.id);
+        self.current = previous
+            .and_then(|id| requests.iter().position(|r| r.id == id))
+            .unwrap_or(0);
+        let changed = previous != requests.get(self.current).map(|r| r.id);
         self.requests = requests;
+        if changed {
+            self.reset_selection();
+        }
         true
     }
     // Presentation position maps back to the original suggestion index; custom is last.
     fn choices(&self) -> Vec<usize> {
-        let Some(pending) = self.requests.first() else {
+        let Some(pending) = self.current() else {
             return Vec::new();
         };
         let mut indices = Vec::with_capacity(pending.request.options.len());
@@ -114,6 +132,24 @@ impl View {
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
         }
+        if self.priority_edit {
+            match key.code {
+                KeyCode::Esc => {
+                    self.priority_edit = false;
+                    return Action::Redraw;
+                }
+                KeyCode::Char(c @ '0'..='5') => {
+                    if let Some(request) = self.current() {
+                        return Action::Submit(Operation::SetImportance {
+                            id: request.id,
+                            importance: c as u8 - b'0',
+                        });
+                    }
+                }
+                _ => {}
+            }
+            return Action::None;
+        }
         if self.editing {
             match key.code {
                 KeyCode::Esc => self.editing = false,
@@ -121,7 +157,7 @@ impl View {
                     self.custom.pop();
                 }
                 KeyCode::Enter if !self.custom.is_empty() => {
-                    if let Some(request) = self.requests.first() {
+                    if let Some(request) = self.current() {
                         return Action::Submit(Operation::AnswerCustom {
                             id: request.id,
                             value: self.custom.clone(),
@@ -140,8 +176,11 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Tab {
+            return Action::ToggleDeferred;
+        }
         let choices = self.choices();
-        let Some(request) = self.requests.first() else {
+        let Some(request) = self.current() else {
             return if key.code == KeyCode::Char('q') {
                 Action::Quit
             } else {
@@ -150,6 +189,24 @@ impl View {
         };
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.current = self.current.saturating_sub(1);
+                self.reset_selection();
+                Action::Redraw
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.current = (self.current + 1).min(self.requests.len().saturating_sub(1));
+                self.reset_selection();
+                Action::Redraw
+            }
+            KeyCode::Char('d') => Action::Submit(Operation::SetDeferred {
+                id: request.id,
+                deferred: !self.deferred_view,
+            }),
+            KeyCode::Char('p') => {
+                self.priority_edit = true;
+                Action::Redraw
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 self.selected = Some(self.selected.map_or(0, |i| (i + 1).min(choices.len())));
                 Action::Redraw
@@ -189,6 +246,7 @@ enum Action {
     None,
     Redraw,
     Quit,
+    ToggleDeferred,
     Submit(Operation),
 }
 
@@ -230,7 +288,8 @@ pub async fn terminal(address: &str) -> Result<()> {
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let response = network::call(address, &Operation::List).await?;
+                let operation = if view.deferred_view { Operation::ListDeferred } else { Operation::List };
+                let response = network::call(address, &operation).await?;
                 let requests: RequestList = serde_json::from_value(response)?;
                 for request in &requests.requests { request.request.validate()?; }
                 if view.update(requests.requests) { display(&view)?; }
@@ -241,10 +300,17 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::None => {},
                     Action::Redraw => display(&view)?,
                     Action::Quit => return Ok(()),
+                    Action::ToggleDeferred => {
+                        view.deferred_view = !view.deferred_view;
+                        view.update(Vec::new());
+                        display(&view)?;
+                        interval.reset_immediately();
+                    },
                     Action::Submit(operation) => {
                         network::call(address, &operation).await?;
                         view.update(Vec::new());
                         display(&view)?;
+                        interval.reset_immediately();
                     }
                 }
             }
@@ -260,10 +326,18 @@ fn safe(text: &str) -> String {
 }
 fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
-    if let Some(pending) = view.requests.first() {
+    if let Some(pending) = view.current() {
         let request = &pending.request;
         println!(
-            "Request {} from {}\r\n{}\r\n",
+            "{} queue: {}/{} | importance {}\r\nRequest {} from {}\r\n{}\r\n",
+            if view.deferred_view {
+                "Deferred"
+            } else {
+                "Active"
+            },
+            view.current + 1,
+            view.requests.len(),
+            pending.importance,
             pending.id,
             safe(&request.agent),
             safe(&request.question)
@@ -301,16 +375,25 @@ fn display(view: &View) -> Result<()> {
             },
             choices.len() + 1
         );
-        if view.editing {
+        if view.priority_edit {
+            println!("\r\nSet importance 0-5; Esc cancels.");
+        } else if view.editing {
             println!(
                 "\r\nCustom answer: {}_\r\nEnter submits; Esc cancels editing.",
                 safe(&view.custom)
             );
         } else {
-            println!("\r\nj/k or arrows select; 1-9 select; Enter confirms; q quits.");
+            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; Tab queues; q quits.");
         }
     } else {
-        println!("No pending requests. q quits.");
+        println!(
+            "No {} requests. Tab switches queues; q quits.",
+            if view.deferred_view {
+                "deferred"
+            } else {
+                "active"
+            }
+        );
     }
     io::stdout().flush()?;
     Ok(())
@@ -324,11 +407,14 @@ mod tests {
     fn request(recommendation: Option<usize>, count: usize) -> PendingRequest {
         PendingRequest {
             id: 42,
+            importance: 0,
+            deferred: false,
             request: DecisionRequest {
                 identity: "test".into(),
                 agent: "agent".into(),
                 question: "Choose".into(),
                 options: (0..count).map(|i| format!("option {i}")).collect(),
+                importance: 0,
                 recommendation,
                 reason: recommendation.map(|_| "reason".into()),
             },

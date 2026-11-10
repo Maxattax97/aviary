@@ -37,5 +37,41 @@ with tempfile.TemporaryDirectory() as d:
             assert termios.tcgetattr(slave) == before
             os.close(master); os.close(slave)
             print(case, 'passed; terminal restored')
+        request = {'identity':'deferred','agent':'agent','question':'Defer this','options':['Yes'],'recommendation':0,'reason':'Ready','importance':1}
+        ident = call({'op':'submit','request':request})['id']
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        def wait_output(marker):
+            output = b''; deadline = time.monotonic() + 8
+            while marker not in output and time.monotonic() < deadline:
+                if select.select([master],[],[],.2)[0]: output += os.read(master,65536)
+            assert marker in output, output
+        def wait_ids(op, ids):
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if [r['id'] for r in call({'op':op})['requests']] == ids: return
+                time.sleep(.05)
+            raise AssertionError((op, ids))
+        wait_output(b'Defer this')
+        os.write(master,b'd'); wait_ids('list_deferred',[ident])
+        os.write(master,b'q'); proc.wait(timeout=5)
+        assert termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        wait_output(b'No active requests')
+        os.write(master,b'\t'); wait_output(b'Defer this')
+        os.write(master,b'p5')
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            items = call({'op':'list_deferred'})['requests']
+            if items and items[0]['importance'] == 5: break
+            time.sleep(.05)
+        else: raise AssertionError('priority override not stored')
+        os.write(master,b'd'); wait_ids('list',[ident])
+        os.write(master,b'q'); proc.wait(timeout=5)
+        assert proc.returncode == 0 and termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        print('defer, reopen, priority override, restore passed; terminal restored')
     finally:
         server.kill(); server.wait()

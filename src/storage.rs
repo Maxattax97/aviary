@@ -43,13 +43,19 @@ impl Storage {
         sqlx::query("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS request_attention (request_id INTEGER PRIMARY KEY, importance INTEGER, deferred INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (request_id) REFERENCES requests(id))").execute(&pool).await?;
         Ok(Self { pool })
     }
 
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
         match operation {
             Operation::Submit { request } => self.submit(request).await,
-            Operation::List => self.list().await,
+            Operation::List => self.list(false).await,
+            Operation::ListDeferred => self.list(true).await,
+            Operation::SetImportance { id, importance } => {
+                self.set_importance(id, importance).await
+            }
+            Operation::SetDeferred { id, deferred } => self.set_deferred(id, deferred).await,
             Operation::Get { id } => self.get(id).await,
             Operation::Answer { id, index } => self.answer(id, index).await,
             Operation::AnswerCustom { id, value } => self.answer_custom(id, value).await,
@@ -303,21 +309,49 @@ impl Storage {
         Ok(json!({"messages": messages}))
     }
 
-    async fn list(&self) -> Result<Value> {
-        let rows: Vec<(i64, String)> =
-            sqlx::query_as("SELECT id, payload FROM requests WHERE answer IS NULL ORDER BY id")
-                .fetch_all(&self.pool)
-                .await?;
-        let requests: Vec<PendingRequest> = rows
+    async fn list(&self, deferred: bool) -> Result<Value> {
+        let rows: Vec<(i64, String, Option<i64>, bool)> = sqlx::query_as("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ?")
+            .bind(deferred).fetch_all(&self.pool).await?;
+        let mut requests = rows
             .into_iter()
-            .map(|(id, payload)| {
-                Ok(PendingRequest {
-                    id,
-                    request: serde_json::from_str(&payload)?,
-                })
-            })
-            .collect::<Result<_>>()?;
+            .map(
+                |(id, payload, override_value, deferred)| -> Result<PendingRequest> {
+                    let request: DecisionRequest = serde_json::from_str(&payload)?;
+                    let importance = override_value
+                        .map(|value| value as u8)
+                        .unwrap_or(request.importance);
+                    Ok(PendingRequest {
+                        id,
+                        request,
+                        importance,
+                        deferred,
+                    })
+                },
+            )
+            .collect::<Result<Vec<_>>>()?;
+        requests.sort_by_key(|item| (std::cmp::Reverse(item.importance), item.id));
         Ok(json!({"requests": requests}))
+    }
+
+    async fn set_importance(&self, id: i64, importance: u8) -> Result<Value> {
+        if importance > 5 {
+            return Err(AppError::InvalidRequest);
+        }
+        let result = sqlx::query("INSERT INTO request_attention (request_id, importance) SELECT id, ? FROM requests WHERE id = ? AND answer IS NULL ON CONFLICT(request_id) DO UPDATE SET importance = excluded.importance")
+            .bind(importance).bind(id).execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::RequestNotFound);
+        }
+        Ok(json!({"id": id, "importance": importance}))
+    }
+
+    async fn set_deferred(&self, id: i64, deferred: bool) -> Result<Value> {
+        let result = sqlx::query("INSERT INTO request_attention (request_id, deferred) SELECT id, ? FROM requests WHERE id = ? AND answer IS NULL ON CONFLICT(request_id) DO UPDATE SET deferred = excluded.deferred")
+            .bind(deferred).bind(id).execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::RequestNotFound);
+        }
+        Ok(json!({"id": id, "deferred": deferred}))
     }
 
     async fn get(&self, id: i64) -> Result<Value> {
