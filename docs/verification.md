@@ -197,3 +197,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local Python/libzmq interoperability (2026-11-10)
 
 `python3 tests/zeromq_interop.py` passed on Linux over loopback using Python ctypes and system libzmq 4.3.5 against the Rust service. One DEALER pipelined a decision submission and list request, matched both correlations, checked an unsupported version error, survived a service process restart, retried the same identity, rejected conflicting content, and retrieved an answer submitted through the CLI. This exercises a different client stack using libzmq, not an independent ZeroMQ implementation, another machine, OS-crash recovery, or a stable future wire contract.
+
+
+## Local terminal inbox page navigation (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed on Linux over loopback. With thirteen operator inbox messages totaling more than one frame, it navigated forward across a response-page boundary and backward to the previous page, after exercising live arrival, history access, reply and retry on smaller data. `python3 tests/history_terminal.py` also passed with an inbox larger than one frame. These checks establish behavior for stable fixtures, not a measured total memory bound, arbitrary concurrent mutation, remote operation or representative-operator usability.

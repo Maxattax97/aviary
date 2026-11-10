@@ -149,7 +149,7 @@ A history page resolves its root and reads only the requested section in a singl
 
 ## Operator inbox
 
-The terminal can read the non-destructive inbox for the `operator` routing label. It loads and refreshes inbox pages while that view is open, retains selection by message ID, and pages sender, work context, body and activity for inspection. `i` opens or closes the inbox, h/l moves between messages, and j/k moves through content. There is no unread state or removal; use the CLI for history. A direct message that requests a reply offers r to compose a correlated response. Routing labels remain unauthenticated. Inbox aggregation is not memory-bounded, and representative operator and remote-machine validation remain open.
+The terminal can read the non-destructive inbox for the `operator` routing label. It loads and refreshes inbox pages while that view is open, retains selection by message ID, and pages sender, work context, body and activity for inspection. `i` opens or closes the inbox, h/l moves between messages, and j/k moves through content. There is no unread state or removal; use the CLI for history. A direct message that requests a reply offers r to compose a correlated response. Routing labels remain unauthenticated. The inbox retains one response page and an offset history for backward navigation; representative operator and remote-machine validation remain open.
 
 
 ## Operator inbox replies
@@ -175,3 +175,8 @@ The ROUTER uses mandatory routing and nonblocking reply sends. If a recipient is
 ## Explicit attention classification
 
 A sender explicitly classifies work by operation: `submit` creates a decision requiring operator action, `submit_notice` reports a completion for the separate notice view, and `send_message` routes a message to its addressed inboxes without putting it in the decision queue. Accepted pending decisions from all agents share the active queue, ordered by importance and ID; deferred or answered decisions are excluded. The service does not infer whether content is genuinely urgent or useful, and sender labels are unauthenticated. This policy preserves operator control but still requires representative validation of attention quality and appropriate agent behavior.
+
+
+## Operator inbox page navigation
+
+The terminal requests and retains one operator inbox response page at a time. At the first or last record, h/l loads the adjacent page; previous page offsets are retained for backward navigation. Selection is retained by ID on refresh within the current page. Until the final page is reached, the total is shown as unknown. Inbox messages are retained and ID-ordered in V1, but page reads are separate snapshots; changes to retention semantics would need a new traversal design. This limits retained message payloads to a page, not total process memory: offset history grows with navigation, other queues are still aggregated, and SQLite/libzmq have their own buffers.

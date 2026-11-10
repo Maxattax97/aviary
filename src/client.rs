@@ -98,28 +98,22 @@ async fn fetch_notices(address: &str) -> Result<Vec<NoticeItem>> {
     }
 }
 
-async fn fetch_operator_inbox(address: &str) -> Result<Vec<InboxItem>> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: InboxPage = serde_json::from_value(
-            network::call_with_timeout(
-                address,
-                &Operation::InboxPage {
-                    participant: "operator".into(),
-                    offset,
-                },
-                POLL_TIMEOUT_MS,
-            )
-            .await?,
-        )?;
-        result.extend(page.messages);
-        match page.next_offset {
-            Some(next) if next > offset => offset = next,
-            Some(_) => return Err(crate::error::AppError::InvalidFrame),
-            None => return Ok(result),
-        }
+async fn fetch_operator_inbox(address: &str, offset: usize) -> Result<InboxPage> {
+    let page: InboxPage = serde_json::from_value(
+        network::call_with_timeout(
+            address,
+            &Operation::InboxPage {
+                participant: "operator".into(),
+                offset,
+            },
+            POLL_TIMEOUT_MS,
+        )
+        .await?,
+    )?;
+    if page.next_offset.is_some_and(|next| next <= offset) {
+        return Err(crate::error::AppError::InvalidFrame);
     }
+    Ok(page)
 }
 
 struct HistoryResult {
@@ -310,6 +304,10 @@ struct View {
     notice_view: bool,
     inbox_view: bool,
     inbox_loaded: bool,
+    inbox_offset: usize,
+    inbox_previous: Vec<usize>,
+    inbox_next: Option<usize>,
+    inbox_select_last: Option<bool>,
     inbox: Vec<InboxItem>,
     inbox_current: usize,
     inbox_page: usize,
@@ -339,6 +337,10 @@ impl View {
             notice_view: false,
             inbox_view: false,
             inbox_loaded: false,
+            inbox_offset: 0,
+            inbox_previous: Vec::new(),
+            inbox_next: None,
+            inbox_select_last: None,
             inbox: Vec::new(),
             inbox_current: 0,
             inbox_page: 0,
@@ -398,21 +400,26 @@ impl View {
         self.notices = notices;
         true
     }
-    fn update_inbox(&mut self, messages: Vec<InboxItem>) -> bool {
+    fn update_inbox(&mut self, page: InboxPage) -> bool {
         let first_load = !self.inbox_loaded;
-        self.inbox_loaded = true;
-        if self.inbox == messages {
-            return first_load;
-        }
+        let changed =
+            first_load || self.inbox != page.messages || self.inbox_next != page.next_offset;
         let previous = self.inbox.get(self.inbox_current).map(|item| item.id);
-        self.inbox_current = previous
-            .and_then(|id| messages.iter().position(|item| item.id == id))
-            .unwrap_or(0);
-        if previous != messages.get(self.inbox_current).map(|item| item.id) {
+        let current = match self.inbox_select_last.take() {
+            Some(true) => page.messages.len().saturating_sub(1),
+            Some(false) => 0,
+            None => previous
+                .and_then(|id| page.messages.iter().position(|item| item.id == id))
+                .unwrap_or(0),
+        };
+        if previous != page.messages.get(current).map(|item| item.id) {
             self.inbox_page = 0;
         }
-        self.inbox = messages;
-        true
+        self.inbox_current = current;
+        self.inbox = page.messages;
+        self.inbox_next = page.next_offset;
+        self.inbox_loaded = true;
+        changed
     }
     // Presentation position maps back to the original suggestion index; custom is last.
     fn choices(&self) -> Vec<usize> {
@@ -607,14 +614,32 @@ impl View {
                         }
                     }
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
-                    self.inbox_current = self.inbox_current.saturating_sub(1);
-                    self.inbox_page = 0;
+                KeyCode::Char('h') | KeyCode::Left if self.inbox_loaded => {
+                    if self.inbox_current == 0 {
+                        if let Some(previous) = self.inbox_previous.pop() {
+                            self.inbox_offset = previous;
+                            self.inbox_loaded = false;
+                            self.inbox_select_last = Some(true);
+                            self.inbox_page = 0;
+                            return Action::ReloadInbox;
+                        }
+                    } else {
+                        self.inbox_current -= 1;
+                        self.inbox_page = 0;
+                    }
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
-                    self.inbox_current =
-                        (self.inbox_current + 1).min(self.inbox.len().saturating_sub(1));
-                    self.inbox_page = 0;
+                KeyCode::Char('l') | KeyCode::Right if self.inbox_loaded => {
+                    if self.inbox_current + 1 < self.inbox.len() {
+                        self.inbox_current += 1;
+                        self.inbox_page = 0;
+                    } else if let Some(next) = self.inbox_next {
+                        self.inbox_previous.push(self.inbox_offset);
+                        self.inbox_offset = next;
+                        self.inbox_loaded = false;
+                        self.inbox_select_last = Some(false);
+                        self.inbox_page = 0;
+                        return Action::ReloadInbox;
+                    }
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
                     let last = self
@@ -862,6 +887,7 @@ enum Action {
     Quit,
     ToggleDeferred,
     ToggleInbox,
+    ReloadInbox,
     OpenHistory(HistoryKind, i64),
     CloseHistory,
     LoadHistory,
@@ -922,12 +948,13 @@ pub async fn terminal(address: &str) -> Result<()> {
                     let address = address.to_owned();
                     let deferred = view.deferred_view;
                     let inbox_view = view.inbox_view;
+                    let inbox_offset = view.inbox_offset;
                     let current_generation = generation;
                     refresh = Some(tokio::spawn(async move {
                         let result = async {
                             let requests = fetch_requests(&address, deferred).await?;
                             let notices = fetch_notices(&address).await?;
-                            let messages = if inbox_view { Some(fetch_operator_inbox(&address).await?) } else { None };
+                            let messages = if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await?) } else { None };
                             Ok::<_, crate::error::AppError>((requests, notices, messages))
                         }.await;
                         (current_generation, deferred, inbox_view, result)
@@ -1048,6 +1075,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                         view.inbox_view = !view.inbox_view;
                         view.inbox_loaded = false;
                         view.inbox_page = 0;
+                        display(&view)?;
+                        interval.reset_immediately();
+                    },
+                    Action::ReloadInbox => {
+                        generation = generation.wrapping_add(1);
                         display(&view)?;
                         interval.reset_immediately();
                     },
@@ -1370,7 +1402,18 @@ fn display(view: &View) -> Result<()> {
             } else {
                 ""
             };
-            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; H history; g lookup; {}i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
+            let position = view
+                .inbox_offset
+                .saturating_add(view.inbox_current)
+                .saturating_add(1);
+            let total = if view.inbox_next.is_some() {
+                "?".into()
+            } else {
+                view.inbox_offset
+                    .saturating_add(view.inbox.len())
+                    .to_string()
+            };
+            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; H history; g lookup; {}i or q returns.", position, total, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
         } else {
             println!("Operator inbox: no messages. i or q returns.");
         }
