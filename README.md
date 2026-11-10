@@ -2,7 +2,7 @@
 
 See the [system architecture](docs/architecture.md) for the V1 design, boundaries and verification map.
 
-This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement channels, general message delivery, the full attention interface, or the full V1 requirements.
+This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement agent request/reply, operator instruction composition, the full attention interface, or the full V1 requirements.
 
 The service has **no authentication or encryption**. Any process that can connect can read requests and submit answers. The default listener is `127.0.0.1:7432`; bind a non-loopback address only on a trusted network. Participant names are labels, not identities.
 
@@ -25,3 +25,15 @@ The Tokio service uses SQLx with SQLite WAL and `synchronous=FULL`; writes commi
 Run `cargo test --locked`. Building requires a C++ compiler and CMake for the bundled libzmq when a system development package is unavailable. The integration test needs permission to bind a loopback TCP socket. It kills and restarts the service after acknowledged writes; it does not prove power-loss recovery or cross-machine operation.
 
 For a Linux pseudo-terminal smoke test after building, run `python3 tests/terminal_pty.py`; it requires loopback socket access and exercises recommendation, alternate and custom answers and terminal restoration.
+
+### Channel messages (initial CLI contract)
+
+Create an immutable named channel with a nonempty, unique list of participant labels. Repeating its name with the same membership succeeds; a different membership conflicts. A sender must be a member. A participant target must be a member; a group target addresses all members except the sender and must have at least one recipient. Recipient membership is captured at acceptance. Inbox retrieval is non-destructive and returns retained messages in service ID order, including messages accepted while a recipient was disconnected. Names are routing labels and anyone who can reach the service can impersonate them or read any inbox.
+
+```sh
+aviary call 127.0.0.1:7432 '{"op":"create_channel","channel":{"name":"team","members":["agent-a","agent-b"]}}'
+aviary call 127.0.0.1:7432 '{"op":"send_message","message":{"identity":"unique-message-key","channel":"team","sender":"agent-a","target":{"kind":"participant","name":"agent-b"},"body":"Please review","context":"work description","activity":"task-1"}}'
+aviary call 127.0.0.1:7432 '{"op":"inbox","participant":"agent-b"}'
+```
+
+Use `{"kind":"group"}` as the target for channel-wide delivery. `context` and `activity` may be omitted. Message and decision submission identities share one deployment-wide namespace; an identical retry returns the original ID, while changed content or a different submission type conflicts. Message and decision IDs themselves are separate. The inbox is not yet paginated and can exceed the transport response limit.

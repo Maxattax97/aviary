@@ -43,6 +43,9 @@ pub enum Operation {
     Get { id: i64 },
     Answer { id: i64, index: usize },
     AnswerCustom { id: i64, value: String },
+    CreateChannel { channel: Channel },
+    SendMessage { message: Message },
+    Inbox { participant: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -76,4 +79,32 @@ pub struct CustomAnswer {
     #[serde(rename = "type")]
     pub answer_type: AnswerType,
     pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Channel {
+    pub name: String,
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Target {
+    Participant { name: String },
+    Group,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Message {
+    pub identity: String,
+    pub channel: String,
+    pub sender: String,
+    pub target: Target,
+    pub body: String,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub activity: Option<String>,
 }

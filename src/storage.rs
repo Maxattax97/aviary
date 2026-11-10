@@ -9,7 +9,8 @@ use sqlx::{
 use crate::{
     error::{AppError, Result},
     protocol::{
-        AnswerType, CustomAnswer, DecisionRequest, Operation, PendingRequest, SuggestedAnswer,
+        AnswerType, Channel, CustomAnswer, DecisionRequest, Message, Operation, PendingRequest,
+        SuggestedAnswer, Target,
     },
 };
 
@@ -32,6 +33,15 @@ impl Storage {
             .await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, answer TEXT)")
             .execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS submission_keys (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, record_id INTEGER)").execute(&pool).await?;
+        sqlx::query("INSERT OR IGNORE INTO submission_keys (identity, kind, payload, record_id) SELECT identity, 'decision', payload, id FROM requests").execute(&pool).await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS channels (name TEXT PRIMARY KEY, members TEXT NOT NULL)",
+        )
+        .execute(&pool)
+        .await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)").execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -42,6 +52,9 @@ impl Storage {
             Operation::Get { id } => self.get(id).await,
             Operation::Answer { id, index } => self.answer(id, index).await,
             Operation::AnswerCustom { id, value } => self.answer_custom(id, value).await,
+            Operation::CreateChannel { channel } => self.create_channel(channel).await,
+            Operation::SendMessage { message } => self.send_message(message).await,
+            Operation::Inbox { participant } => self.inbox(participant).await,
         }
     }
 
@@ -49,18 +62,152 @@ impl Storage {
         request.validate()?;
         let payload = serde_json::to_string(&request)?;
 
-        // The unique identity makes competing retries converge on one committed row.
-        sqlx::query("INSERT INTO requests (identity, payload) VALUES (?, ?) ON CONFLICT(identity) DO NOTHING")
-            .bind(&request.identity).bind(&payload).execute(&self.pool).await?;
-        let (id, existing_payload): (i64, String) =
-            sqlx::query_as("SELECT id, payload FROM requests WHERE identity = ?")
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO submission_keys (identity, kind, payload) VALUES (?, 'decision', ?) ON CONFLICT(identity) DO NOTHING")
+            .bind(&request.identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
+        let id = if inserted {
+            let result = sqlx::query("INSERT INTO requests (identity, payload) VALUES (?, ?)")
                 .bind(&request.identity)
-                .fetch_one(&self.pool)
+                .bind(&payload)
+                .execute(&mut *tx)
                 .await?;
-        if existing_payload != payload {
+            let id = result.last_insert_rowid();
+            sqlx::query("UPDATE submission_keys SET record_id = ? WHERE identity = ?")
+                .bind(id)
+                .bind(&request.identity)
+                .execute(&mut *tx)
+                .await?;
+            id
+        } else {
+            Self::retry_id(&mut tx, &request.identity, "decision", &payload).await?
+        };
+        tx.commit().await?;
+        Ok(json!({"id": id}))
+    }
+
+    async fn retry_id(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identity: &str,
+        kind: &str,
+        payload: &str,
+    ) -> Result<i64> {
+        let (existing_kind, existing_payload, id): (String, String, Option<i64>) = sqlx::query_as(
+            "SELECT kind, payload, record_id FROM submission_keys WHERE identity = ?",
+        )
+        .bind(identity)
+        .fetch_one(&mut **tx)
+        .await?;
+        if existing_kind != kind || existing_payload != payload {
             return Err(AppError::IdentityConflict);
         }
-        Ok(json!({"id": id}))
+        id.ok_or(AppError::IdentityConflict)
+    }
+
+    async fn create_channel(&self, mut channel: Channel) -> Result<Value> {
+        if channel.name.is_empty()
+            || channel.members.is_empty()
+            || channel.members.iter().any(String::is_empty)
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        channel.members.sort();
+        if channel
+            .members
+            .windows(2)
+            .any(|pair| pair.first() == pair.get(1))
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let members = serde_json::to_string(&channel.members)?;
+        sqlx::query(
+            "INSERT INTO channels (name, members) VALUES (?, ?) ON CONFLICT(name) DO NOTHING",
+        )
+        .bind(&channel.name)
+        .bind(&members)
+        .execute(&self.pool)
+        .await?;
+        let existing: String = sqlx::query_scalar("SELECT members FROM channels WHERE name = ?")
+            .bind(&channel.name)
+            .fetch_one(&self.pool)
+            .await?;
+        if existing != members {
+            return Err(AppError::IdentityConflict);
+        }
+        Ok(json!({"channel": channel}))
+    }
+
+    async fn send_message(&self, message: Message) -> Result<Value> {
+        if message.identity.is_empty()
+            || message.channel.is_empty()
+            || message.sender.is_empty()
+            || message.body.is_empty()
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let payload = serde_json::to_string(&message)?;
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO submission_keys (identity, kind, payload) VALUES (?, 'message', ?) ON CONFLICT(identity) DO NOTHING")
+            .bind(&message.identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
+        if !inserted {
+            let id = Self::retry_id(&mut tx, &message.identity, "message", &payload).await?;
+            tx.commit().await?;
+            return Ok(json!({"id":id}));
+        }
+        let members: Option<String> =
+            sqlx::query_scalar("SELECT members FROM channels WHERE name = ?")
+                .bind(&message.channel)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let members: Vec<String> = serde_json::from_str(&members.ok_or(AppError::InvalidRequest)?)?;
+        if !members.contains(&message.sender) {
+            return Err(AppError::InvalidRequest);
+        }
+        let recipients: Vec<String> = match &message.target {
+            Target::Participant { name } if members.contains(name) => vec![name.clone()],
+            Target::Group => members
+                .into_iter()
+                .filter(|member| member != &message.sender)
+                .collect(),
+            _ => return Err(AppError::InvalidRequest),
+        };
+        if recipients.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let id = sqlx::query("INSERT INTO messages (identity, payload) VALUES (?, ?)")
+            .bind(&message.identity)
+            .bind(&payload)
+            .execute(&mut *tx)
+            .await?
+            .last_insert_rowid();
+        for recipient in recipients {
+            sqlx::query("INSERT INTO message_recipients (message_id, participant) VALUES (?, ?)")
+                .bind(id)
+                .bind(recipient)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("UPDATE submission_keys SET record_id = ? WHERE identity = ?")
+            .bind(id)
+            .bind(&message.identity)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(json!({"id":id}))
+    }
+
+    async fn inbox(&self, participant: String) -> Result<Value> {
+        if participant.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let rows: Vec<(i64, String)> = sqlx::query_as("SELECT m.id, m.payload FROM messages m JOIN message_recipients r ON r.message_id = m.id WHERE r.participant = ? ORDER BY m.id")
+            .bind(participant).fetch_all(&self.pool).await?;
+        let messages = rows
+            .into_iter()
+            .map(|(id, payload)| -> Result<Value> {
+                Ok(json!({"id": id, "message": serde_json::from_str::<Message>(&payload)?}))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok(json!({"messages": messages}))
     }
 
     async fn list(&self) -> Result<Value> {

@@ -349,3 +349,94 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn channel_routing_and_durable_retry() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-channel-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let create = json!({"op":"create_channel","channel":{"name":"team","members":["a","b","c"]}});
+    let channel = call(&address, create.clone())?;
+    assert_eq!(
+        channel.pointer("/channel/members"),
+        Some(&json!(["a", "b", "c"]))
+    );
+    assert_eq!(call(&address, create)?, channel);
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}})
+        )?
+        .get("error"),
+        Some(&json!("identity conflict"))
+    );
+    let direct = json!({"identity":"direct","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"hello","context":"work","activity":"task"});
+    let group_a = json!({"identity":"group-a","channel":"team","sender":"a","target":{"kind":"group"},"body":"for team"});
+    let group_b = json!({"identity":"group-b","channel":"team","sender":"b","target":{"kind":"group"},"body":"reply"});
+    let id = call(&address, json!({"op":"send_message","message":direct}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing id")?;
+    assert_eq!(
+        call(&address, json!({"op":"send_message","message":direct}))?.get("id"),
+        Some(&json!(id))
+    );
+    call(&address, json!({"op":"send_message","message":group_a}))?;
+    call(&address, json!({"op":"send_message","message":group_b}))?;
+    for (participant, expected) in [
+        ("a", vec!["group-b"]),
+        ("b", vec!["direct", "group-a"]),
+        ("c", vec!["group-a", "group-b"]),
+        ("unrelated", vec![]),
+    ] {
+        let inbox = call(&address, json!({"op":"inbox","participant":participant}))?;
+        let messages = inbox
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or("missing inbox")?;
+        let identities: Vec<&str> = messages
+            .iter()
+            .filter_map(|m| m.pointer("/message/identity").and_then(Value::as_str))
+            .collect();
+        assert_eq!(identities, expected);
+    }
+    let mut changed = direct.clone();
+    changed["body"] = json!("changed");
+    assert_eq!(
+        call(&address, json!({"op":"send_message","message":changed}))?.get("error"),
+        Some(&json!("identity conflict"))
+    );
+    let collision = json!({"identity":"direct","agent":"a","question":"q","options":[]});
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":collision}))?.get("error"),
+        Some(&json!("identity conflict"))
+    );
+    assert_eq!(call(&address, json!({"op":"send_message","message":{"identity":"invalid","channel":"team","sender":"outsider","target":{"kind":"group"},"body":"no"}}))?.get("error"), Some(&json!("invalid request")));
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"send_message","message":direct}))?.get("id"),
+        Some(&json!(id))
+    );
+    let inbox = call(&address, json!({"op":"inbox","participant":"b"}))?;
+    assert_eq!(
+        inbox.pointer("/messages/0/message/context"),
+        Some(&json!("work"))
+    );
+    assert_eq!(
+        inbox.pointer("/messages/0/message/activity"),
+        Some(&json!("task"))
+    );
+    assert_eq!(
+        inbox.pointer("/messages/0/message/target/name"),
+        Some(&json!("b"))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

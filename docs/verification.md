@@ -22,3 +22,8 @@ At commit `d72a164` plus the following test increment, `cargo test --locked --te
 ## Decision terminal smoke test (2026-11-09)
 
 On this Linux host, `cargo test --locked` passed keyboard-state and service tests, and `python3 tests/terminal_pty.py` exercised the real client and service over loopback in a pseudo-terminal. It verified no answer before confirmation, Enter on a preselected recommendation, numeric selection of a different suggestion, custom text including Unicode without a recommendation, structured retrieval, and restoration of terminal settings on normal exit. This is not representative operator validation or a supported-platform and tmux matrix; navigation in an actual interactive terminal, large-content presentation, abnormal termination and accessibility remain to be evaluated.
+
+
+## Local channel-routing evidence (2026-11-09)
+
+`cargo test --locked` passed on the local Linux host. The channel integration test creates a three-member channel, checks direct and group deliveries from two senders to multiple recipients, excludes an unrelated inbox, checks identity conflict and idempotent retry, and verifies retained routing and context after a service process restart. It exercises routing but does not prove authentication, authorization, cross-machine operation, an OS crash, pagination, operator composition, or agent request/reply.
