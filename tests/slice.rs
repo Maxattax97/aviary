@@ -1,85 +1,162 @@
 use serde_json::{json, Value};
 use std::{
+    error::Error,
     io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     process::{Child, Command, Stdio},
+    sync::{Arc, Barrier},
     thread,
     time::Duration,
 };
 
+type TestResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
+
 struct Server(Child);
+
 impl Drop for Server {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
 }
-fn start(db: &str, addr: &str) -> Server {
+
+fn start_server(database_path: &str, address: &str) -> TestResult<Server> {
     let child = Command::new(env!("CARGO_BIN_EXE_aviary"))
-        .args(["serve", db, addr])
+        .args(["serve", database_path, address])
         .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+        .spawn()?;
     let server = Server(child);
     for _ in 0..100 {
-        if TcpStream::connect(addr).is_ok() {
-            return server;
+        if TcpStream::connect(address).is_ok() {
+            return Ok(server);
         }
         thread::sleep(Duration::from_millis(20));
     }
-    panic!("server failed to start");
+    Err("server failed to start".into())
 }
-fn call(addr: &str, v: Value) -> Value {
-    let mut s = TcpStream::connect(addr).unwrap();
-    writeln!(s, "{v}").unwrap();
-    let mut line = String::new();
-    BufReader::new(s).read_line(&mut line).unwrap();
-    serde_json::from_str(&line).unwrap()
+
+fn call(address: &str, request: Value) -> TestResult<Value> {
+    let mut stream = TcpStream::connect(address)?;
+    writeln!(stream, "{request}")?;
+    let mut response = String::new();
+    BufReader::new(stream).read_line(&mut response)?;
+    Ok(serde_json::from_str(&response)?)
 }
+
+fn collect_results(tasks: Vec<thread::JoinHandle<TestResult<Value>>>) -> TestResult<Vec<Value>> {
+    tasks
+        .into_iter()
+        .map(|task| task.join().map_err(|_| "test worker panicked")?)
+        .collect()
+}
+
 #[test]
-fn durable_retry_and_single_answer() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap().to_string();
+fn durable_retry_and_single_answer() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
     drop(listener);
-    let dir = std::env::temp_dir().join(format!("aviary-test-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("test.sqlite");
-    let db = path.to_str().unwrap();
-    let req = json!({"identity":"retry-1","agent":"agent","question":"Proceed?","options":["No","Yes"],"recommendation":1,"reason":"Ready"});
-    let s = start(db, &addr);
-    let first = call(&addr, json!({"op":"submit","request":req}));
-    let id = first["id"].as_i64().unwrap();
-    assert_eq!(call(&addr, json!({"op":"submit","request":req}))["id"], id);
-    let mut changed = req.clone();
+    let directory = std::env::temp_dir().join(format!("aviary-test-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let database_path = directory.join("test.sqlite");
+    let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+    let request = json!({"identity":"retry-1","agent":"agent","question":"Proceed?","options":["No","Yes"],"recommendation":1,"reason":"Ready"});
+    let server = start_server(database, &address)?;
+    let first = call(&address, json!({"op":"submit","request":request}))?;
+    let id = first["id"].as_i64().ok_or("missing request ID")?;
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":request}))?["id"],
+        id
+    );
+    let mut changed = request.clone();
     changed["question"] = json!("Changed");
     assert_eq!(
-        call(&addr, json!({"op":"submit","request":changed}))["error"],
+        call(&address, json!({"op":"submit","request":changed}))?["error"],
         "identity conflict"
     );
-    drop(s);
-    let s = start(db, &addr);
+    drop(server);
+
+    let server = start_server(database, &address)?;
+    let pending = call(&address, json!({"op":"list"}))?;
     assert_eq!(
-        call(&addr, json!({"op":"list"}))["requests"]
+        pending["requests"]
             .as_array()
-            .unwrap()
+            .ok_or("missing requests")?
             .len(),
         1
     );
     assert_eq!(
-        call(&addr, json!({"op":"answer","id":id,"index":1}))["id"],
+        call(&address, json!({"op":"answer","id":id,"index":1}))?["id"],
         id
     );
     assert_eq!(
-        call(&addr, json!({"op":"answer","id":id,"index":0}))["error"],
+        call(&address, json!({"op":"answer","id":id,"index":0}))?["error"],
         "request already answered"
     );
-    drop(s);
-    let s = start(db, &addr);
+    drop(server);
+
+    let server = start_server(database, &address)?;
     assert_eq!(
-        call(&addr, json!({"op":"get","id":id}))["answer"],
+        call(&address, json!({"op":"get","id":id}))?["answer"],
         json!({"type":"suggested","index":1,"value":"Yes"})
     );
-    assert_eq!(call(&addr, json!({"op":"submit","request":req}))["id"], id);
-    drop(s);
-    std::fs::remove_dir_all(dir).unwrap();
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":request}))?["id"],
+        id
+    );
+
+    let concurrent_request = json!({"identity":"concurrent", "agent":"agent", "question":"Proceed?", "options":["No","Yes"], "recommendation":1, "reason":"Ready"});
+    let barrier = Arc::new(Barrier::new(8));
+    let submissions = (0..8)
+        .map(|_| {
+            let address = address.clone();
+            let request = concurrent_request.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                call(&address, json!({"op":"submit", "request":request}))
+            })
+        })
+        .collect();
+    let submission_results = collect_results(submissions)?;
+    let concurrent_id = submission_results
+        .first()
+        .and_then(|result| result["id"].as_i64())
+        .ok_or("missing concurrent request ID")?;
+    assert!(submission_results
+        .iter()
+        .all(|result| result["id"] == concurrent_id));
+
+    let barrier = Arc::new(Barrier::new(8));
+    let answers = (0..8)
+        .map(|index| {
+            let address = address.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                call(
+                    &address,
+                    json!({"op":"answer", "id":concurrent_id, "index":index % 2}),
+                )
+            })
+        })
+        .collect();
+    let answer_results = collect_results(answers)?;
+    assert_eq!(
+        answer_results
+            .iter()
+            .filter(|result| result["id"] == concurrent_id)
+            .count(),
+        1
+    );
+    assert_eq!(
+        answer_results
+            .iter()
+            .filter(|result| result["error"] == "request already answered")
+            .count(),
+        7
+    );
+    assert!(!call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"].is_null());
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
 }
