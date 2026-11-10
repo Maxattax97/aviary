@@ -33,7 +33,7 @@ impl PageBuilder {
     }
     fn push(&mut self, item: Value) -> Result<bool> {
         const PAGE_BYTES: usize = 900 * 1024;
-        const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_MESSAGE_BYTES as usize) - 2048;
+        const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_RESPONSE_BYTES as usize) - 2048;
         let size = serde_json::to_vec(&item)?.len() + 1;
         if size > MAX_ITEM_BYTES {
             return Err(AppError::InvalidFrame);

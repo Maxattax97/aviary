@@ -88,7 +88,7 @@ class Dealer:
             self.lib.zmq_send(self.socket, buffer, len(payload), 0)
         ) == len(payload)
 
-    def receive(self) -> dict:
+    def receive(self, version: int = 1) -> dict:
         buffer = ctypes.create_string_buffer(MAX_FRAME + 1)
         size = self.check(self.lib.zmq_recv(self.socket, buffer, len(buffer), 0))
         if size > MAX_FRAME:
@@ -102,7 +102,7 @@ class Dealer:
         )
         assert more.value == 0
         response = json.loads(buffer.raw[:size])
-        assert response["version"] == 1
+        assert response["version"] == version
         return response
 
     def close(self) -> None:
@@ -139,7 +139,9 @@ def main() -> None:
                 service.call({"op": "list_page"})["requests"][0]["request"]["question"]
                 == "Proceed 鳥?"
             )
-            dealer.send("bad-version", {"op": "get", "id": request_id}, version=2)
+            dealer.send("version-two", {"op": "get", "id": request_id}, version=2)
+            assert dealer.receive(version=2)["result"]["id"] == request_id
+            dealer.send("bad-version", {"op": "get", "id": request_id}, version=3)
             assert (
                 dealer.receive()["result"]["error"] == "message too large or incomplete"
             )

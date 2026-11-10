@@ -215,3 +215,7 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local terminal decision page navigation (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux loopback with ten large decisions across multiple response pages. It navigated forward and backward across a boundary, then answered the first seven through another client and observed recovery from an offset beyond the end. The terminal recovery, history and tmux smoke tests and Rust suite also passed. This is one local shift scenario, not consistent traversal during arbitrary concurrent changes, a total memory measurement, remote validation or representative operator acceptance.
+
+## Near-limit response retrieval (2026-11-10)
+
+The local `version_two_retrieves_near_limit_decision_and_answer` integration test submitted a decision whose request frame was just below 1 MiB, retrieved it in a version-2 queue page, answered with the near-limit suggested option, and retrieved the combined request and answer in a version-2 history page through both a direct client and the CLI. The same oversized history page returned a bounded error to a version-1 client. This does not prove every accepted payload shape or historical database import fits, bound total memory, or validate remote operation.

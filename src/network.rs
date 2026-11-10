@@ -9,13 +9,13 @@ use tracing::{debug, info, warn};
 
 use crate::{
     error::{AppError, Result},
-    protocol::{Operation, MAX_MESSAGE_BYTES},
+    protocol::{Operation, MAX_MESSAGE_BYTES, MAX_RESPONSE_BYTES},
     storage::Storage,
 };
 
 const TIMEOUT_MS: i32 = 10_000;
 const QUEUE_LIMIT: i32 = 64;
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -33,11 +33,11 @@ struct ResponseEnvelope {
     result: Value,
 }
 
-fn configure(socket: &zmq::Socket) -> Result<()> {
+fn configure(socket: &zmq::Socket, max_inbound: u64) -> Result<()> {
     socket.set_linger(0)?;
     socket.set_sndhwm(QUEUE_LIMIT)?;
     socket.set_rcvhwm(QUEUE_LIMIT)?;
-    socket.set_maxmsgsize(MAX_MESSAGE_BYTES as i64)?;
+    socket.set_maxmsgsize(max_inbound as i64)?;
     socket.set_sndtimeo(TIMEOUT_MS)?;
     socket.set_rcvtimeo(TIMEOUT_MS)?;
     Ok(())
@@ -77,14 +77,14 @@ pub async fn call_with_timeout(
     tokio::task::spawn_blocking(move || {
         let context = zmq::Context::new();
         let socket = context.socket(zmq::DEALER)?;
-        configure(&socket)?;
+        configure(&socket, MAX_RESPONSE_BYTES)?;
         socket.set_sndtimeo(timeout_ms)?;
         socket.set_rcvtimeo(timeout_ms)?;
         socket.set_immediate(true)?;
         socket.connect(&endpoint(&address))?;
         socket.send(request, 0).map_err(network_error)?;
         let frame = socket.recv_bytes(0).map_err(network_error)?;
-        if socket.get_rcvmore()? || frame.len() > MAX_MESSAGE_BYTES as usize {
+        if socket.get_rcvmore()? || frame.len() > MAX_RESPONSE_BYTES as usize {
             return Err(AppError::InvalidFrame);
         }
         let response: ResponseEnvelope = serde_json::from_slice(&frame)?;
@@ -134,7 +134,7 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
     let mut worker = tokio::task::spawn_blocking(move || {
         let context = zmq::Context::new();
         let socket = context.socket(zmq::ROUTER)?;
-        configure(&socket)?;
+        configure(&socket, MAX_MESSAGE_BYTES)?;
         socket.set_router_mandatory(true)?;
         socket.set_rcvtimeo(100)?;
         socket.bind(&endpoint(&address))?;
@@ -159,7 +159,7 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
                 Ok(request) => request,
                 Err(_) => continue,
             };
-            let result = if request.version != VERSION
+            let result = if !matches!(request.version, 1 | VERSION)
                 || request.correlation.is_empty()
                 || request.correlation.len() > 128
             {
@@ -177,14 +177,24 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
                     json!({"error": error.to_string()})
                 }
             };
+            let response_version = if request.version == VERSION {
+                VERSION
+            } else {
+                1
+            };
             let mut response = serde_json::to_vec(&ResponseEnvelope {
-                version: VERSION,
+                version: response_version,
                 correlation: request.correlation.clone(),
                 result,
             })?;
-            if response.len() > MAX_MESSAGE_BYTES as usize {
+            let max_response = if request.version == 1 {
+                MAX_MESSAGE_BYTES
+            } else {
+                MAX_RESPONSE_BYTES
+            };
+            if response.len() > max_response as usize {
                 response = serde_json::to_vec(&ResponseEnvelope {
-                    version: VERSION,
+                    version: response_version,
                     correlation: request.correlation,
                     result: json!({"error": "response too large"}),
                 })?;

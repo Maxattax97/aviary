@@ -80,6 +80,7 @@ def exercise_deferral(service: Service) -> None:
             == 5,
             "priority override",
         )
+        terminal.expect("importance 5")
         terminal.send("d")
         service.wait_for(
             lambda: queue_ids(service, "list") == [request_id], "restoration"

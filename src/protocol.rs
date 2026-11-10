@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 
 pub const MAX_MESSAGE_BYTES: u64 = 1_048_576;
+pub const MAX_RESPONSE_BYTES: u64 = 3 * MAX_MESSAGE_BYTES;
 fn is_zero(value: &u8) -> bool {
     *value == 0
 }

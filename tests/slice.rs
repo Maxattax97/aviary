@@ -35,20 +35,24 @@ fn start_server(database_path: &str, address: &str) -> TestResult<Server> {
 }
 
 fn call(address: &str, request: Value) -> TestResult<Value> {
+    call_version(address, request, 1)
+}
+
+fn call_version(address: &str, request: Value, version: u32) -> TestResult<Value> {
     let context = zmq::Context::new();
     let socket = context.socket(zmq::DEALER)?;
     socket.set_linger(0)?;
     socket.set_rcvtimeo(10_000)?;
     socket.connect(&format!("tcp://{address}"))?;
     socket.send(
-        json!({"version":1,"correlation":"test","operation":request})
+        json!({"version":version,"correlation":"test","operation":request})
             .to_string()
             .as_bytes(),
         0,
     )?;
     let response = socket.recv_bytes(0)?;
     let envelope: Value = serde_json::from_slice(&response)?;
-    assert_eq!(envelope.get("version"), Some(&json!(1)));
+    assert_eq!(envelope.get("version"), Some(&json!(version)));
     assert_eq!(envelope.get("correlation"), Some(&json!("test")));
     Ok(envelope.get("result").ok_or("missing result")?.clone())
 }
@@ -58,6 +62,50 @@ fn collect_results(tasks: Vec<thread::JoinHandle<TestResult<Value>>>) -> TestRes
         .into_iter()
         .map(|task| task.join().map_err(|_| "test worker panicked")?)
         .collect()
+}
+
+#[test]
+fn version_two_retrieves_near_limit_decision_and_answer() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-large-record-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let database_path = directory.join("test.sqlite");
+    let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let option = "x".repeat(1_048_000);
+    let submit = json!({"op":"submit", "request":{"identity":"near-limit", "agent":"a", "question":"Choose", "options":[option]}});
+    assert!(
+        serde_json::to_vec(&json!({"version":1,"correlation":"test","operation":submit}))?.len()
+            < 1_048_576
+    );
+    let id = call(&address, submit)?["id"].as_i64().ok_or("missing ID")?;
+    let page = call_version(&address, json!({"op":"list_page"}), 2)?;
+    assert_eq!(page["requests"][0]["request"]["options"][0], option);
+    call(&address, json!({"op":"answer", "id":id, "index":0}))?;
+    let history = json!({"op":"history_page", "kind":"decision", "id":id, "section":"decisions"});
+    assert_eq!(
+        call(&address, history.clone())?["error"],
+        "response too large"
+    );
+    let page = call_version(&address, history.clone(), 2)?;
+    assert_eq!(page["decisions"][0]["request"]["options"][0], option);
+    assert_eq!(page["decisions"][0]["answer"]["value"], option);
+    let output = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["call", &address, &history.to_string()])
+        .output()?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(result["decisions"][0]["answer"]["value"], option);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
 }
 
 #[test]
@@ -1555,7 +1603,7 @@ fn client_rejects_multipart_response() -> TestResult<()> {
         .spawn()?;
     let request = socket.recv_multipart(0)?;
     let identity = request.first().ok_or("missing identity")?;
-    let response = json!({"version":1,"correlation":"1","result":{"requests":[]}}).to_string();
+    let response = json!({"version":2,"correlation":"1","result":{"requests":[]}}).to_string();
     socket.send_multipart([identity.as_slice(), response.as_bytes(), b"unexpected"], 0)?;
     let output = child.wait_with_output()?;
     assert!(!output.status.success());
