@@ -202,3 +202,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local terminal inbox page navigation (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux over loopback. With thirteen operator inbox messages totaling more than one frame, it navigated forward across a response-page boundary and backward to the previous page, after exercising live arrival, history access, reply and retry on smaller data. `python3 tests/history_terminal.py` also passed with an inbox larger than one frame. These checks establish behavior for stable fixtures, not a measured total memory bound, arbitrary concurrent mutation, remote operation or representative-operator usability.
+
+
+## Local terminal notice page navigation (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed on Linux over loopback with ten large notices spanning response pages. It navigated forward and backward across a page boundary, dismissed earlier notices through the CLI until the active offset was past the end, observed the terminal fall back to the remaining notices, and dismissed one from the recovered view. The selected decision remained in place. This checks a bounded fixture and one page-shift scenario, not all concurrent mutations, a measured total memory bound, remote operation or representative-operator usability.

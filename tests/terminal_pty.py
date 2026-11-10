@@ -320,6 +320,7 @@ def exercise_operator_inbox(service: Service) -> None:
 def exercise_large_queues(service: Service, request_id: int) -> None:
     service.call({"op": "answer", "id": request_id, "index": 0})
     large = "x" * 120_000
+    notice_ids = []
     for number in range(10):
         submit(
             service,
@@ -331,16 +332,18 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
                 "context": large,
             },
         )
-        service.call(
-            {
-                "op": "submit_notice",
-                "notice": {
-                    "identity": f"large-notice-{number}",
-                    "agent": "agent",
-                    "work": f"Notice {number}",
-                    "result": large,
-                },
-            }
+        notice_ids.append(
+            service.call(
+                {
+                    "op": "submit_notice",
+                    "notice": {
+                        "identity": f"large-notice-{number}",
+                        "agent": "agent",
+                        "work": f"Notice {number}",
+                        "result": large,
+                    },
+                }
+            )["id"]
         )
         service.call(
             {
@@ -360,8 +363,32 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Queue item 9")
         terminal.send("n")
         terminal.expect("Notice 0")
-        terminal.send("l" * 9)
+        terminal.send("l" * 6)
+        terminal.expect("Notice 6")
+        terminal.send("l")
+        terminal.expect("Notice 7")
+        terminal.send("l" * 2)
         terminal.expect("Notice 9")
+        terminal.send("h" * 2)
+        terminal.expect("Notice 7")
+        terminal.send("h")
+        terminal.expect("Notice 6")
+        terminal.send("l")
+        terminal.expect("Notice 7")
+        terminal.send("l" * 2)
+        terminal.expect("Notice 9")
+        for notice_id in notice_ids[:7]:
+            service.call({"op": "dismiss_notice", "id": notice_id})
+        terminal.expect("Completion notice 3/3")
+        terminal.send("d")
+        service.wait_for(
+            lambda: notice_ids[-1]
+            not in [
+                item["id"] for item in service.call({"op": "list_notices"})["notices"]
+            ],
+            "notice dismissal after page shift",
+        )
+        terminal.expect("Notice 7")
         terminal.send("q")
         terminal.expect("Queue item 9")
         terminal.send("i")

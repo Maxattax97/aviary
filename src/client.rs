@@ -74,28 +74,22 @@ async fn fetch_requests(address: &str, deferred: bool) -> Result<Vec<PendingRequ
     }
 }
 
-async fn fetch_notices(address: &str) -> Result<Vec<NoticeItem>> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: NoticePage = serde_json::from_value(
-            network::call_with_timeout(
-                address,
-                &Operation::NoticesPage {
-                    include_dismissed: false,
-                    offset,
-                },
-                POLL_TIMEOUT_MS,
-            )
-            .await?,
-        )?;
-        result.extend(page.notices);
-        match page.next_offset {
-            Some(next) if next > offset => offset = next,
-            Some(_) => return Err(crate::error::AppError::InvalidFrame),
-            None => return Ok(result),
-        }
+async fn fetch_notices(address: &str, offset: usize) -> Result<NoticePage> {
+    let page: NoticePage = serde_json::from_value(
+        network::call_with_timeout(
+            address,
+            &Operation::NoticesPage {
+                include_dismissed: false,
+                offset,
+            },
+            POLL_TIMEOUT_MS,
+        )
+        .await?,
+    )?;
+    if page.next_offset.is_some_and(|next| next <= offset) {
+        return Err(crate::error::AppError::InvalidFrame);
     }
+    Ok(page)
 }
 
 async fn fetch_operator_inbox(address: &str, offset: usize) -> Result<InboxPage> {
@@ -302,6 +296,11 @@ struct View {
     history_lookup: Option<HistoryLookup>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
+    notice_loaded: bool,
+    notice_offset: usize,
+    notice_previous: Vec<usize>,
+    notice_next: Option<usize>,
+    notice_select_last: Option<bool>,
     inbox_view: bool,
     inbox_loaded: bool,
     inbox_offset: usize,
@@ -335,6 +334,11 @@ impl View {
             history_lookup: None,
             notices: Vec::new(),
             notice_view: false,
+            notice_loaded: false,
+            notice_offset: 0,
+            notice_previous: Vec::new(),
+            notice_next: None,
+            notice_select_last: None,
             inbox_view: false,
             inbox_loaded: false,
             inbox_offset: 0,
@@ -386,19 +390,43 @@ impl View {
         }
         true
     }
-    fn update_notices(&mut self, notices: Vec<NoticeItem>) -> bool {
-        if self.notices == notices {
-            return false;
+    fn update_notices(&mut self, page: NoticePage) -> bool {
+        // Dismissals on earlier pages can move the end before this offset.
+        if page.notices.is_empty() && self.notice_offset > 0 {
+            self.notice_offset = self.notice_previous.pop().unwrap_or(0);
+            self.notice_loaded = false;
+            self.notice_select_last = Some(true);
+            self.notices.clear();
+            self.notice_next = None;
+            return true;
         }
-        let previous = self.notices.get(self.notice_current).map(|n| n.id);
-        self.notice_current = previous
-            .and_then(|id| notices.iter().position(|n| n.id == id))
-            .unwrap_or(0);
-        if previous != notices.get(self.notice_current).map(|n| n.id) {
+        let changed = !self.notice_loaded
+            || self.notices != page.notices
+            || self.notice_next != page.next_offset;
+        let previous = self.notices.get(self.notice_current).map(|item| item.id);
+        let current = match self.notice_select_last.take() {
+            Some(true) => page.notices.len().saturating_sub(1),
+            Some(false) => 0,
+            None => previous
+                .and_then(|id| page.notices.iter().position(|item| item.id == id))
+                .unwrap_or(0),
+        };
+        if previous != page.notices.get(current).map(|item| item.id) {
             self.notice_page = 0;
         }
-        self.notices = notices;
-        true
+        self.notice_current = current;
+        self.notices = page.notices;
+        self.notice_next = page.next_offset;
+        self.notice_loaded = true;
+        changed
+    }
+    fn reset_notice_page(&mut self) {
+        self.notice_offset = 0;
+        self.notice_previous.clear();
+        self.notice_loaded = false;
+        self.notice_select_last = Some(false);
+        self.notice_current = 0;
+        self.notice_page = 0;
     }
     fn update_inbox(&mut self, page: InboxPage) -> bool {
         let first_load = !self.inbox_loaded;
@@ -659,41 +687,54 @@ impl View {
         if self.notice_view {
             match key.code {
                 KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => {
-                    self.notice_view = false;
-                    return Action::Redraw;
+                    return Action::ToggleNotices
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
-                    self.notice_current = self.notice_current.saturating_sub(1);
-                    self.notice_page = 0;
-                    return Action::Redraw;
+                KeyCode::Char('h') | KeyCode::Left if self.notice_loaded => {
+                    if self.notice_current == 0 {
+                        if let Some(previous) = self.notice_previous.pop() {
+                            self.notice_offset = previous;
+                            self.notice_loaded = false;
+                            self.notice_select_last = Some(true);
+                            self.notice_page = 0;
+                            return Action::ReloadNotices;
+                        }
+                    } else {
+                        self.notice_current -= 1;
+                        self.notice_page = 0;
+                    }
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
-                    self.notice_current =
-                        (self.notice_current + 1).min(self.notices.len().saturating_sub(1));
-                    self.notice_page = 0;
-                    return Action::Redraw;
+                KeyCode::Char('l') | KeyCode::Right if self.notice_loaded => {
+                    if self.notice_current + 1 < self.notices.len() {
+                        self.notice_current += 1;
+                        self.notice_page = 0;
+                    } else if let Some(next) = self.notice_next {
+                        self.notice_previous.push(self.notice_offset);
+                        self.notice_offset = next;
+                        self.notice_loaded = false;
+                        self.notice_select_last = Some(false);
+                        self.notice_page = 0;
+                        return Action::ReloadNotices;
+                    }
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    let max = self
+                KeyCode::Char('j') | KeyCode::Down if self.notice_loaded => {
+                    let last = self
                         .notices
                         .get(self.notice_current)
-                        .map(|n| notice_pages(n).len().saturating_sub(1))
+                        .map(|item| notice_pages(item).len().saturating_sub(1))
                         .unwrap_or(0);
-                    self.notice_page = (self.notice_page + 1).min(max);
-                    return Action::Redraw;
+                    self.notice_page = (self.notice_page + 1).min(last);
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.notice_page = self.notice_page.saturating_sub(1);
-                    return Action::Redraw;
+                KeyCode::Char('k') | KeyCode::Up if self.notice_loaded => {
+                    self.notice_page = self.notice_page.saturating_sub(1)
                 }
-                KeyCode::Char('d') => {
+                KeyCode::Char('d') if self.notice_loaded => {
                     if let Some(notice) = self.notices.get(self.notice_current) {
                         return Action::Submit(Operation::DismissNotice { id: notice.id });
                     }
                 }
-                _ => {}
+                _ => return Action::None,
             }
-            return Action::None;
+            return Action::Redraw;
         }
         if let Some(page) = self.detail_page {
             match key.code {
@@ -792,9 +833,7 @@ impl View {
             return Action::Redraw;
         }
         if key.code == KeyCode::Char('n') {
-            self.notice_view = true;
-            self.notice_page = 0;
-            return Action::Redraw;
+            return Action::ToggleNotices;
         }
         if key.code == KeyCode::Tab {
             return Action::ToggleDeferred;
@@ -888,6 +927,8 @@ enum Action {
     ToggleDeferred,
     ToggleInbox,
     ReloadInbox,
+    ToggleNotices,
+    ReloadNotices,
     OpenHistory(HistoryKind, i64),
     CloseHistory,
     LoadHistory,
@@ -932,7 +973,8 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut view = View::new();
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
-    let mut submission: Option<tokio::task::JoinHandle<(bool, Result<serde_json::Value>)>> = None;
+    let mut submission: Option<tokio::task::JoinHandle<(bool, bool, Result<serde_json::Value>)>> =
+        None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     display(&view)?;
     loop {
@@ -949,11 +991,12 @@ pub async fn terminal(address: &str) -> Result<()> {
                     let deferred = view.deferred_view;
                     let inbox_view = view.inbox_view;
                     let inbox_offset = view.inbox_offset;
+                    let notice_offset = view.notice_offset;
                     let current_generation = generation;
                     refresh = Some(tokio::spawn(async move {
                         let result = async {
                             let requests = fetch_requests(&address, deferred).await?;
-                            let notices = fetch_notices(&address).await?;
+                            let notices = fetch_notices(&address, notice_offset).await?;
                             let messages = if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await?) } else { None };
                             Ok::<_, crate::error::AppError>((requests, notices, messages))
                         }.await;
@@ -1019,7 +1062,7 @@ pub async fn terminal(address: &str) -> Result<()> {
             }, if submission.is_some() => {
                 submission = None;
                 view.busy = false;
-                let (is_instruction, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                let (is_instruction, is_notice, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 if is_instruction {
                     match result {
                         Ok(response) => {
@@ -1031,7 +1074,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(_) => { view.status = None; view.update(Vec::new()); view.update_notices(Vec::new()); }
+                        Ok(_) => { view.status = None; if !is_notice { view.update(Vec::new()); } view.reset_notice_page(); }
                         Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
                     }
                 }
@@ -1070,6 +1113,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         display(&view)?; interval.reset_immediately();
                     },
+                    Action::ToggleNotices => {
+                        generation = generation.wrapping_add(1);
+                        view.notice_view = !view.notice_view;
+                        view.reset_notice_page();
+                        display(&view)?; interval.reset_immediately();
+                    },
+                    Action::ReloadNotices => {
+                        generation = generation.wrapping_add(1);
+                        display(&view)?; interval.reset_immediately();
+                    },
                     Action::ToggleInbox => {
                         generation = generation.wrapping_add(1);
                         view.inbox_view = !view.inbox_view;
@@ -1097,7 +1150,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, network::call(&address, &Operation::SendMessage { message }).await)
+                            (true, false, network::call(&address, &Operation::SendMessage { message }).await)
                         }));
                     },
                     Action::SendReply(reply) => {
@@ -1107,7 +1160,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, network::call(&address, &Operation::ReplyMessage { reply }).await)
+                            (true, false, network::call(&address, &Operation::ReplyMessage { reply }).await)
                         }));
                     },
                     Action::Submit(operation) => {
@@ -1116,8 +1169,9 @@ pub async fn terminal(address: &str) -> Result<()> {
                         view.busy = true;
                         display(&view)?;
                         let address = address.to_owned();
+                        let is_notice = matches!(&operation, Operation::DismissNotice { .. });
                         submission = Some(tokio::spawn(async move {
-                            (false, network::call(&address, &operation).await)
+                            (false, is_notice, network::call(&address, &operation).await)
                         }));
                     }
                 }
@@ -1421,19 +1475,42 @@ fn display(view: &View) -> Result<()> {
         return Ok(());
     }
     if view.notice_view {
-        if let Some(notice) = view.notices.get(view.notice_current) {
+        if let Some(status) = &view.status {
+            println!("{}\r", safe(status));
+        }
+        if !view.notice_loaded {
+            println!("Loading completion notices. n or q returns.");
+        } else if let Some(notice) = view.notices.get(view.notice_current) {
             let pages = notice_pages(notice);
             let page = view.notice_page.min(pages.len().saturating_sub(1));
-            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", view.notice_current + 1, view.notices.len(), safe(&notice.notice.agent), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            let position = view
+                .notice_offset
+                .saturating_add(view.notice_current)
+                .saturating_add(1);
+            let total = if view.notice_next.is_some() {
+                "?".into()
+            } else {
+                view.notice_offset
+                    .saturating_add(view.notices.len())
+                    .to_string()
+            };
+            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", position, total, safe(&notice.notice.agent), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
         } else {
             println!("No open completion notices. n or q returns.");
         }
         io::stdout().flush()?;
         return Ok(());
     }
+    let notice_count = if !view.notice_loaded {
+        "loading".into()
+    } else if view.notice_next.is_some() {
+        format!("{}+", view.notices.len())
+    } else {
+        view.notices.len().to_string()
+    };
     println!(
         "Open completion notices: {} (n to view); i inbox; m compose\r",
-        view.notices.len()
+        notice_count
     );
     if let Some(status) = &view.status {
         println!("{}\r", safe(status));
