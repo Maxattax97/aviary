@@ -1,5 +1,7 @@
 # Open product and engineering decisions
 
+See [architecture](architecture.md) for the system context, flows and component responsibilities.
+
 **Status:** Initial requirements and architecture direction approved 2026-11-09. The remaining decisions below are open; the first-slice choices are recorded separately below.
 
 1. **Attention policy:** The operator controls importance; agent suggestions and operator overrides suffice in V1. Choose the scale, default, tie-breaks, actionable classification, completion-notice visibility, deferral and notice lifecycle. How are oversized summaries and context handled? US-008 resurfacing is V2.

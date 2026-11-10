@@ -1,5 +1,7 @@
 # Aviary: first-slice prototype
 
+See the [system architecture](docs/architecture.md) for the V1 design, boundaries and verification map.
+
 This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement channels, general message delivery, custom answers, selection of other answers in the interface, or the full V1 requirements.
 
 The service has **no authentication or encryption**. Any process that can connect can read requests and submit answers. The default listener is `127.0.0.1:7432`; bind a non-loopback address only on a trusted network. Participant names are labels, not identities.
