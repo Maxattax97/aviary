@@ -312,6 +312,39 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
         listed.pointer("/requests/2/request/reason"),
         Some(&json!("Last is best"))
     );
+    let id = listed
+        .pointer("/requests/0/id")
+        .and_then(Value::as_i64)
+        .ok_or("missing ID")?;
+    let text = "Custom answer: preserve spaces  and Unicode 鳥";
+    assert_eq!(
+        call(&address, json!({"op":"answer_custom","id":id,"value":text}))?.get("id"),
+        Some(&json!(id))
+    );
+    assert_eq!(
+        call(&address, json!({"op":"get","id":id}))?.get("answer"),
+        Some(&json!({"type":"custom","value":text}))
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"answer_custom","id":id,"value":"other"})
+        )?
+        .get("error"),
+        Some(&json!("request already answered"))
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"answer_custom","id":999999,"value":"text"})
+        )?
+        .get("error"),
+        Some(&json!("request not found"))
+    );
+    assert_eq!(
+        call(&address, json!({"op":"answer_custom","id":id,"value":""}))?.get("error"),
+        Some(&json!("invalid option"))
+    );
     drop(server);
     std::fs::remove_dir_all(directory)?;
     Ok(())

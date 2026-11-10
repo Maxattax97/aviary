@@ -8,7 +8,9 @@ use sqlx::{
 
 use crate::{
     error::{AppError, Result},
-    protocol::{AnswerType, DecisionRequest, Operation, PendingRequest, SuggestedAnswer},
+    protocol::{
+        AnswerType, CustomAnswer, DecisionRequest, Operation, PendingRequest, SuggestedAnswer,
+    },
 };
 
 #[derive(Clone)]
@@ -39,6 +41,7 @@ impl Storage {
             Operation::List => self.list().await,
             Operation::Get { id } => self.get(id).await,
             Operation::Answer { id, index } => self.answer(id, index).await,
+            Operation::AnswerCustom { id, value } => self.answer_custom(id, value).await,
         }
     }
 
@@ -113,6 +116,21 @@ impl Storage {
             value,
         })?;
 
+        self.store_answer(id, answer).await
+    }
+
+    async fn answer_custom(&self, id: i64, value: String) -> Result<Value> {
+        if value.is_empty() {
+            return Err(AppError::InvalidOption);
+        }
+        let answer = serde_json::to_string(&CustomAnswer {
+            answer_type: AnswerType::Custom,
+            value,
+        })?;
+        self.store_answer(id, answer).await
+    }
+
+    async fn store_answer(&self, id: i64, answer: String) -> Result<Value> {
         // The conditional write is atomic even when multiple clients answer at once.
         let result = sqlx::query("UPDATE requests SET answer = ? WHERE id = ? AND answer IS NULL")
             .bind(answer)
@@ -120,7 +138,16 @@ impl Storage {
             .execute(&self.pool)
             .await?;
         if result.rows_affected() != 1 {
-            return Err(AppError::AlreadyAnswered);
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM requests WHERE id = ?)")
+                    .bind(id)
+                    .fetch_one(&self.pool)
+                    .await?;
+            return Err(if exists {
+                AppError::AlreadyAnswered
+            } else {
+                AppError::RequestNotFound
+            });
         }
         Ok(json!({"id": id}))
     }

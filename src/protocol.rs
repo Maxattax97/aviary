@@ -42,6 +42,7 @@ pub enum Operation {
     List,
     Get { id: i64 },
     Answer { id: i64, index: usize },
+    AnswerCustom { id: i64, value: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,4 +68,12 @@ pub struct SuggestedAnswer {
 #[serde(rename_all = "snake_case")]
 pub enum AnswerType {
     Suggested,
+    Custom,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CustomAnswer {
+    #[serde(rename = "type")]
+    pub answer_type: AnswerType,
+    pub value: String,
 }
