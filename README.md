@@ -77,13 +77,14 @@ The [portable agent skill](skills/aviary/SKILL.md) contains CLI examples for dec
 
 The service uses ZeroMQ ROUTER/DEALER over TCP and SQLite WAL with `synchronous=FULL`. A successful application response follows the durable commit. On a timeout or disconnect, acceptance is unknown: retry the **same content with the same identity**. An identical retry returns the original ID; conflicting content or a different submission type under that identity is rejected. Keep the ID for later retrieval. The intended durability boundary covers service or OS crash with intact storage and a functioning storage stack; storage loss and backup recovery are outside it. Local process-kill tests do not establish OS-crash or power-loss behavior.
 
-The CLI prints JSON on success and exits nonzero on errors. Requests and responses are limited to a 1 MiB ZeroMQ frame. The terminal uses bounded pages for decisions and notices, but offset pages can shift as a queue changes, a near-limit individual item can still fail, and the server materializes full lists before slicing. Legacy unpaged list, inbox and history operations can exceed the frame limit; inbox and history page operations provide bounded wire responses. The version-1 envelope and CLI schema are provisional; update service, CLI and skill together. The [architecture](docs/architecture.md) and [decisions](docs/decisions.md) describe the contract and remaining choices.
+The terminal keeps its current view and retries reads when polling fails. A failed decision or other action is shown as not confirmed; check current state before retrying, because a lost reply can hide an accepted action. It does not automatically resubmit decisions. Polls and submissions can temporarily delay input, and unsent drafts do not survive interface exit. The CLI prints JSON on success and exits nonzero on errors. Requests and responses are limited to a 1 MiB ZeroMQ frame. The terminal uses bounded pages for decisions and notices, but offset pages can shift as a queue changes, a near-limit individual item can still fail, and the server materializes full lists before slicing. Legacy unpaged list, inbox and history operations can exceed the frame limit; inbox and history page operations provide bounded wire responses. The version-1 envelope and CLI schema are provisional; update service, CLI and skill together. The [architecture](docs/architecture.md) and [decisions](docs/decisions.md) describe the contract and remaining choices.
 
 ## Verify
 
 ```sh
 cargo test --locked
 python3 tests/terminal_pty.py
+python3 tests/terminal_reconnect.py
 python3 tests/skill_smoke.py
 python3 tests/tmux_smoke.py  # requires tmux
 ```

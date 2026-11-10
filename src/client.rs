@@ -20,6 +20,7 @@ use crate::{
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
+const POLL_TIMEOUT_MS: i32 = 1_000;
 
 pub async fn wait_for_answer(address: &str, id: i64) -> Result<()> {
     loop {
@@ -51,7 +52,12 @@ async fn fetch_requests(address: &str, deferred: bool) -> Result<Vec<PendingRequ
     let mut offset = 0;
     loop {
         let page: RequestPage = serde_json::from_value(
-            network::call(address, &Operation::ListPage { deferred, offset }).await?,
+            network::call_with_timeout(
+                address,
+                &Operation::ListPage { deferred, offset },
+                POLL_TIMEOUT_MS,
+            )
+            .await?,
         )?;
         for request in &page.requests {
             request.request.validate()?;
@@ -70,12 +76,13 @@ async fn fetch_notices(address: &str) -> Result<Vec<NoticeItem>> {
     let mut offset = 0;
     loop {
         let page: NoticePage = serde_json::from_value(
-            network::call(
+            network::call_with_timeout(
                 address,
                 &Operation::NoticesPage {
                     include_dismissed: false,
                     offset,
                 },
+                POLL_TIMEOUT_MS,
             )
             .await?,
         )?;
@@ -141,6 +148,7 @@ struct View {
     requests: Vec<PendingRequest>,
     composer: Option<Composer>,
     status: Option<String>,
+    poll_error: Option<String>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     notice_current: usize,
@@ -161,6 +169,7 @@ impl View {
             requests: Vec::new(),
             composer: None,
             status: None,
+            poll_error: None,
             notices: Vec::new(),
             notice_view: false,
             notice_current: 0,
@@ -554,11 +563,26 @@ pub async fn terminal(address: &str) -> Result<()> {
     loop {
         tokio::select! {
             _ = interval.tick(), if view.composer.is_none() => {
-                let requests = fetch_requests(address, view.deferred_view).await?;
-                let notices = fetch_notices(address).await?;
-                let changed_requests = view.update(requests);
-                let changed_notices = view.update_notices(notices);
-                if changed_requests || changed_notices { display(&view)?; }
+                let refreshed = async {
+                    let requests = fetch_requests(address, view.deferred_view).await?;
+                    let notices = fetch_notices(address).await?;
+                    Ok::<_, crate::error::AppError>((requests, notices))
+                }.await;
+                match refreshed {
+                    Ok((requests, notices)) => {
+                        let recovered = view.poll_error.take().is_some();
+                        let changed_requests = view.update(requests);
+                        let changed_notices = view.update_notices(notices);
+                        if recovered || changed_requests || changed_notices { display(&view)?; }
+                    }
+                    Err(error) => {
+                        let message = format!("Service unavailable: {error}; retrying");
+                        if view.poll_error.as_ref() != Some(&message) {
+                            view.poll_error = Some(message);
+                            display(&view)?;
+                        }
+                    }
+                }
             }
             key = receiver.recv() => {
                 let Some(event) = key else { return Ok(()); };
@@ -585,9 +609,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&view)?;
                     },
                     Action::Submit(operation) => {
-                        network::call(address, &operation).await?;
-                        view.update(Vec::new());
-                        view.update_notices(Vec::new());
+                        match network::call(address, &operation).await {
+                            Ok(_) => {
+                                view.status = None;
+                                view.update(Vec::new());
+                                view.update_notices(Vec::new());
+                            }
+                            Err(error) => {
+                                view.status = Some(format!("Not confirmed: {error}; check state before retry"));
+                            }
+                        }
                         display(&view)?;
                         interval.reset_immediately();
                     }
@@ -779,6 +810,9 @@ fn display(view: &View) -> Result<()> {
         "Open completion notices: {} (n to view); m composes instruction\r",
         view.notices.len()
     );
+    if let Some(error) = &view.poll_error {
+        println!("{}\r", safe(error));
+    }
     if let Some(status) = &view.status {
         println!("{}\r", safe(status));
     }

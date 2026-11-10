@@ -56,6 +56,14 @@ fn endpoint(address: &str) -> String {
 }
 
 pub async fn call(address: &str, operation: &Operation) -> Result<Value> {
+    call_with_timeout(address, operation, TIMEOUT_MS).await
+}
+
+pub async fn call_with_timeout(
+    address: &str,
+    operation: &Operation,
+    timeout_ms: i32,
+) -> Result<Value> {
     let address = address.to_owned();
     let request = serde_json::to_vec(&RequestEnvelope {
         version: VERSION,
@@ -70,6 +78,8 @@ pub async fn call(address: &str, operation: &Operation) -> Result<Value> {
         let context = zmq::Context::new();
         let socket = context.socket(zmq::DEALER)?;
         configure(&socket)?;
+        socket.set_sndtimeo(timeout_ms)?;
+        socket.set_rcvtimeo(timeout_ms)?;
         socket.set_immediate(true)?;
         socket.connect(&endpoint(&address))?;
         socket.send(request, 0).map_err(network_error)?;

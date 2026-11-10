@@ -122,3 +122,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local long custom answer evidence (2026-11-10)
 
 `python3 tests/tmux_smoke.py` passed on Linux with tmux 3.7c. In a 40×12 pane the test entered a long custom answer, opened its paged review with Ctrl-R, observed the end of the draft and verified no answer had been submitted, returned to editing, then submitted and retrieved the exact value. This does not establish draft recovery after exit, all Unicode widths, other terminals, or representative-operator acceptance.
+
+
+## Local terminal reconnect and live arrival (2026-11-10)
+
+`python3 tests/terminal_reconnect.py` passed on Linux over loopback. It killed the service while a custom draft was open, observed the terminal report polling failure, attempted submission while offline and observed an unconfirmed outcome, restarted the service, confirmed that no answer had been stored, and explicitly submitted the retained draft. It then observed a new request arrive in the already open interface without a manual refresh, and separately exited the interface while the service was offline. This does not simulate a lost reply after commit, prove automatic answer retry, bound multi-page or submission input latency, or establish remote-machine or OS-crash behavior.

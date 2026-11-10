@@ -120,3 +120,8 @@ The instruction composer retains complete input while showing the end of long fi
 ## Custom answer review
 
 A long custom answer shows its tail while being edited. Ctrl-R opens a paged review of the full draft; j/k navigates, and q or Esc returns to editing. Enter in the editor still submits the exact draft, preserving the established confirmation flow. The draft is not durable across interface exit. Page sizing and terminal limitations are the same as other detail views.
+
+
+## Terminal recovery from unavailable service
+
+The terminal retains its current view and unsent custom draft when polling fails, displays the error and retries reads; a later successful poll reconciles the view. A failed action is shown as not confirmed, retains the current state, and is never automatically resubmitted. A missing reply can conceal a committed action; check current state before a manual retry. Polling calls use one-second send and receive timeouts per call; request handling remains sequential and can temporarily delay input, especially with many pages or an action's ten-second transport timeout. Closing the interface still discards unsent drafts.
