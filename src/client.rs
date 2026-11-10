@@ -281,6 +281,7 @@ impl Composer {
 }
 
 struct View {
+    page_size: usize,
     requests: Vec<PendingRequest>,
     request_offset: usize,
     request_previous: Vec<usize>,
@@ -326,6 +327,7 @@ struct View {
 impl View {
     fn new() -> Self {
         Self {
+            page_size: detail_page_size(),
             requests: Vec::new(),
             request_offset: 0,
             request_previous: Vec::new(),
@@ -371,6 +373,25 @@ impl View {
     }
     fn current(&self) -> Option<&PendingRequest> {
         self.requests.get(self.current)
+    }
+    fn resize_pages(&mut self, new_size: usize) {
+        let old_size = self.page_size;
+        let remap = |page: &mut usize| *page = page.saturating_mul(old_size) / new_size;
+        if let Some(page) = &mut self.detail_page {
+            remap(page);
+        }
+        if let Some(page) = &mut self.custom_review {
+            remap(page);
+        }
+        if let Some(composer) = &mut self.composer {
+            remap(&mut composer.review_page);
+        }
+        if let Some(history) = &mut self.history {
+            remap(&mut history.text_page);
+        }
+        remap(&mut self.inbox_page);
+        remap(&mut self.notice_page);
+        self.page_size = new_size;
     }
     fn reset_selection(&mut self) {
         self.selected = self
@@ -1180,7 +1201,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let Some(event) = key else { return Ok(()); };
                 let key = match event? {
                     Event::Key(key) => key,
-                    Event::Resize(_, _) => { display(&view)?; continue; },
+                    Event::Resize(width, height) => { view.resize_pages(page_size_for(width, height)); display(&view)?; continue; },
                     _ => continue,
                 };
                 if view.busy {
@@ -1324,6 +1345,9 @@ fn safe(text: &str) -> String {
 // character so ordinary wide characters do not crowd the controls off screen.
 fn detail_page_size() -> usize {
     let (width, height) = terminal::size().unwrap_or((80, 24));
+    page_size_for(width, height)
+}
+fn page_size_for(width: u16, height: u16) -> usize {
     let width = if width == 0 { 80 } else { width };
     let height = if height == 0 { 24 } else { height };
     (usize::from(width.saturating_sub(1)) / 2)
@@ -1844,6 +1868,29 @@ mod tests {
         });
         assert_eq!(view.current().map(|item| item.id), Some(43));
         assert!(!view.draft_request_missing);
+    }
+
+    #[test]
+    fn resizing_keeps_each_paged_view_at_its_prior_text_offset() {
+        let mut view = View::new();
+        view.page_size = 200;
+        view.detail_page = Some(3);
+        view.custom_review = Some(3);
+        view.composer = Some(Composer {
+            review_page: 3,
+            ..Composer::default()
+        });
+        let mut history = HistoryView::new(HistoryKind::Decision, 42);
+        history.text_page = 3;
+        view.history = Some(history);
+        view.inbox_page = 3;
+        view.notice_page = 3;
+        view.resize_pages(114);
+        assert_eq!(view.detail_page, Some(5));
+        assert_eq!(view.custom_review, Some(5));
+        assert_eq!(view.composer.as_ref().map(|item| item.review_page), Some(5));
+        assert_eq!(view.history.as_ref().map(|item| item.text_page), Some(5));
+        assert_eq!((view.inbox_page, view.notice_page), (5, 5));
     }
 
     #[test]

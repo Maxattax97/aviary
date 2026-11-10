@@ -152,6 +152,33 @@ def main() -> None:
                 "narrow recommended answer",
             )
             wait_for_screen("No active requests")
+            tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
+            resize_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-resize-context",
+                        "agent": "tmux-agent",
+                        "question": "Resize context",
+                        "options": ["Yes"],
+                        "context": "x" * 540 + "ANCHOR-MARKER" + "x" * 400,
+                    },
+                }
+            )["id"]
+            wait_for_screen("Resize context")
+            tmux("send-keys", "-t", "aviary:", "c")
+            wait_for_screen("page 1/")
+            tmux("send-keys", "-t", "aviary:", "j", "j", "j")
+            screen = wait_for_screen("page 4/")
+            assert "ANCHOR-MARKER" in "".join(screen.splitlines()), screen
+            tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
+            screen = wait_for_screen("page 6/")
+            assert "ANCHOR-MARKER" in "".join(screen.splitlines()), screen
+            assert service.call({"op": "get", "id": resize_id})["answer"] is None
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("Resize context")
+            service.call({"op": "answer", "id": resize_id, "index": 0})
+            wait_for_screen("No active requests")
             oversized = {
                 "identity": "tmux-bad-notice",
                 "agent": "agent",

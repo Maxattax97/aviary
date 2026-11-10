@@ -106,7 +106,7 @@ When the full recommendation reason does not fit the preview, the option uses a 
 
 ## Detail page sizing
 
-Decision context and notice detail pages use the terminal dimensions to estimate available space, reserving rows for headings and navigation and allowing two columns per character, capped at 200 characters per page. Resize recalculates page boundaries; the current page index is clamped if needed, so a reader may need to navigate again after a resize. This approximation does not establish a supported minimum size or handle every possible Unicode width and wrapped header.
+Decision context and notice detail pages use the terminal dimensions to estimate available space, reserving rows for headings and navigation and allowing two columns per character, capped at 200 characters per page. On resize, the interface maps the start of the prior page into the new page boundaries. This can repeat earlier text, and the rest of the old page may move to a later page. The same mapping applies to custom-answer review, instruction and reply review, inbox and history text. This approximation does not establish a supported minimum size or handle every possible Unicode width and wrapped header.
 
 
 ## Decision previews

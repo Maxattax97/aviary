@@ -216,6 +216,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 
 In a local 40×12 tmux pane, `python3 tests/tmux_smoke.py` displayed a notice with a 209-character agent label. The heading and paging/dismissal controls remained visible, and paging reached the end of the label and result before dismissal. This fixture does not establish layout for every content or terminal size.
 
+The tmux test also opened a long decision context at 100×15, navigated to page 4, and resized to 40×12. The new page 6 retained a marker near the start of the previously displayed text; no answer was submitted by inspection. A unit test checks the same page-start mapping for the other paged views. This does not establish a general terminal-size or Unicode layout guarantee.
+
 ## Local terminal decision page navigation (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux loopback with ten large decisions across multiple response pages. It navigated forward and backward across a boundary, then answered the first seven through another client and observed recovery from an offset beyond the end. The terminal recovery, history and tmux smoke tests and Rust suite also passed. This is one local shift scenario, not consistent traversal during arbitrary concurrent changes, a total memory measurement, remote validation or representative operator acceptance.
