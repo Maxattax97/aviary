@@ -229,7 +229,7 @@ pub struct NoticeItem {
     pub dismissed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryKind {
     Decision,
@@ -247,7 +247,7 @@ pub struct NoticePage {
     pub next_offset: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistorySection {
     Decisions,

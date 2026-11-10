@@ -182,3 +182,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local slow-peer backpressure evidence (2026-11-10)
 
 `cargo test --locked --test slice slow_peer_backpressure_does_not_block_other_clients` and the full Rust suite passed on Linux loopback. A DEALER with a small receive queue stopped reading replies while issuing 100 requests whose responses included a 700,000-character record. The service logged its per-peer reply queue as full; a second client then submitted and retrieved a separate request. A further submission from the slow peer was independently observed in SQLite with its application reply unread; an identical retry returned the original ID before and after a service process restart. This is a bounded local fixture, not a latency guarantee, proof of lossless reply delivery, aggregate memory bound, arbitrary-load fairness, remote-network or OS-crash validation.
+
+
+## Local terminal history evidence (2026-11-10)
+
+`python3 tests/history_terminal.py` passed on Linux over loopback. The pseudo-terminal opened a pending decision and an inbox message as history roots, switched among related decision, message and outcome sections, traversed message response pages totaling more than one frame, and verified that merely inspecting did not answer the decision. It then answered the decision and looked up its completed history by ID. This does not establish snapshot consistency across pages, global chronology, representative-operator usability, remote operation or OS-crash recovery.

@@ -165,3 +165,8 @@ The service expects exactly a ROUTER identity and one payload frame. It discards
 ## Slow peer reply backpressure
 
 The ROUTER uses mandatory routing and nonblocking reply sends. If a recipient is disconnected or its per-peer reply queue is full, the service does not wait for that peer; it logs the failure at debug level and continues. The operation may already have committed, and a missing response remains an unknown outcome requiring the appropriate retry or retrieval procedure. This does not guarantee delivery, bound aggregate libzmq buffering, or ensure fairness under arbitrary request load: operations and malformed-message draining remain serial.
+
+
+## Terminal history inspection
+
+`H` opens history for the selected pending decision or operator inbox message; `g` looks up a decision or message by numeric ID, including completed records. The interface displays JSON records in the existing decisions, messages and outcomes sections, with record and text navigation plus explicit previous/next response pages. `R` reloads the current page; each page remains a separate snapshot and offsets can shift during concurrent changes. The interface holds the current history response page rather than aggregating every history page. It is not a global chronological timeline and does not authenticate participant labels.

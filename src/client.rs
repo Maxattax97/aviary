@@ -17,8 +17,8 @@ use crate::{
     error::Result,
     network,
     protocol::{
-        InboxItem, InboxPage, Message, MessageReply, NoticeItem, NoticePage, Operation,
-        PendingRequest, RequestPage, Target,
+        HistoryKind, HistorySection, InboxItem, InboxPage, Message, MessageReply, NoticeItem,
+        NoticePage, Operation, PendingRequest, RequestPage, Target,
     },
 };
 
@@ -122,6 +122,111 @@ async fn fetch_operator_inbox(address: &str) -> Result<Vec<InboxItem>> {
     }
 }
 
+struct HistoryResult {
+    items: Vec<serde_json::Value>,
+    next_offset: Option<usize>,
+}
+
+fn history_section(index: usize) -> (HistorySection, &'static str) {
+    match index {
+        0 => (HistorySection::Decisions, "decisions"),
+        1 => (HistorySection::Messages, "messages"),
+        _ => (HistorySection::Outcomes, "outcomes"),
+    }
+}
+
+async fn fetch_history(
+    address: &str,
+    kind: HistoryKind,
+    id: i64,
+    section: usize,
+    offset: usize,
+) -> Result<HistoryResult> {
+    let (section, field) = history_section(section);
+    let mut response = network::call_with_timeout(
+        address,
+        &Operation::HistoryPage {
+            kind,
+            id,
+            section,
+            offset,
+        },
+        POLL_TIMEOUT_MS,
+    )
+    .await?;
+    if response.get("id").and_then(serde_json::Value::as_i64) != Some(id)
+        || response.get("section").and_then(serde_json::Value::as_str) != Some(field)
+    {
+        return Err(crate::error::AppError::InvalidFrame);
+    }
+    let object = response
+        .as_object_mut()
+        .ok_or(crate::error::AppError::InvalidFrame)?;
+    let items = serde_json::from_value(
+        object
+            .remove(field)
+            .ok_or(crate::error::AppError::InvalidFrame)?,
+    )?;
+    let next_offset: Option<usize> = serde_json::from_value(
+        object
+            .remove("next_offset")
+            .ok_or(crate::error::AppError::InvalidFrame)?,
+    )?;
+    if next_offset.is_some_and(|next| next <= offset) {
+        return Err(crate::error::AppError::InvalidFrame);
+    }
+    Ok(HistoryResult { items, next_offset })
+}
+
+#[derive(Default)]
+struct HistoryLookup {
+    kind: Option<HistoryKind>,
+    id: String,
+    invalid: bool,
+}
+
+struct HistoryView {
+    kind: HistoryKind,
+    id: i64,
+    section: usize,
+    offset: usize,
+    previous: Vec<usize>,
+    items: Vec<serde_json::Value>,
+    next_offset: Option<usize>,
+    current: usize,
+    text_page: usize,
+    loading: bool,
+    needs_load: bool,
+    error: Option<String>,
+}
+impl HistoryView {
+    fn new(kind: HistoryKind, id: i64) -> Self {
+        Self {
+            kind,
+            id,
+            section: 0,
+            offset: 0,
+            previous: Vec::new(),
+            items: Vec::new(),
+            next_offset: None,
+            current: 0,
+            text_page: 0,
+            loading: true,
+            needs_load: true,
+            error: None,
+        }
+    }
+    fn reload(&mut self) {
+        self.items.clear();
+        self.next_offset = None;
+        self.current = 0;
+        self.text_page = 0;
+        self.loading = true;
+        self.needs_load = true;
+        self.error = None;
+    }
+}
+
 // Restore the terminal and stop the input thread on every ordinary exit path.
 struct TerminalGuard {
     stop: Arc<AtomicBool>,
@@ -199,6 +304,8 @@ struct View {
     status: Option<String>,
     poll_error: Option<String>,
     busy: bool,
+    history: Option<HistoryView>,
+    history_lookup: Option<HistoryLookup>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     inbox_view: bool,
@@ -226,6 +333,8 @@ impl View {
             status: None,
             poll_error: None,
             busy: false,
+            history: None,
+            history_lookup: None,
             notices: Vec::new(),
             notice_view: false,
             inbox_view: false,
@@ -384,10 +493,102 @@ impl View {
             }
             return Action::Redraw;
         }
+        if let Some(lookup) = &mut self.history_lookup {
+            match key.code {
+                KeyCode::Esc => self.history_lookup = None,
+                KeyCode::Char('d') if lookup.kind.is_none() => {
+                    lookup.kind = Some(HistoryKind::Decision)
+                }
+                KeyCode::Char('m') if lookup.kind.is_none() => {
+                    lookup.kind = Some(HistoryKind::Message)
+                }
+                KeyCode::Char(c @ '0'..='9') if lookup.kind.is_some() => {
+                    lookup.id.push(c);
+                    lookup.invalid = false;
+                }
+                KeyCode::Backspace if lookup.kind.is_some() => {
+                    lookup.id.pop();
+                    lookup.invalid = false;
+                }
+                KeyCode::Enter => {
+                    if let (Some(kind), Ok(id)) = (lookup.kind, lookup.id.parse::<i64>()) {
+                        if id > 0 {
+                            return Action::OpenHistory(kind, id);
+                        }
+                    }
+                    lookup.invalid = true;
+                }
+                _ => return Action::None,
+            }
+            return Action::Redraw;
+        }
+        if let Some(history) = &mut self.history {
+            match key.code {
+                KeyCode::Char('q') | KeyCode::Esc | KeyCode::Char('H') => {
+                    return Action::CloseHistory
+                }
+                KeyCode::Char(c @ '1'..='3') => {
+                    history.section = (c as usize) - ('1' as usize);
+                    history.offset = 0;
+                    history.previous.clear();
+                    history.reload();
+                    return Action::LoadHistory;
+                }
+                KeyCode::Char('R') => {
+                    history.reload();
+                    return Action::LoadHistory;
+                }
+                KeyCode::Char(']') => {
+                    if let Some(next) = history.next_offset {
+                        history.previous.push(history.offset);
+                        history.offset = next;
+                        history.reload();
+                        return Action::LoadHistory;
+                    }
+                }
+                KeyCode::Char('[') => {
+                    if let Some(previous) = history.previous.pop() {
+                        history.offset = previous;
+                        history.reload();
+                        return Action::LoadHistory;
+                    }
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    history.current = history.current.saturating_sub(1);
+                    history.text_page = 0;
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    history.current =
+                        (history.current + 1).min(history.items.len().saturating_sub(1));
+                    history.text_page = 0;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let last = history
+                        .items
+                        .get(history.current)
+                        .map(|item| text_pages(&item.to_string()).len().saturating_sub(1))
+                        .unwrap_or(0);
+                    history.text_page = (history.text_page + 1).min(last);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    history.text_page = history.text_page.saturating_sub(1)
+                }
+                _ => return Action::None,
+            }
+            return Action::Redraw;
+        }
         if self.inbox_view {
             match key.code {
                 KeyCode::Char('i') | KeyCode::Char('q') | KeyCode::Esc => {
                     return Action::ToggleInbox
+                }
+                KeyCode::Char('g') => {
+                    self.history_lookup = Some(HistoryLookup::default());
+                }
+                KeyCode::Char('H') if self.inbox_loaded => {
+                    if let Some(item) = self.inbox.get(self.inbox_current) {
+                        return Action::OpenHistory(HistoryKind::Message, item.id);
+                    }
                 }
                 KeyCode::Char('r') if self.inbox_loaded => {
                     if let Some(item) = self.inbox.get(self.inbox_current) {
@@ -553,6 +754,10 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('g') {
+            self.history_lookup = Some(HistoryLookup::default());
+            return Action::Redraw;
+        }
         if key.code == KeyCode::Char('i') {
             return Action::ToggleInbox;
         }
@@ -589,6 +794,7 @@ impl View {
                 self.reset_selection();
                 Action::Redraw
             }
+            KeyCode::Char('H') => Action::OpenHistory(HistoryKind::Decision, request.id),
             KeyCode::Char('d') => Action::Submit(Operation::SetDeferred {
                 id: request.id,
                 deferred: !self.deferred_view,
@@ -656,6 +862,9 @@ enum Action {
     Quit,
     ToggleDeferred,
     ToggleInbox,
+    OpenHistory(HistoryKind, i64),
+    CloseHistory,
+    LoadHistory,
     SendInstruction(Message),
     SendReply(MessageReply),
     Submit(Operation),
@@ -698,23 +907,32 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
     let mut submission: Option<tokio::task::JoinHandle<(bool, Result<serde_json::Value>)>> = None;
+    let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     display(&view)?;
     loop {
         tokio::select! {
-            _ = interval.tick(), if view.composer.is_none() && refresh.is_none() && submission.is_none() => {
-                let address = address.to_owned();
-                let deferred = view.deferred_view;
-                let inbox_view = view.inbox_view;
-                let current_generation = generation;
-                refresh = Some(tokio::spawn(async move {
-                    let result = async {
-                        let requests = fetch_requests(&address, deferred).await?;
-                        let notices = fetch_notices(&address).await?;
-                        let messages = if inbox_view { Some(fetch_operator_inbox(&address).await?) } else { None };
-                        Ok::<_, crate::error::AppError>((requests, notices, messages))
-                    }.await;
-                    (current_generation, deferred, inbox_view, result)
-                }));
+            _ = interval.tick(), if (view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none()) => {
+                if let Some(history) = &mut view.history {
+                    history.needs_load = false;
+                    let (kind, id, section, offset) = (history.kind, history.id, history.section, history.offset);
+                    let address = address.to_owned();
+                    let started = generation;
+                    history_task = Some(tokio::spawn(async move { (started, fetch_history(&address, kind, id, section, offset).await) }));
+                } else {
+                    let address = address.to_owned();
+                    let deferred = view.deferred_view;
+                    let inbox_view = view.inbox_view;
+                    let current_generation = generation;
+                    refresh = Some(tokio::spawn(async move {
+                        let result = async {
+                            let requests = fetch_requests(&address, deferred).await?;
+                            let notices = fetch_notices(&address).await?;
+                            let messages = if inbox_view { Some(fetch_operator_inbox(&address).await?) } else { None };
+                            Ok::<_, crate::error::AppError>((requests, notices, messages))
+                        }.await;
+                        (current_generation, deferred, inbox_view, result)
+                    }));
+                }
             }
             result = async {
                 match refresh.as_mut() {
@@ -726,7 +944,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let (started, deferred, inbox_view, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
-                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.busy {
+                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy {
                     continue;
                 }
                 match refreshed {
@@ -745,6 +963,26 @@ pub async fn terminal(address: &str) -> Result<()> {
                         }
                     }
                 }
+            }
+            result = async {
+                match history_task.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }
+            }, if history_task.is_some() => {
+                history_task = None;
+                let (started, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                if started == generation {
+                    if let Some(history) = &mut view.history {
+                        history.loading = false;
+                        match result {
+                            Ok(page) => { history.items = page.items; history.next_offset = page.next_offset; history.error = None; }
+                            Err(error) => { history.error = Some(error.to_string()); }
+                        }
+                        display(&view)?;
+                    }
+                }
+                if view.history.as_ref().is_some_and(|history| history.needs_load) { interval.reset_immediately(); }
             }
             result = async {
                 match submission.as_mut() {
@@ -790,6 +1028,21 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::None => {},
                     Action::Redraw => display(&view)?,
                     Action::Quit => return Ok(()),
+                    Action::OpenHistory(kind, id) => {
+                        generation = generation.wrapping_add(1);
+                        view.history_lookup = None;
+                        view.history = Some(HistoryView::new(kind, id));
+                        display(&view)?; interval.reset_immediately();
+                    },
+                    Action::CloseHistory => {
+                        generation = generation.wrapping_add(1);
+                        view.history = None;
+                        display(&view)?; interval.reset_immediately();
+                    },
+                    Action::LoadHistory => {
+                        generation = generation.wrapping_add(1);
+                        display(&view)?; interval.reset_immediately();
+                    },
                     Action::ToggleInbox => {
                         generation = generation.wrapping_add(1);
                         view.inbox_view = !view.inbox_view;
@@ -1045,6 +1298,64 @@ fn display(view: &View) -> Result<()> {
         io::stdout().flush()?;
         return Ok(());
     }
+    if let Some(lookup) = &view.history_lookup {
+        match lookup.kind {
+            None => println!("History lookup: d decision or m message; Esc cancels."),
+            Some(kind) => {
+                let label = match kind {
+                    HistoryKind::Decision => "decision",
+                    HistoryKind::Message => "message",
+                };
+                println!(
+                    "History lookup: {} ID: {}_\r\nEnter opens; Esc cancels.",
+                    label,
+                    preview_tail(&lookup.id)
+                );
+            }
+        }
+        if lookup.invalid {
+            println!("Enter a positive numeric ID.");
+        }
+        io::stdout().flush()?;
+        return Ok(());
+    }
+    if let Some(history) = &view.history {
+        let (_, section) = history_section(history.section);
+        let position = if history.loading {
+            "loading"
+        } else if history.error.is_some() {
+            "error"
+        } else if history.next_offset.is_some() {
+            "more"
+        } else {
+            "end"
+        };
+        println!(
+            "History of {} | {} | offset {} | {}\r",
+            history.id, section, history.offset, position
+        );
+        if history.loading {
+            println!("Loading history...");
+        } else if let Some(error) = &history.error {
+            println!("History unavailable: {}. R retries.", safe(error));
+        } else if let Some(item) = history.items.get(history.current) {
+            let pages = text_pages(&item.to_string());
+            let page = history.text_page.min(pages.len().saturating_sub(1));
+            println!(
+                "Record {}/{} | text {}/{}\r\n{}",
+                history.current + 1,
+                history.items.len(),
+                page + 1,
+                pages.len(),
+                pages.get(page).map(String::as_str).unwrap_or("")
+            );
+        } else {
+            println!("No records in this section.");
+        }
+        println!("\r\n1/2/3 sections; h/l records; j/k text; [/] page; R refresh; q returns.");
+        io::stdout().flush()?;
+        return Ok(());
+    }
     if view.inbox_view {
         if let Some(status) = &view.status {
             println!("{}\r", safe(status));
@@ -1059,7 +1370,7 @@ fn display(view: &View) -> Result<()> {
             } else {
                 ""
             };
-            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; {}i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
+            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; H history; g lookup; {}i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
         } else {
             println!("Operator inbox: no messages. i or q returns.");
         }
@@ -1177,11 +1488,11 @@ fn display(view: &View) -> Result<()> {
                 preview_tail(&view.custom)
             );
         } else {
-            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; Tab queues; q quits.");
+            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; H history; g lookup; Tab queues; q quits.");
         }
     } else {
         println!(
-            "No {} requests. i inbox; Tab switches queues; q quits.",
+            "No {} requests. i inbox; g history; Tab queues; q quits.",
             if view.deferred_view {
                 "deferred"
             } else {

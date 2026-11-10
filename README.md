@@ -51,6 +51,7 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `j` / `k`, up / down | Select an answer or move through detail pages |
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
 | `c` / `o` | Open request context / selected answer detail |
+| `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
 | `d`, Tab, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
@@ -72,6 +73,8 @@ Channel membership is immutable. A group target, `{"kind":"group"}`, addresses e
 Press `i` in the terminal to open the non-destructive `operator` inbox. Use `h`/`l` to move between messages and `j`/`k` to read their pages, including sender, work context, message and activity; `i` or `q` returns. For a direct message requesting a response, press `r`, enter a deployment-unique reply identity and text, then review and confirm. After a failed or uncertain send, retry the unchanged draft with the same identity; the draft lasts only while the interface remains open. A request may already have been answered even if the reply control is shown. The inbox has no unread marker and loads all pages into terminal memory while open; use the CLI for history.
 
 Agents can submit a `submit_notice` with an identity, agent, work and result. The interface shows open notices and retains dismissed ones. To send an instruction from the interface, create a channel containing the `operator` label, press `m`, complete the fields and confirm the review. Long fields show their trailing text while editing; use `j`/`k` to inspect every review page before sending. A failed or uncertain send retains the draft while the interface remains open; the draft is not saved across exit.
+
+In the terminal, `H` opens history for the current decision or inbox message. `g` looks up a decision or message by ID, including completed records. In history, `1`/`2`/`3` select decisions, messages or outcomes; `h`/`l` select records, `j`/`k` page through a record, `[`/`]` change response pages, `R` refreshes, and `q` returns. Records are displayed as JSON and grouped by section, not a global timeline. Each response page is a separate snapshot, so concurrent changes can shift offsets.
 
 The [CLI and operation reference](docs/cli.md) documents every current operation, result shape and an executable workflow. The [portable agent skill](skills/aviary/SKILL.md) contains CLI examples for decisions and messaging and can be copied to a compatible agent or supplied as instructions. It does not require MCP.
 
