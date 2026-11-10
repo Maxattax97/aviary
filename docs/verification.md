@@ -231,14 +231,16 @@ The local `version_two_retrieves_near_limit_decision_and_answer` integration tes
 `tests/two_machine.py` provides a coordinated decision and message exchange using an explicitly supplied service address and a fresh token. On the service machine, start an isolated test service bound to its selected trusted-network address, then run the origin role against that address. Use a fresh token each time, generated for example with `python3 -c 'import uuid; print(uuid.uuid4().hex)'`. Supply the matching Aviary executable explicitly on each machine:
 
 ```sh
-python3 tests/two_machine.py origin SERVICE_HOST:PORT TOKEN --binary /path/to/aviary
-# After the origin prints a JSON "ready" line, on the second trusted machine:
+python3 tests/two_machine.py origin SERVICE_HOST:PORT TOKEN --binary /path/to/aviary --expect-restart
+# After the origin prints "ready", stop the disposable service, wait for
+# "unavailable", then restart it with the same database and listener.
+# After the origin prints "recovered", on the second trusted machine:
 python3 tests/two_machine.py peer SERVICE_HOST:PORT TOKEN --binary /path/to/aviary
 ```
 
-Start the peer only after `ready` to test retrieval of a message accepted before that client started. The peer checks the message and decision, submits a suggested answer and a correlated reply, and retries the identical reply. The origin checks the persisted answer and reply. Both roles print IDs and hostnames; retain both outputs with the actual network setup and independently verify that the roles ran on separate machines. The test creates durable records and an immutable channel in the selected database; it does not delete them. Use a dedicated test database and a new token, and limit the service to a trusted network. Hostnames and a successful run alone do not prove identity, isolation, or encryption.
+Start the peer only after `recovered` to test retrieval of a message accepted before that client started. The origin observes an unavailable service and retries the identical decision and message after recovery, requiring their original IDs. Record service process identities and the actual stop/restart separately: an observed timeout alone does not prove a restart. The peer checks the message and decision, submits a suggested answer and a correlated reply, and retries the identical reply. The origin checks the persisted answer and reply. Both roles print IDs and hostnames; retain both outputs with the actual network setup and independently verify that the roles ran on separate machines. The test creates durable records and an immutable channel in the selected database; it does not delete them. Use a dedicated test database and a new token, and limit the service to a trusted network. Hostnames and a successful run alone do not prove identity, isolation, or encryption.
 
-`python3 tests/two_machine_smoke.py` passed with both roles and the service on the same Linux host over loopback. That validates the exercise orchestration only. The actual two-machine run, default-loopback remote reachability check, explicit non-loopback binding, network interruption, OS-crash recovery and representative operator validation remain open.
+`python3 tests/two_machine_smoke.py` passed with both roles and the service on the same Linux host over loopback, including a service-process kill, observed unavailability, restart with the same database, and identical retries. That validates the exercise orchestration only. The actual two-machine run, default-loopback remote reachability check, explicit non-loopback binding, network interruption, OS-crash recovery and representative operator validation remain open.
 
 ## Fresh source build and isolated startup (2026-11-10)
 

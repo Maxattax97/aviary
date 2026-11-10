@@ -33,8 +33,17 @@ def main() -> None:
     parser.add_argument(
         "--timeout", type=int, default=120, help="origin wait limit in seconds"
     )
+    parser.add_argument(
+        "--expect-restart",
+        action="store_true",
+        help="origin waits for a service outage and verifies retries after recovery",
+    )
     args = parser.parse_args()
-    if not re.fullmatch(r"[0-9a-f]{32}", args.token) or args.timeout <= 0:
+    if (
+        not re.fullmatch(r"[0-9a-f]{32}", args.token)
+        or args.timeout <= 0
+        or (args.expect_restart and args.role != "origin")
+    ):
         parser.error(
             "token must be 32 lowercase hex characters and timeout must be positive"
         )
@@ -53,21 +62,18 @@ def main() -> None:
                 "channel": {"name": channel, "members": [origin, peer]},
             },
         )
-        decision_id = call(
-            args.binary,
-            args.address,
-            {
-                "op": "submit",
-                "request": {
-                    "identity": f"decision-{token}",
-                    "agent": origin,
-                    "question": f"Proceed {token}?",
-                    "options": ["No", "Yes"],
-                    "recommendation": 1,
-                    "reason": "Test exchange",
-                },
+        decision_operation = {
+            "op": "submit",
+            "request": {
+                "identity": f"decision-{token}",
+                "agent": origin,
+                "question": f"Proceed {token}?",
+                "options": ["No", "Yes"],
+                "recommendation": 1,
+                "reason": "Test exchange",
             },
-        )["id"]
+        }
+        decision_id = call(args.binary, args.address, decision_operation)["id"]
         expected_body = f"request {token} decision {decision_id}"
         request = {
             "identity": identity,
@@ -78,9 +84,8 @@ def main() -> None:
             "expects_reply": True,
             "activity": channel,
         }
-        request_id = call(
-            args.binary, args.address, {"op": "send_message", "message": request}
-        )["id"]
+        request_operation = {"op": "send_message", "message": request}
+        request_id = call(args.binary, args.address, request_operation)["id"]
         print(
             json.dumps(
                 {
@@ -93,6 +98,44 @@ def main() -> None:
             flush=True,
         )
         deadline = time.monotonic() + args.timeout
+        if args.expect_restart:
+            while time.monotonic() < deadline:
+                try:
+                    call(args.binary, args.address, {"op": "get", "id": decision_id})
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    print(
+                        json.dumps({"stage": "unavailable", "host": host}), flush=True
+                    )
+                    break
+                time.sleep(0.5)
+            else:
+                raise TimeoutError("service interruption not observed")
+            while time.monotonic() < deadline:
+                try:
+                    decision_retry = call(args.binary, args.address, decision_operation)
+                    request_retry = call(args.binary, args.address, request_operation)
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                    time.sleep(0.5)
+                    continue
+                if (
+                    decision_retry["id"] != decision_id
+                    or request_retry["id"] != request_id
+                ):
+                    raise RuntimeError("retries returned different IDs after recovery")
+                print(
+                    json.dumps(
+                        {
+                            "stage": "recovered",
+                            "host": host,
+                            "request_id": request_id,
+                            "decision_id": decision_id,
+                        }
+                    ),
+                    flush=True,
+                )
+                break
+            else:
+                raise TimeoutError("service did not recover")
         while time.monotonic() < deadline:
             response = call(
                 args.binary,
