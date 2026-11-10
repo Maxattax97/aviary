@@ -318,3 +318,7 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 ## Terminal screen initialization (2026-11-10)
 
 `python3 tests/terminal_render.py` reproduced stale characters on a prepopulated tmux screen before the fix. After the fix, it verified the exact empty-queue rows, an arrival and return to an empty queue, blank remaining rows, and restoration of the previous screen on exit. The Rust suite and terminal, arrival, signal and tmux smoke tests passed locally. This verifies the exercised tmux session, not every terminal emulator, Herdr, abrupt termination or all screen sizes.
+
+## Keyboard help increment (2026-11-10)
+
+`cargo test --locked` passed, including a state test for preserving a composer draft and selection across help. `python3 tests/terminal_render.py` passed with loopback access in the local tmux session. The existing render regression does not yet exercise the help screen or each view; small panes and terminal-specific Ctrl-H behavior remain unverified.

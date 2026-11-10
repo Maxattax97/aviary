@@ -312,6 +312,7 @@ impl Arrivals {
 }
 
 struct View {
+    help: bool,
     page_size: usize,
     requests: Vec<PendingRequest>,
     request_offset: usize,
@@ -359,6 +360,7 @@ struct View {
 impl View {
     fn new() -> Self {
         Self {
+            help: false,
             page_size: detail_page_size(),
             requests: Vec::new(),
             request_offset: 0,
@@ -581,6 +583,24 @@ impl View {
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
+        }
+        if self.help {
+            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?'))
+                || (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL))
+            {
+                self.help = false;
+                return Action::Redraw;
+            }
+            return Action::None;
+        }
+        if (key.code == KeyCode::Char('h') && key.modifiers.contains(KeyModifiers::CONTROL))
+            || (key.code == KeyCode::Char('?')
+                && self.composer.is_none()
+                && !self.editing
+                && self.history_lookup.is_none())
+        {
+            self.help = true;
+            return Action::Redraw;
         }
         if let Some(composer) = &mut self.composer {
             match key.code {
@@ -1500,6 +1520,23 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
     macro_rules! println {
         ($($arg:tt)*) => {{ let _ = writeln!(&mut output, $($arg)*); }};
     }
+    if view.help {
+        println!(
+            "Keyboard help | Esc or Ctrl-H closes\r\n\
+            Decisions: h/l request; j/k or 1-9 choose; Enter confirm\r\n\
+            d defer/restore; p importance; c context; o answer detail\r\n\
+            Tab queues; R clear arrival; i inbox; n notices; m instruction\r\n\
+            Inbox: h/l message; j/k text; r reply; H history\r\n\
+            Notices: h/l notice; j/k text; d dismiss\r\n\
+            History: H selected; g lookup; 1-3 section; h/l record\r\n\
+            j/k text; [/] page; R refresh; q returns\r\n\
+            Composer: Enter continues/confirms; Esc cancels; j/k review pages\r\n\
+            Custom answer: Ctrl-R review; Enter confirms; Esc cancels\r\n\
+            ? opens help outside text entry; Ctrl-H opens help anywhere\r\n\
+            Ctrl-C quits."
+        );
+        return render(screen, &output);
+    }
     if view.busy {
         println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
     }
@@ -1535,7 +1572,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                 ("Compose instruction", labels.as_slice())
             };
             println!(
-                "{}: {}\r\n{}\r\n\r\nEnter continues; Esc cancels.",
+                "{}: {}\r\n{}\r\n\r\nEnter continues; Esc cancels; Ctrl-H help.",
                 title,
                 labels.get(composer.stage).unwrap_or(&""),
                 preview_tail(
@@ -1625,7 +1662,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         } else {
             println!("No records in this section.");
         }
-        println!("\r\n1/2/3 sections; h/l records; j/k text; [/] page; R refresh; q returns.");
+        println!("\r\n? help; q returns.");
         return render(screen, &output);
     }
     if view.inbox_view {
@@ -1653,7 +1690,16 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                     .saturating_add(view.inbox.len())
                     .to_string()
             };
-            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; H history; g lookup; {}i or q returns.", position, total, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
+            println!(
+                "Operator inbox {}/{} | message {} | page {}/{}\r\n{}\r\n\r\n{}? help; q returns.",
+                position,
+                total,
+                item.id,
+                page + 1,
+                pages.len(),
+                pages.get(page).map(String::as_str).unwrap_or(""),
+                reply_hint
+            );
         } else {
             println!("Operator inbox: no messages. i or q returns.");
         }
@@ -1679,7 +1725,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                     .saturating_add(view.notices.len())
                     .to_string()
             };
-            println!("Completion notice {}/{} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", position, total, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            println!("Completion notice {}/{} | notice {} | page {}/{}\r\n\r\n{}\r\n\r\nd dismiss; ? help; q returns.", position, total, notice.id, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
         } else {
             println!("No open completion notices. n or q returns.");
         }
@@ -1803,14 +1849,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                 preview_tail(&view.custom)
             );
         } else {
-            let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
-            if width > 0 && width < 60 {
-                println!(
-                    "j/k select; Enter confirms; c/o detail\r\nh/l requests; d defer; Tab; q quit"
-                );
-            } else {
-                println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; H history; g lookup; Tab queues; q quits.");
-            }
+            println!("\r\nj/k select; Enter confirms; ? help.");
         }
     } else {
         println!(
@@ -1877,6 +1916,31 @@ mod tests {
     }
     fn key(c: KeyCode) -> KeyEvent {
         KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn help_preserves_selection_and_text_entry() {
+        let mut view = View::new();
+        view.update(vec![request(Some(1), 2)]);
+        view.request_loaded = true;
+        view.composer = Some(Composer::default());
+        view.key(key(KeyCode::Char('x')));
+        view.key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL));
+        assert!(view.help);
+        view.key(key(KeyCode::Char('z')));
+        view.key(key(KeyCode::Esc));
+        assert!(!view.help);
+        assert_eq!(view.selected, Some(0));
+        assert_eq!(view.current().map(|item| item.id), Some(42));
+        assert_eq!(
+            view.composer.as_ref().map(|c| c.fields[0].as_str()),
+            Some("x")
+        );
+        view.key(key(KeyCode::Char('?')));
+        assert_eq!(
+            view.composer.as_ref().map(|c| c.fields[0].as_str()),
+            Some("x?")
+        );
     }
 
     #[test]

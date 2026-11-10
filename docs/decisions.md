@@ -243,3 +243,7 @@ The V1 targets are a concise overview of decisions, messages and completions; se
 Long content should wrap and scroll by visible lines, retaining a useful reading position across resize. Temporary navigation and polling failures should retain the selected item and exact unsent draft; how to handle concurrent removal, closing the interface or restart needs design. Identify the target and effect of consequential actions before confirmation. An explicit confirmation remains required for sending instructions and answering decisions; action-specific interaction is to be designed without inventing extra confirmation steps for every navigation or deferral. The current implementation provides only partial evidence for these targets.
 
 A durable seen/unread model and integration with a preferred external editor are V2 explorations. Their semantics, privacy, temporary files, editor failure and draft recovery require design; the existing local arrival indicator is not a durable unread count. Existing V2 filtering and overview/detail stories remain distinct from V1 search and selected-item preview.
+
+## Keyboard help increment (2026-11-10)
+
+`?` opens keyboard help outside text entry; Ctrl-H also opens it while composing or editing, so a literal question mark remains available in drafts. Esc closes help without changing the underlying view or draft. Normal queue, inbox, notice and history views use shorter hints, and inbox and notice headings identify the selected record. Small-pane help scrolling and broader workflow validation remain open.
