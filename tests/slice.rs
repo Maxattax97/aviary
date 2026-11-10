@@ -262,3 +262,57 @@ fn correlation_lost_reply_and_reconnect() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-options-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let database_path = directory.join("test.sqlite");
+    let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let requests = [
+        json!({"identity":"none","agent":"agent","question":"What next?","options":[]}),
+        json!({"identity":"two","agent":"agent","question":"Choose","options":["Yes","No"]}),
+        json!({"identity":"many","agent":"agent","question":"Choose","options":["0","1","2","3","4","5","6","7","8","9","10"],"recommendation":10,"reason":"Last is best"}),
+    ];
+    for request in &requests {
+        let first = call(&address, json!({"op":"submit","request":request}))?;
+        let retry = call(&address, json!({"op":"submit","request":request}))?;
+        assert!(first.get("id").and_then(Value::as_i64).is_some());
+        assert_eq!(first, retry);
+    }
+    let invalid = [
+        json!({"identity":"bad-index","agent":"agent","question":"Choose","options":[],"recommendation":0,"reason":"Bad"}),
+        json!({"identity":"bad-reason","agent":"agent","question":"Choose","options":["Yes"],"recommendation":0}),
+        json!({"identity":"orphan-reason","agent":"agent","question":"Choose","options":[],"reason":"Unattached"}),
+    ];
+    for request in invalid {
+        assert_eq!(
+            call(&address, json!({"op":"submit","request":request}))?.get("error"),
+            Some(&json!("invalid request"))
+        );
+    }
+    let listed = call(&address, json!({"op":"list"}))?;
+    assert_eq!(
+        listed.pointer("/requests/0/request/options"),
+        Some(&json!([]))
+    );
+    assert_eq!(
+        listed.pointer("/requests/1/request/options"),
+        Some(&json!(["Yes", "No"]))
+    );
+    assert_eq!(
+        listed.pointer("/requests/2/request/recommendation"),
+        Some(&json!(10))
+    );
+    assert_eq!(
+        listed.pointer("/requests/2/request/reason"),
+        Some(&json!("Last is best"))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

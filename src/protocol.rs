@@ -11,8 +11,10 @@ pub struct DecisionRequest {
     pub agent: String,
     pub question: String,
     pub options: Vec<String>,
-    pub recommendation: usize,
-    pub reason: String,
+    #[serde(default)]
+    pub recommendation: Option<usize>,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 impl DecisionRequest {
@@ -20,10 +22,12 @@ impl DecisionRequest {
         if self.identity.is_empty()
             || self.agent.is_empty()
             || self.question.is_empty()
-            || self.reason.is_empty()
-            || self.options.is_empty()
             || self.options.iter().any(String::is_empty)
-            || self.recommendation >= self.options.len()
+            || self
+                .recommendation
+                .is_some_and(|index| index >= self.options.len())
+            || self.recommendation.is_some() && self.reason.as_deref().is_none_or(str::is_empty)
+            || self.recommendation.is_none() && self.reason.is_some()
         {
             return Err(AppError::InvalidRequest);
         }
