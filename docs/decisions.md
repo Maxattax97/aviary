@@ -213,3 +213,7 @@ When an oversized record is encountered as lookahead after valid page entries, r
 ## CLI standard-input operations
 
 `aviary call ADDRESS -` reads one UTF-8 JSON operation from standard input until EOF, bounded to 1 MiB of raw input including whitespace. The serialized version-2 request envelope must still fit the existing 1 MiB wire limit. Malformed or oversized stdin fails before any operation is sent. Argument-based calls remain supported. Input is not automatically saved; callers must retain stable identity and content for retries.
+
+## Platform and terminal direction (2026-11-10)
+
+Target mainstream Linux distributions, macOS and BSD, including glibc and musl Linux environments. Start verification on Fedora, then expand the matrix with actual installations and tests; this direction is not a claim that those targets are supported today. The terminal should work directly and inside tmux and Herdr panes, with color by default and usable non-color cues. Ratatui with Crossterm is the chosen rendering stack; Clap supplies CLI argument parsing. Exact supported versions, terminal dimensions, accessibility and the platform test matrix remain to be established. Two-machine and broader crash/transport investigations are deferred, and representative operator validation is delayed until the interface has been developed further.

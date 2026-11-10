@@ -21,8 +21,6 @@ pub enum AppError {
     #[error("{0}")]
     Remote(String),
     #[error("{0}")]
-    Usage(String),
-    #[error("{0}")]
     Task(String),
     #[error("{0}")]
     Zmq(#[from] zmq::Error),

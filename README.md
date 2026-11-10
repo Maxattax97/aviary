@@ -12,12 +12,14 @@ Aviary is a communication service and terminal attention interface for a human o
 
 ## Build and start
 
-A Rust toolchain is required. Building bundled libzmq also requires a C++ compiler and CMake when a suitable system development package is unavailable.
+A Rust toolchain and C/C++ compiler are required for a source build. The target platforms are Linux, macOS and BSD, including glibc and musl Linux environments; verification currently focuses on Fedora first. Other targets are not yet verified. The terminal is intended to work directly, in tmux and in Herdr panes.
 
 ```sh
 cargo build --locked
 ./target/debug/aviary serve
 ```
+
+Run `aviary --help` or `aviary <command> --help` for the command-line interface.
 
 The service defaults to `aviary.sqlite` and `127.0.0.1:7432`. To choose both the database and listener:
 

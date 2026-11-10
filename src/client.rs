@@ -8,8 +8,16 @@ use std::{
 };
 
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
-    terminal,
+    execute, terminal,
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Paragraph, Wrap},
+    Terminal,
 };
 use tokio::{sync::mpsc, time};
 
@@ -224,6 +232,7 @@ impl Drop for TerminalGuard {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        let _ = execute!(io::stdout(), Show);
         let _ = terminal::disable_raw_mode();
         print!("\r\n");
         let _ = io::stdout().flush();
@@ -1115,12 +1124,13 @@ pub async fn terminal(address: &str) -> Result<()> {
     };
     let mut interval = time::interval(POLL_INTERVAL);
     let mut view = View::new();
+    let mut screen = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
     let mut submission: Option<tokio::task::JoinHandle<(bool, bool, Result<serde_json::Value>)>> =
         None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
-    display(&view)?;
+    display(&mut screen, &view)?;
     loop {
         tokio::select! {
             _ = interrupt.recv() => return Ok(()),
@@ -1184,7 +1194,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; retrying", errors.iter().map(|(name, error)| format!("{name}: {error}")).collect::<Vec<_>>().join("; "))) };
                 if view.poll_summary != summary { view.poll_summary = summary; changed = true; }
                 if view.poll_error != error { view.poll_error = error; changed = true; }
-                if changed { display(&view)?; }
+                if changed { display(&mut screen, &view)?; }
             }
             result = async {
                 match history_task.as_mut() {
@@ -1201,7 +1211,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                             Ok(page) => { history.items = page.items; history.next_offset = page.next_offset; history.error = None; }
                             Err(error) => { history.error = Some(error.to_string()); }
                         }
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                     }
                 }
                 if view.history.as_ref().is_some_and(|history| history.needs_load) { interval.reset_immediately(); }
@@ -1230,14 +1240,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                         Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
                     }
                 }
-                display(&view)?;
+                display(&mut screen, &view)?;
                 interval.reset_immediately();
             }
             key = receiver.recv() => {
                 let Some(event) = key else { return Ok(()); };
                 let key = match event? {
                     Event::Key(key) => key,
-                    Event::Resize(width, height) => { view.resize_pages(page_size_for(width, height)); display(&view)?; continue; },
+                    Event::Resize(width, height) => { view.resize_pages(page_size_for(width, height)); display(&mut screen, &view)?; continue; },
                     _ => continue,
                 };
                 if view.busy {
@@ -1248,63 +1258,63 @@ pub async fn terminal(address: &str) -> Result<()> {
                 }
                 match view.key(key) {
                     Action::None => {},
-                    Action::Redraw => display(&view)?,
+                    Action::Redraw => display(&mut screen, &view)?,
                     Action::Quit => return Ok(()),
                     Action::OpenHistory(kind, id) => {
                         generation = generation.wrapping_add(1);
                         view.history_lookup = None;
                         view.history = Some(HistoryView::new(kind, id));
-                        display(&view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; interval.reset_immediately();
                     },
                     Action::CloseHistory => {
                         generation = generation.wrapping_add(1);
                         view.history = None;
-                        display(&view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; interval.reset_immediately();
                     },
                     Action::LoadHistory => {
                         generation = generation.wrapping_add(1);
-                        display(&view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; interval.reset_immediately();
                     },
                     Action::ToggleNotices => {
                         generation = generation.wrapping_add(1);
                         view.notice_view = !view.notice_view;
                         view.reset_notice_page();
-                        display(&view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; interval.reset_immediately();
                     },
                     Action::ReloadNotices => {
                         generation = generation.wrapping_add(1);
-                        display(&view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; interval.reset_immediately();
                     },
                     Action::ToggleInbox => {
                         generation = generation.wrapping_add(1);
                         view.inbox_view = !view.inbox_view;
                         view.inbox_loaded = false;
                         view.inbox_page = 0;
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         interval.reset_immediately();
                     },
                     Action::ReloadInbox => {
                         generation = generation.wrapping_add(1);
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         interval.reset_immediately();
                     },
                     Action::ToggleDeferred => {
                         generation = generation.wrapping_add(1);
                         view.deferred_view = !view.deferred_view;
                         view.reset_request_page();
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         interval.reset_immediately();
                     },
                     Action::ReloadRequests => {
                         generation = generation.wrapping_add(1);
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         interval.reset_immediately();
                     },
                     Action::SendInstruction(message) => {
                         generation = generation.wrapping_add(1);
                         if let Some(composer) = &mut view.composer { composer.error = None; }
                         view.busy = true;
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, false, network::call(&address, &Operation::SendMessage { message }).await)
@@ -1314,7 +1324,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         if let Some(composer) = &mut view.composer { composer.error = None; }
                         view.busy = true;
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, false, network::call(&address, &Operation::ReplyMessage { reply }).await)
@@ -1324,7 +1334,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         view.status = None;
                         view.busy = true;
-                        display(&view)?;
+                        display(&mut screen, &view)?;
                         let address = address.to_owned();
                         let is_notice = matches!(&operation, Operation::DismissNotice { .. });
                         submission = Some(tokio::spawn(async move {
@@ -1483,8 +1493,12 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
         .map(|part| part.iter().collect())
         .collect()
 }
-fn display(view: &View) -> Result<()> {
-    print!("\x1b[2J\x1b[H");
+fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> Result<()> {
+    use std::fmt::Write as _;
+    let mut output = String::new();
+    macro_rules! println {
+        ($($arg:tt)*) => {{ let _ = writeln!(&mut output, $($arg)*); }};
+    }
     if view.busy {
         println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
     }
@@ -1544,8 +1558,7 @@ fn display(view: &View) -> Result<()> {
                 println!("\r\nSend failed or outcome unknown: {}\r\nRetry with the same identity, or retain it before cancelling.", safe(error));
             }
         }
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if let Some(page) = view.custom_review {
         let pages = text_pages(&view.custom);
@@ -1556,8 +1569,7 @@ fn display(view: &View) -> Result<()> {
             pages.len(),
             pages.get(page).map(String::as_str).unwrap_or("")
         );
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if let Some(lookup) = &view.history_lookup {
         match lookup.kind {
@@ -1577,8 +1589,7 @@ fn display(view: &View) -> Result<()> {
         if lookup.invalid {
             println!("Enter a positive numeric ID.");
         }
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if let Some(history) = &view.history {
         let (_, section) = history_section(history.section);
@@ -1614,8 +1625,7 @@ fn display(view: &View) -> Result<()> {
             println!("No records in this section.");
         }
         println!("\r\n1/2/3 sections; h/l records; j/k text; [/] page; R refresh; q returns.");
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if view.inbox_view {
         if let Some(status) = &view.status {
@@ -1646,8 +1656,7 @@ fn display(view: &View) -> Result<()> {
         } else {
             println!("Operator inbox: no messages. i or q returns.");
         }
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if view.notice_view {
         if let Some(status) = &view.status {
@@ -1673,8 +1682,7 @@ fn display(view: &View) -> Result<()> {
         } else {
             println!("No open completion notices. n or q returns.");
         }
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     let notice_count = if !view.notice_loaded {
         "loading".into()
@@ -1704,8 +1712,7 @@ fn display(view: &View) -> Result<()> {
     }
     if !view.request_loaded {
         println!("Loading requests. i inbox; g history; Tab queues; q quits.\r");
-        io::stdout().flush()?;
-        return Ok(());
+        return render(screen, &output);
     }
     if let Some(pending) = view.current() {
         let request = &pending.request;
@@ -1719,8 +1726,7 @@ fn display(view: &View) -> Result<()> {
                 pages.len(),
                 pages.get(page).map(String::as_str).unwrap_or("")
             );
-            io::stdout().flush()?;
-            return Ok(());
+            return render(screen, &output);
         }
         println!(
             "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r",
@@ -1815,7 +1821,32 @@ fn display(view: &View) -> Result<()> {
             }
         );
     }
-    io::stdout().flush()?;
+    render(screen, &output)
+}
+
+fn render(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, output: &str) -> Result<()> {
+    let lines: Vec<Line<'_>> = output
+        .lines()
+        .map(|line| {
+            let line = line.trim_end_matches('\r');
+            let style = if line.starts_with('>') {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if line.contains("outcome unknown") || line.contains("unavailable") {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            Line::from(Span::styled(line, style))
+        })
+        .collect();
+    screen.draw(|frame| {
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            frame.area(),
+        )
+    })?;
     Ok(())
 }
 

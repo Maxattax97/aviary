@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import codecs
+import re
+import fcntl
+import struct
 import os
 from pathlib import Path
 import pty
@@ -110,7 +114,13 @@ class Terminal:
 
     def __enter__(self) -> Terminal:
         self.master, self.slave = pty.openpty()
+        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         self.settings = termios.tcgetattr(self.slave)
+        self.screen = [[" "] * 80 for _ in range(24)]
+        self.cursor = [0, 0]
+        self.pending = ""
+        self.awaiting_update = False
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
         try:
             self.process = subprocess.Popen(
                 [str(BINARY), "tui", self.service.address],
@@ -127,22 +137,48 @@ class Terminal:
         return self
 
     def send(self, text: str) -> None:
+        self.awaiting_update = True
         os.write(self.master, text.encode())
 
+    def _feed_screen(self, chunk: bytes) -> None:
+        self.pending += self.decoder.decode(chunk)
+        while self.pending:
+            if self.pending.startswith("\x1b["):
+                match = re.match(r"\x1b\[([0-9;?]*)([A-Za-z])", self.pending)
+                if not match:
+                    break
+                args, command = match.groups()
+                self.pending = self.pending[match.end():]
+                if command in ("H", "f"):
+                    parts = args.split(";")
+                    self.cursor = [int(parts[0] or 1) - 1, int(parts[1] or 1) - 1 if len(parts) > 1 else 0]
+                elif command == "J" and args == "2":
+                    self.screen = [[" "] * 80 for _ in range(24)]
+                continue
+            char, self.pending = self.pending[0], self.pending[1:]
+            row, col = self.cursor
+            if char == "\r":
+                self.cursor[1] = 0
+            elif char == "\n":
+                self.cursor[0] += 1
+            elif ord(char) >= 32:
+                if 0 <= row < 24 and 0 <= col < 80:
+                    self.screen[row][col] = char
+                self.cursor[1] += 1
+
     def expect(self, marker: str, timeout: float = 8) -> bytes:
-        target = marker.encode()
-        output = bytearray()
         deadline = time.monotonic() + timeout
-        while target not in output and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
             if self.process.poll() is not None:
-                raise AssertionError(f"Terminal exited early: {bytes(output)!r}")
+                raise AssertionError("Terminal exited early")
+            screen = "\n".join("".join(row).rstrip() for row in self.screen).encode()
+            if marker.encode() in b" ".join(screen.split()) and not self.awaiting_update:
+                return screen
             if select.select([self.master], [], [], 0.2)[0]:
-                output.extend(os.read(self.master, 65536))
-        if target not in output:
-            raise AssertionError(
-                f"Missing {marker!r} in terminal output: {bytes(output)!r}"
-            )
-        return bytes(output)
+                self._feed_screen(os.read(self.master, 65536))
+                self.awaiting_update = False
+        screen = "\n".join("".join(row).rstrip() for row in self.screen).encode()
+        raise AssertionError(f"Missing {marker!r} on terminal screen: {screen!r}")
 
     def quit(self) -> None:
         self.send("q")

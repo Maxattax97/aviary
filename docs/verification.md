@@ -98,7 +98,7 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 
 ## Local tmux decision evidence (2026-11-10)
 
-On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python3 tests/tmux_smoke.py` started an isolated service and tmux server using a clean configuration and a 100×30 pane. The captured pane showed the recommended answer first and selected; the test checked no answer existed before Enter, confirmed it, retrieved the expected structured answer, and exited the client with q. This is an automated local tmux demonstration, not a supported terminal matrix, a physical terminal or representative operator validation; narrow dimensions and broader navigation remain unverified.
+On local Linux x86-64 with tmux 3.7c and Python 3.14.7, `python3 tests/tmux_smoke.py` started an isolated service and tmux server using a clean configuration and a 100×30 pane. The captured pane showed the recommended answer first and selected; the test checked no answer existed before Enter, confirmed it, retrieved the expected structured answer, and exited the client with q. This is an automated local tmux demonstration, not a supported terminal matrix, a physical terminal or representative operator validation; narrow dimensions and broader navigation remain unverified.
 
 
 ## Local choice viewport evidence (2026-11-10)
@@ -248,7 +248,7 @@ Start the peer only after `recovered` to test retrieval of a message accepted be
 
 ## Fresh source build and isolated startup (2026-11-10)
 
-On Nobara Linux 44, kernel `7.2.11-200.nobara.fc44.x86_64`, with Rust/Cargo 1.90.0 and CMake 4.3.0, a temporary source copy was built into a fresh target directory using `cargo build --locked --offline`. The build used the host's existing Cargo cache and installed toolchain. `python3 tests/startup_smoke.py` then passed using that newly built binary: it started the service in a separate empty directory with a minimal environment, communicated while the terminal was closed, and retrieved the reply and history after reopening it. The copied source excluded `.git`, `target` and `GOAL.md`; ignored local SQLite files were initially copied into the private temporary directory and removed before the startup test, leaving the originals untouched. The temporary source and build were removed after the test.
+On local Linux x86-64 with Rust/Cargo 1.90.0, a temporary source copy was built into a fresh target directory using `cargo build --locked --offline`. The build used the host's existing Cargo cache and installed toolchain. `python3 tests/startup_smoke.py` then passed using that newly built binary: it started the service in a separate empty directory with a minimal environment, communicated while the terminal was closed, and retrieved the reply and history after reopening it. The copied source excluded `.git`, `target` and `GOAL.md`; ignored local SQLite files were initially copied into the private temporary directory and removed before the startup test, leaving the originals untouched. The temporary source and build were removed after the test.
 
 This verifies a fresh build on one configured host, not installation on a clean OS, missing-dependency bootstrap, another supported platform, remote operation or OS-crash recovery.
 
@@ -281,3 +281,7 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 ## Local decision and recovery slice (2026-11-10)
 
 `python3 tests/decision_slice.py` submitted a recommended decision over local ZeroMQ, started and killed a waiting CLI before an answer, restarted that waiter, and confirmed the recommendation in a pseudo-terminal. The waiter received the structured answer. After a service-process kill and restart, the original submission identity returned the same ID, conflicting content was rejected, a new waiter recovered the answer, and the database contained one request with that identity. This is automated local evidence; it does not demonstrate a real remote machine, OS crash or representative human operator.
+
+## Clap and Ratatui migration (2026-11-10)
+
+`cargo test --locked` passed the Rust suite, including argument parsing for the existing positional commands, stdin marker and invalid arguments. The CLI reference, stdin, and portable skill smoke tests passed against the migrated executable. On local Linux, the terminal, arrivals, independent-refresh, reconnect, signal-restoration, attention, history, startup and decision-slice tests passed using loopback; the tmux smoke test passed at its exercised sizes. The pseudo-terminal helper now interprets screen updates at 80×24 rather than expecting complete lines in the output stream. The Ratatui and direct Crossterm dependencies resolve to one Crossterm version. These checks cover the existing views and selected workflows, not a finished interface redesign, Herdr, other platforms, a clean installation, comprehensive Unicode rendering or representative operator validation.
