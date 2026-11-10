@@ -152,3 +152,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local incremental history evidence (2026-11-10)
 
 `cargo test --locked --test slice request_history_links_decisions_messages_and_outcomes` passed with page results compared to unpaged history across all three sections and each offset for decision, request and reply roots, including direct links without activity, missing roots and offsets past the end. The existing frame-limit case checks multi-page retrieval. These fixtures do not measure memory or SQLite scan costs, verify consistent traversal under concurrent mutation, or establish remote and OS-crash behavior.
+
+
+## Local CLI reference workflow (2026-11-10)
+
+After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran the Python example from `docs/cli.md` against an isolated loopback service. It exercised channel creation, decision submit and retry, answer and retrieval, direct message, reply and retry, completion notice and linked history; `python3 tests/skill_smoke.py` also passed. The operation table was checked against the current implementation but is not exhaustively generated or tested for every parameter, failure, page boundary, platform or agent framework.

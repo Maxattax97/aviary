@@ -71,7 +71,7 @@ Channel membership is immutable. A group target, `{"kind":"group"}`, addresses e
 
 Agents can submit a `submit_notice` with an identity, agent, work and result. The interface shows open notices and retains dismissed ones. To send an instruction from the interface, create a channel containing the `operator` label, press `m`, complete the fields and confirm the review. Long fields show their trailing text while editing; use `j`/`k` to inspect every review page before sending. A failed or uncertain send retains the draft while the interface remains open; the draft is not saved across exit.
 
-The [portable agent skill](skills/aviary/SKILL.md) contains CLI examples for decisions and messaging and can be copied to a compatible agent or supplied as instructions. It does not require MCP.
+The [CLI and operation reference](docs/cli.md) documents every current operation, result shape and an executable workflow. The [portable agent skill](skills/aviary/SKILL.md) contains CLI examples for decisions and messaging and can be copied to a compatible agent or supplied as instructions. It does not require MCP.
 
 ## Reliability and interface limits
 
@@ -86,6 +86,7 @@ cargo test --locked
 python3 tests/terminal_pty.py
 python3 tests/terminal_reconnect.py
 python3 tests/skill_smoke.py
+python3 tests/cli_reference.py
 python3 tests/tmux_smoke.py  # requires tmux
 ```
 
