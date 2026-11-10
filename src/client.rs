@@ -1048,6 +1048,10 @@ enum Action {
 }
 
 pub async fn terminal(address: &str) -> Result<()> {
+    // Register handlers before entering raw mode, so ordinary termination
+    // signals return through the terminal guard instead of leaving raw mode set.
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     terminal::enable_raw_mode()?;
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = stop.clone();
@@ -1089,6 +1093,8 @@ pub async fn terminal(address: &str) -> Result<()> {
     display(&view)?;
     loop {
         tokio::select! {
+            _ = interrupt.recv() => return Ok(()),
+            _ = terminate.recv() => return Ok(()),
             _ = interval.tick(), if (view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none()) => {
                 if let Some(history) = &mut view.history {
                     history.needs_load = false;

@@ -144,6 +144,8 @@ The same local terminal test now also defers the request from a second client wh
 
 `python3 tests/terminal_reconnect.py` passed on Linux over loopback. With the service stopped, it submitted a custom draft, observed the pending/unknown indicator, sent Enter again while the operation was pending, and observed the unconfirmed result. After restart no answer was present until an explicit new confirmation. The pseudo-terminal and tmux smoke suites also passed. This does not simulate an action committed with its reply lost, prove cancellation on exit, or cover all event-order races and remote failures.
 
+`python3 tests/terminal_signals.py` passed on local Linux using a pseudo-terminal. With an unsent custom draft open, external SIGINT and SIGTERM each caused normal client exit and restored the saved terminal settings; the service retained an unanswered decision. This does not establish restoration after SIGKILL, a crash or terminal loss, nor cancellation of an already submitted operation.
+
 
 ## Local message and reply lost-ack recovery (2026-11-10)
 

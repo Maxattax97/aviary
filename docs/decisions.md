@@ -144,6 +144,8 @@ At most one queue-and-notice refresh runs at a time outside the input event loop
 
 A decision, attention change, notice dismissal or instruction send runs outside the input loop. While awaiting the response, the terminal indicates that the outcome is unknown and ignores additional actions; resize and Ctrl-C remain available. A prior error is cleared when an explicit retry starts. Once an action completes, the existing success or unconfirmed-outcome behavior applies, and reads reconcile the view. Exiting does not cancel a potentially committed operation, and runtime shutdown may wait for the transport timeout.
 
+The terminal also handles external SIGINT and SIGTERM by returning through its terminal cleanup guard. A pending operation can still have committed, and unsent drafts are discarded. SIGKILL, a crash and loss of the terminal cannot run that guard and are not covered by this behavior.
+
 
 ## Incremental queue and inbox pages
 
