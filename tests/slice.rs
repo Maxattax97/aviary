@@ -143,10 +143,12 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
             let barrier = barrier.clone();
             thread::spawn(move || {
                 barrier.wait();
-                call(
-                    &address,
-                    json!({"op":"answer", "id":concurrent_id, "index":index % 2}),
-                )
+                let operation = if index % 2 == 0 {
+                    json!({"op":"answer", "id":concurrent_id, "index":index / 4})
+                } else {
+                    json!({"op":"answer_custom", "id":concurrent_id, "value":format!("custom {index}")})
+                };
+                call(&address, operation)
             })
         })
         .collect();
@@ -165,7 +167,36 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
             .count(),
         7
     );
-    assert!(!call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"].is_null());
+    let winner = answer_results
+        .iter()
+        .position(|result| result["id"] == concurrent_id)
+        .ok_or("missing winning answer")?;
+    let expected = if winner % 2 == 0 {
+        let index = winner / 4;
+        json!({"type":"suggested", "index":index, "value": if index == 0 { "No" } else { "Yes" }})
+    } else {
+        json!({"type":"custom", "value":format!("custom {winner}")})
+    };
+    assert_eq!(
+        call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"],
+        expected
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"],
+        expected
+    );
+    let retry = if winner % 2 == 0 {
+        json!({"op":"answer", "id":concurrent_id, "index":winner / 4})
+    } else {
+        json!({"op":"answer_custom", "id":concurrent_id, "value":format!("custom {winner}")})
+    };
+    assert_eq!(call(&address, retry)?["error"], "request already answered");
+    assert_eq!(
+        call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"],
+        expected
+    );
     drop(server);
     std::fs::remove_dir_all(directory)?;
     Ok(())

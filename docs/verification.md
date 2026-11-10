@@ -18,6 +18,8 @@ The stakeholder approved the initial requirements and architecture direction on 
 
 At commit `d72a164` plus the following test increment, `cargo test --locked --test slice` passed on the local Linux host over IPv4 loopback. The test sends two outstanding requests on one DEALER and checks both correlation values; observes a submission in an independent list before discarding its unread reply, then retries the same identity and checks the original ID and a single row; and keeps a DEALER open while killing and restarting the service, then retrieves the persisted record through the reconnected socket. The existing test also exercises process-kill recovery, conflicting retries, eight concurrent submitters and competing answers. These checks do not establish behavior under OS crash, network partitions, saturated queues, a real remote machine, or operator terminal use; an unread reply is not a simulation of every network failure. Queue/backpressure, unavailable-service and shutdown checks remain open.
 
+The `durable_retry_and_single_answer` integration test additionally races eight local clients submitting suggested and custom answers. It checks that exactly one succeeds, each other client receives `request already answered`, and the stored structured answer matches the successful client before and after a service restart. Retrying that winning answer is also rejected and leaves the stored result unchanged. This tests the service's local serialized request path, not multiple service instances, a remote network, or an OS crash.
+
 
 ## Decision terminal smoke test (2026-11-09)
 
