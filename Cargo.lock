@@ -37,6 +37,7 @@ name = "aviary"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "futures-util",
  "serde",
  "serde_json",
  "sqlx",

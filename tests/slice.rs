@@ -1343,3 +1343,90 @@ fn message_and_reply_lost_ack_retry_after_restart() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn streamed_pages_match_unpaged_order_and_offsets() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-stream-pages-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let mut ids = Vec::new();
+    for (i, priority) in [0, 3, 3, 1].into_iter().enumerate() {
+        let result = call(
+            &address,
+            json!({"op":"submit","request":{"identity":format!("stream-decision-{i}"),"agent":"a","question":"Choose","options":[],"importance":priority}}),
+        )?;
+        ids.push(
+            result
+                .get("id")
+                .and_then(Value::as_i64)
+                .ok_or("missing id")?,
+        );
+        call(
+            &address,
+            json!({"op":"send_message","message":{"identity":format!("stream-message-{i}"),"channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":format!("message-{i}")}}),
+        )?;
+        call(
+            &address,
+            json!({"op":"submit_notice","notice":{"identity":format!("stream-notice-{i}"),"agent":"a","work":"Work","result":"Done"}}),
+        )?;
+    }
+    let first = *ids.first().ok_or("missing first id")?;
+    let last = *ids.last().ok_or("missing last id")?;
+    call(
+        &address,
+        json!({"op":"set_importance","id":first,"importance":5}),
+    )?;
+    call(
+        &address,
+        json!({"op":"set_deferred","id":last,"deferred":true}),
+    )?;
+    for (whole, page, field) in [
+        (json!({"op":"list"}), json!({"op":"list_page"}), "requests"),
+        (
+            json!({"op":"list_deferred"}),
+            json!({"op":"list_page","deferred":true}),
+            "requests",
+        ),
+        (
+            json!({"op":"list_notices"}),
+            json!({"op":"notices_page"}),
+            "notices",
+        ),
+        (
+            json!({"op":"inbox","participant":"b"}),
+            json!({"op":"inbox_page","participant":"b"}),
+            "messages",
+        ),
+    ] {
+        let unpaged = call(&address, whole)?;
+        let expected = unpaged
+            .get(field)
+            .and_then(Value::as_array)
+            .ok_or("missing list")?;
+        for offset in 0..=expected.len() + 1 {
+            let mut query = page.clone();
+            query["offset"] = json!(offset);
+            let actual = call(&address, query)?;
+            let expected_tail: Vec<Value> = expected.iter().skip(offset).cloned().collect();
+            assert_eq!(
+                actual.get(field),
+                Some(&json!(expected_tail)),
+                "{field} offset {offset}"
+            );
+            assert_eq!(actual.get("next_offset"), Some(&Value::Null));
+        }
+    }
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use futures_util::TryStreamExt;
 use serde_json::{json, Value};
 use sqlx::{
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
@@ -13,6 +14,42 @@ use crate::{
         HistorySection, Message, MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
     },
 };
+
+// Bound the serialized payload collected for one page; a single lookahead
+// record tells the client whether another offset is available.
+struct PageBuilder {
+    offset: usize,
+    bytes: usize,
+    items: Vec<Value>,
+}
+
+impl PageBuilder {
+    fn new(offset: usize) -> Self {
+        Self {
+            offset,
+            bytes: 0,
+            items: Vec::new(),
+        }
+    }
+    fn push(&mut self, item: Value) -> Result<bool> {
+        const PAGE_BYTES: usize = 900 * 1024;
+        const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_MESSAGE_BYTES as usize) - 2048;
+        let size = serde_json::to_vec(&item)?.len() + 1;
+        if size > MAX_ITEM_BYTES {
+            return Err(AppError::InvalidFrame);
+        }
+        if !self.items.is_empty() && self.bytes.saturating_add(size) > PAGE_BYTES {
+            return Ok(false);
+        }
+        self.bytes += size;
+        self.items.push(item);
+        Ok(true)
+    }
+    fn finish(self, field: &str, more: bool) -> Value {
+        let next_offset = more.then(|| self.offset.saturating_add(self.items.len()));
+        json!({field: self.items, "next_offset": next_offset})
+    }
+}
 
 #[derive(Clone)]
 pub struct Storage {
@@ -53,17 +90,11 @@ impl Storage {
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,
-            Operation::ListPage { deferred, offset } => {
-                Self::page(self.list(deferred).await?, "requests", offset)
-            }
+            Operation::ListPage { deferred, offset } => self.list_page(deferred, offset).await,
             Operation::NoticesPage {
                 include_dismissed,
                 offset,
-            } => Self::page(
-                self.list_notices(include_dismissed).await?,
-                "notices",
-                offset,
-            ),
+            } => self.notices_page(include_dismissed, offset).await,
             Operation::SetImportance { id, importance } => {
                 self.set_importance(id, importance).await
             }
@@ -77,7 +108,7 @@ impl Storage {
             Operation::InboxPage {
                 participant,
                 offset,
-            } => Self::page(self.inbox(participant).await?, "messages", offset),
+            } => self.inbox_page(participant, offset).await,
             Operation::ReplyMessage { reply } => self.reply_message(reply).await,
             Operation::GetMessageResponse { id } => self.get_message_response(id).await,
             Operation::SubmitNotice { notice } => self.submit_notice(notice).await,
@@ -451,6 +482,66 @@ impl Storage {
         Ok(
             json!({"root":{"kind":root_kind,"id":id}, "activity":activity, "decisions":decisions, "messages":messages, "outcomes":outcomes}),
         )
+    }
+
+    async fn inbox_page(&self, participant: String, offset: usize) -> Result<Value> {
+        if participant.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let mut page = PageBuilder::new(offset);
+        let Ok(sql_offset) = i64::try_from(offset) else {
+            return Ok(page.finish("messages", false));
+        };
+        let mut rows = sqlx::query_as::<_, (i64, String)>("SELECT m.id, m.payload FROM messages m JOIN message_recipients r ON r.message_id = m.id WHERE r.participant = ? ORDER BY m.id LIMIT -1 OFFSET ?")
+            .bind(participant).bind(sql_offset).fetch(&self.pool);
+        while let Some((id, payload)) = rows.try_next().await? {
+            let item = json!({"id":id, "message":serde_json::from_str::<Message>(&payload)?});
+            if !page.push(item)? {
+                return Ok(page.finish("messages", true));
+            }
+        }
+        Ok(page.finish("messages", false))
+    }
+
+    async fn notices_page(&self, include_dismissed: bool, offset: usize) -> Result<Value> {
+        let mut page = PageBuilder::new(offset);
+        let Ok(sql_offset) = i64::try_from(offset) else {
+            return Ok(page.finish("notices", false));
+        };
+        let mut rows = sqlx::query_as::<_, (i64, String, bool)>("SELECT id, payload, dismissed FROM completion_notices WHERE ? OR dismissed = 0 ORDER BY id LIMIT -1 OFFSET ?")
+            .bind(include_dismissed).bind(sql_offset).fetch(&self.pool);
+        while let Some((id, payload, dismissed)) = rows.try_next().await? {
+            let item = json!({"id":id, "notice":serde_json::from_str::<CompletionNotice>(&payload)?, "dismissed":dismissed});
+            if !page.push(item)? {
+                return Ok(page.finish("notices", true));
+            }
+        }
+        Ok(page.finish("notices", false))
+    }
+
+    async fn list_page(&self, deferred: bool, offset: usize) -> Result<Value> {
+        let mut page = PageBuilder::new(offset);
+        let Ok(sql_offset) = i64::try_from(offset) else {
+            return Ok(page.finish("requests", false));
+        };
+        let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>, bool)>("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ? ORDER BY COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0) DESC, r.id LIMIT -1 OFFSET ?")
+            .bind(deferred).bind(sql_offset).fetch(&self.pool);
+        while let Some((id, payload, override_value, deferred)) = rows.try_next().await? {
+            let request: DecisionRequest = serde_json::from_str(&payload)?;
+            let importance = override_value
+                .map(|value| value as u8)
+                .unwrap_or(request.importance);
+            let item = serde_json::to_value(PendingRequest {
+                id,
+                request,
+                importance,
+                deferred,
+            })?;
+            if !page.push(item)? {
+                return Ok(page.finish("requests", true));
+            }
+        }
+        Ok(page.finish("requests", false))
     }
 
     async fn inbox(&self, participant: String) -> Result<Value> {

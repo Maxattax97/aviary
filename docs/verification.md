@@ -142,3 +142,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local message and reply lost-ack recovery (2026-11-10)
 
 `cargo test --locked --test slice message_and_reply_lost_ack_retry_after_restart` passed on Linux over loopback. For a direct request and its reply, the test independently observed the committed record, discarded the unread application response, killed and restarted the service, and retried the same identity and content. Each retry returned the original ID; changed-content retries conflicted, a different second reply was rejected, and each recipient inbox retained one unchanged record. This demonstrates two local process kills and unread replies, not arbitrary network loss, a service acknowledgment observed before a machine crash, OS-crash durability, or remote-machine behavior.
+
+
+## Local incremental page evidence (2026-11-10)
+
+`cargo test --locked --test slice streamed_pages_match_unpaged_order_and_offsets` compared decision, deferred, notice and inbox pages with their unpaged results at every offset, including priority overrides, ties, and offsets past the end. The existing frame-limit integration cases returned all records across multiple pages, and the terminal, tmux and skill smoke tests passed locally. These checks confirm observable ordering and paging for the fixtures, not a measured process-memory bound, SQLite sort or scan costs, concurrent offset consistency, history pagination, or remote behavior.

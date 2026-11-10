@@ -89,7 +89,7 @@ The portable on-demand skill is maintained in `skills/aviary/` and can be copied
 
 ## Initial queue wire paging
 
-The terminal retrieves decision and notice queues in offset pages targeted at 900 KiB, with a larger single item allowed within a reserved frame budget. Legacy list operations remain unchanged. Each page is evaluated against current state, not a snapshot, so concurrent queue changes can shift offsets; later refreshes reconcile the view. A single near-frame-limit stored item can still exceed the page budget. Inbox and each history section also offer offset pages; history pages include the root ID and section, while the unpaged history response includes root and activity metadata. Pages are independently evaluated against current state and do not share a snapshot. Server queries currently materialize full lists before slicing, and terminal aggregation is not memory-bounded. These limitations remain open for V1 readiness.
+The terminal retrieves decision and notice queues in offset pages targeted at 900 KiB, with a larger single item allowed within a reserved frame budget. Legacy list operations remain unchanged. Each page is evaluated against current state, not a snapshot, so concurrent queue changes can shift offsets; later refreshes reconcile the view. A single near-frame-limit stored item can still exceed the page budget. Inbox and each history section also offer offset pages; history pages include the root ID and section, while the unpaged history response includes root and activity metadata. Pages are independently evaluated against current state and do not share a snapshot. Decision, notice and inbox page operations read rows incrementally and stop after a page plus one lookahead item. History pages still materialize full lists, SQLite may need temporary storage for ordering, and terminal aggregation is not memory-bounded. These limitations remain open for V1 readiness.
 
 
 ## Service signal shutdown
@@ -135,3 +135,8 @@ At most one queue-and-notice refresh runs at a time outside the input event loop
 ## Pending terminal actions
 
 A decision, attention change, notice dismissal or instruction send runs outside the input loop. While awaiting the response, the terminal indicates that the outcome is unknown and ignores additional actions; resize and Ctrl-C remain available. A prior error is cleared when an explicit retry starts. Once an action completes, the existing success or unconfirmed-outcome behavior applies, and reads reconcile the view. Exiting does not cancel a potentially committed operation, and runtime shutdown may wait for the transport timeout.
+
+
+## Incremental queue and inbox pages
+
+Decision, notice and inbox page operations read ordered database rows incrementally from the requested offset and stop after a page plus one lookahead. Decision ordering is the effective importance descending and ID ascending, matching the unpaged operation; missing stored importance defaults to zero. Offset pages are independently evaluated and can shift during mutations. This bounds the application-level page collection, not all SQLx, SQLite, process or terminal memory: SQLite may sort or scan many rows, history pages still materialize results, and the terminal collects every fetched page.
