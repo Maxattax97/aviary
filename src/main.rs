@@ -12,7 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 const DEFAULT_ADDRESS: &str = "127.0.0.1:7432";
 const USAGE: &str =
-    "usage: aviary serve [db] [bind] | tui [address] | call <address> <json> | wait <address> <id>";
+    "usage: aviary serve [db] [bind] | tui [address] | call <address> <json> | wait <address> <id> | wait-message <address> <id>";
 
 enum Command {
     Serve {
@@ -27,6 +27,10 @@ enum Command {
         operation: Operation,
     },
     Wait {
+        address: String,
+        id: i64,
+    },
+    WaitMessage {
         address: String,
         id: i64,
     },
@@ -63,6 +67,10 @@ impl Command {
                 address: required(1, "wait requires address and id")?,
                 id: required(2, "wait requires address and id")?.parse()?,
             }),
+            Some("wait-message") => Ok(Self::WaitMessage {
+                address: required(1, "wait-message requires address and id")?,
+                id: required(2, "wait-message requires address and id")?.parse()?,
+            }),
             _ => Err(AppError::Usage(USAGE.into())),
         }
     }
@@ -77,6 +85,9 @@ impl Command {
                 Ok(())
             }
             Self::Wait { address, id } => client::wait_for_answer(&address, id).await,
+            Self::WaitMessage { address, id } => {
+                client::wait_for_message_response(&address, id).await
+            }
         }
     }
 }

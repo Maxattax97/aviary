@@ -27,3 +27,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local channel-routing evidence (2026-11-09)
 
 `cargo test --locked` passed on the local Linux host. The channel integration test creates a three-member channel, checks direct and group deliveries from two senders to multiple recipients, excludes an unrelated inbox, checks identity conflict and idempotent retry, and verifies retained routing and context after a service process restart. It exercises routing but does not prove authentication, authorization, cross-machine operation, an OS crash, pagination, operator composition, or agent request/reply.
+
+
+## Local agent request/reply evidence (2026-11-09)
+
+`cargo test --locked` passed a local ZeroMQ integration test that starts a `wait-message` CLI before a directly addressed response, checks the correlated response and sender inbox, rejects an unrelated responder label and a second response, retries an identical response, then restarts both service and waiter and retrieves the same response. Label checks do not establish authentication. Group request/reply, network partitions, remote machines and OS-crash behavior are not covered by this test.

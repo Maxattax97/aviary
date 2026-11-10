@@ -32,6 +32,20 @@ pub async fn wait_for_answer(address: &str, id: i64) -> Result<()> {
     }
 }
 
+pub async fn wait_for_message_response(address: &str, id: i64) -> Result<()> {
+    loop {
+        let response = network::call(address, &Operation::GetMessageResponse { id }).await?;
+        if response
+            .get("response")
+            .is_some_and(|value| !value.is_null())
+        {
+            println!("{response}");
+            return Ok(());
+        }
+        time::sleep(POLL_INTERVAL).await;
+    }
+}
+
 // Restore the terminal and stop the input thread on every ordinary exit path.
 struct TerminalGuard {
     stop: Arc<AtomicBool>,

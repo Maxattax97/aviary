@@ -9,8 +9,8 @@ use sqlx::{
 use crate::{
     error::{AppError, Result},
     protocol::{
-        AnswerType, Channel, CustomAnswer, DecisionRequest, Message, Operation, PendingRequest,
-        SuggestedAnswer, Target,
+        AnswerType, Channel, CustomAnswer, DecisionRequest, Message, MessageReply, Operation,
+        PendingRequest, SuggestedAnswer, Target,
     },
 };
 
@@ -42,6 +42,7 @@ impl Storage {
         .await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -55,6 +56,8 @@ impl Storage {
             Operation::CreateChannel { channel } => self.create_channel(channel).await,
             Operation::SendMessage { message } => self.send_message(message).await,
             Operation::Inbox { participant } => self.inbox(participant).await,
+            Operation::ReplyMessage { reply } => self.reply_message(reply).await,
+            Operation::GetMessageResponse { id } => self.get_message_response(id).await,
         }
     }
 
@@ -144,6 +147,9 @@ impl Storage {
         {
             return Err(AppError::InvalidRequest);
         }
+        if message.expects_reply && !matches!(message.target, Target::Participant { .. }) {
+            return Err(AppError::InvalidRequest);
+        }
         let payload = serde_json::to_string(&message)?;
         let mut tx = self.pool.begin().await?;
         let inserted = sqlx::query("INSERT INTO submission_keys (identity, kind, payload) VALUES (?, 'message', ?) ON CONFLICT(identity) DO NOTHING")
@@ -193,6 +199,93 @@ impl Storage {
             .await?;
         tx.commit().await?;
         Ok(json!({"id":id}))
+    }
+
+    async fn reply_message(&self, reply: MessageReply) -> Result<Value> {
+        if reply.identity.is_empty() || reply.sender.is_empty() || reply.body.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let payload = serde_json::to_string(&reply)?;
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO submission_keys (identity, kind, payload) VALUES (?, 'response', ?) ON CONFLICT(identity) DO NOTHING")
+            .bind(&reply.identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
+        if !inserted {
+            let response_id =
+                Self::retry_id(&mut tx, &reply.identity, "response", &payload).await?;
+            tx.commit().await?;
+            return Ok(json!({"id": response_id, "request_id": reply.request_id}));
+        }
+        let original: Option<String> =
+            sqlx::query_scalar("SELECT payload FROM messages WHERE id = ?")
+                .bind(reply.request_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let original: Message = serde_json::from_str(&original.ok_or(AppError::RequestNotFound)?)?;
+        if !original.expects_reply
+            || !matches!(&original.target, Target::Participant { name } if name == &reply.sender)
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let responded: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM message_responses WHERE request_id = ?)",
+        )
+        .bind(reply.request_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if responded {
+            return Err(AppError::AlreadyAnswered);
+        }
+        let response = Message {
+            identity: reply.identity.clone(),
+            channel: original.channel,
+            sender: reply.sender,
+            target: Target::Participant {
+                name: original.sender.clone(),
+            },
+            body: reply.body,
+            expects_reply: false,
+            context: original.context,
+            activity: original.activity,
+        };
+        let response_payload = serde_json::to_string(&response)?;
+        let id = sqlx::query("INSERT INTO messages (identity, payload) VALUES (?, ?)")
+            .bind(&reply.identity)
+            .bind(response_payload)
+            .execute(&mut *tx)
+            .await?
+            .last_insert_rowid();
+        sqlx::query("INSERT INTO message_recipients (message_id, participant) VALUES (?, ?)")
+            .bind(id)
+            .bind(original.sender)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("INSERT INTO message_responses (request_id, response_id) VALUES (?, ?)")
+            .bind(reply.request_id)
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE submission_keys SET record_id = ? WHERE identity = ?")
+            .bind(id)
+            .bind(reply.identity)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(json!({"id": id, "request_id": reply.request_id}))
+    }
+
+    async fn get_message_response(&self, id: i64) -> Result<Value> {
+        let original: Option<String> =
+            sqlx::query_scalar("SELECT payload FROM messages WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+        let original: Message = serde_json::from_str(&original.ok_or(AppError::RequestNotFound)?)?;
+        if !original.expects_reply {
+            return Err(AppError::InvalidRequest);
+        }
+        let response: Option<(i64, String)> = sqlx::query_as("SELECT m.id, m.payload FROM message_responses r JOIN messages m ON m.id = r.response_id WHERE r.request_id = ?").bind(id).fetch_optional(&self.pool).await?;
+        let response = response.map(|(response_id, payload)| -> Result<Value> { Ok(json!({"id": response_id, "message": serde_json::from_str::<Message>(&payload)?})) }).transpose()?;
+        Ok(json!({"id": id, "response": response}))
     }
 
     async fn inbox(&self, participant: String) -> Result<Value> {

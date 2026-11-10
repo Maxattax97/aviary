@@ -46,6 +46,8 @@ pub enum Operation {
     CreateChannel { channel: Channel },
     SendMessage { message: Message },
     Inbox { participant: String },
+    ReplyMessage { reply: MessageReply },
+    GetMessageResponse { id: i64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -103,8 +105,19 @@ pub struct Message {
     pub sender: String,
     pub target: Target,
     pub body: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub expects_reply: bool,
     #[serde(default)]
     pub context: Option<String>,
     #[serde(default)]
     pub activity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct MessageReply {
+    pub identity: String,
+    pub request_id: i64,
+    pub sender: String,
+    pub body: String,
 }

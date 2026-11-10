@@ -440,3 +440,77 @@ fn channel_routing_and_durable_retry() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn targeted_request_reply_wait_and_restart() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-reply-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b","c"]}}),
+    )?;
+    let request = json!({"identity":"request-1","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"Please check","expects_reply":true,"activity":"task"});
+    let id = call(&address, json!({"op":"send_message","message":request}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing id")?;
+    assert_eq!(
+        call(&address, json!({"op":"get_message_response","id":id}))?.get("response"),
+        Some(&Value::Null)
+    );
+    let mut waiter = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["wait-message", &address, &id.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::sleep(Duration::from_millis(200));
+    assert!(waiter.try_wait()?.is_none());
+    let reply = json!({"identity":"reply-1","request_id":id,"sender":"b","body":"Done"});
+    assert_eq!(call(&address, json!({"op":"reply_message","reply":{"identity":"bad","request_id":id,"sender":"c","body":"No"}}))?.get("error"), Some(&json!("invalid request")));
+    let first = call(&address, json!({"op":"reply_message","reply":reply}))?;
+    assert_eq!(
+        call(&address, json!({"op":"reply_message","reply":reply}))?,
+        first
+    );
+    assert_eq!(call(&address, json!({"op":"reply_message","reply":{"identity":"second","request_id":id,"sender":"b","body":"Again"}}))?.get("error"), Some(&json!("request already answered")));
+    let output = waiter.wait_with_output()?;
+    assert!(output.status.success());
+    let result: Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(
+        result.pointer("/response/message/body"),
+        Some(&json!("Done"))
+    );
+    assert_eq!(
+        result.pointer("/response/message/activity"),
+        Some(&json!("task"))
+    );
+    let inbox = call(&address, json!({"op":"inbox","participant":"a"}))?;
+    assert_eq!(
+        inbox.pointer("/messages/0/message/body"),
+        Some(&json!("Done"))
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"get_message_response","id":id}))?,
+        result
+    );
+    assert_eq!(
+        call(&address, json!({"op":"reply_message","reply":reply}))?,
+        first
+    );
+    let restarted = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["wait-message", &address, &id.to_string()])
+        .output()?;
+    assert!(restarted.status.success());
+    assert_eq!(serde_json::from_slice::<Value>(&restarted.stdout)?, result);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

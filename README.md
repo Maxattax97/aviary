@@ -2,7 +2,7 @@
 
 See the [system architecture](docs/architecture.md) for the V1 design, boundaries and verification map.
 
-This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement agent request/reply, operator instruction composition, the full attention interface, or the full V1 requirements.
+This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement operator instruction composition, the full attention interface, or the full V1 requirements.
 
 The service has **no authentication or encryption**. Any process that can connect can read requests and submit answers. The default listener is `127.0.0.1:7432`; bind a non-loopback address only on a trusted network. Participant names are labels, not identities.
 
@@ -37,3 +37,7 @@ aviary call 127.0.0.1:7432 '{"op":"inbox","participant":"agent-b"}'
 ```
 
 Use `{"kind":"group"}` as the target for channel-wide delivery. `context` and `activity` may be omitted. Message and decision submission identities share one deployment-wide namespace; an identical retry returns the original ID, while changed content or a different submission type conflicts. Message and decision IDs themselves are separate. The inbox is not yet paginated and can exceed the transport response limit.
+
+### Agent request and reply
+
+Set `"expects_reply":true` on a `send_message` addressed to one participant; group requests are rejected. The recipient sees the request in its inbox. Retain the returned message ID and use `aviary wait-message ADDRESS ID`, or call `{"op":"get_message_response","id":ID}` to retrieve a response later. Submit the response as `{"op":"reply_message","reply":{"identity":"unique-reply-key","request_id":ID,"sender":"agent-b","body":"Done"}}`. The response is also routed as a message to the requester's inbox and carries the request's context and activity. The named sender must match the original target label; this is a routing check, not authentication. One response is accepted; an identical reply retry with the same identity returns its original message ID, and a different response after acceptance is rejected. A response retry key shares the deployment-wide submission namespace. The waiter polls until a response or service error and can be restarted with the same ID.
