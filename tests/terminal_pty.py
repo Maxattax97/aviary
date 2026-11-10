@@ -46,6 +46,7 @@ with tempfile.TemporaryDirectory() as d:
             while marker not in output and time.monotonic() < deadline:
                 if select.select([master],[],[],.2)[0]: output += os.read(master,65536)
             assert marker in output, output
+            return output
         def wait_ids(op, ids):
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:
@@ -87,5 +88,24 @@ with tempfile.TemporaryDirectory() as d:
         assert proc.returncode == 0 and termios.tcgetattr(slave) == before
         os.close(master); os.close(slave)
         print('explanation and paged context passed; no answer submitted')
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        wait_output(b'Detail check')
+        notice = {'identity':'notice-pty','agent':'worker','work':'Build package','result':'Tests passed'}
+        notice_id = call({'op':'submit_notice','notice':notice})['id']
+        wait_output(b'Open completion notices: 1')
+        os.write(master,b'n'); assert b'Tests passed' in wait_output(b'Build package')
+        os.write(master,b'd')
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if call({'op':'list_notices'})['notices'] == []: break
+            time.sleep(.05)
+        else: raise AssertionError('notice not dismissed')
+        assert call({'op':'list_notices','include_dismissed':True})['notices'][0]['id'] == notice_id
+        os.write(master,b'q'); wait_output(b'Detail check')
+        os.write(master,b'q'); proc.wait(timeout=5)
+        assert proc.returncode == 0 and termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        print('live completion notice displayed and dismissed')
     finally:
         server.kill(); server.wait()

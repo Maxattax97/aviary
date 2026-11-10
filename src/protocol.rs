@@ -48,19 +48,55 @@ impl DecisionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
-    Submit { request: DecisionRequest },
+    Submit {
+        request: DecisionRequest,
+    },
     List,
     ListDeferred,
-    SetImportance { id: i64, importance: u8 },
-    SetDeferred { id: i64, deferred: bool },
-    Get { id: i64 },
-    Answer { id: i64, index: usize },
-    AnswerCustom { id: i64, value: String },
-    CreateChannel { channel: Channel },
-    SendMessage { message: Message },
-    Inbox { participant: String },
-    ReplyMessage { reply: MessageReply },
-    GetMessageResponse { id: i64 },
+    SetImportance {
+        id: i64,
+        importance: u8,
+    },
+    SetDeferred {
+        id: i64,
+        deferred: bool,
+    },
+    Get {
+        id: i64,
+    },
+    Answer {
+        id: i64,
+        index: usize,
+    },
+    AnswerCustom {
+        id: i64,
+        value: String,
+    },
+    CreateChannel {
+        channel: Channel,
+    },
+    SendMessage {
+        message: Message,
+    },
+    Inbox {
+        participant: String,
+    },
+    ReplyMessage {
+        reply: MessageReply,
+    },
+    GetMessageResponse {
+        id: i64,
+    },
+    SubmitNotice {
+        notice: CompletionNotice,
+    },
+    ListNotices {
+        #[serde(default)]
+        include_dismissed: bool,
+    },
+    DismissNotice {
+        id: i64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -135,4 +171,27 @@ pub struct MessageReply {
     pub request_id: i64,
     pub sender: String,
     pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CompletionNotice {
+    pub identity: String,
+    pub agent: String,
+    pub work: String,
+    pub result: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NoticeItem {
+    pub id: i64,
+    pub notice: CompletionNotice,
+    pub dismissed: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NoticeList {
+    pub notices: Vec<NoticeItem>,
 }

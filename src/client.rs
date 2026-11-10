@@ -16,7 +16,7 @@ use tokio::{sync::mpsc, time};
 use crate::{
     error::Result,
     network,
-    protocol::{Operation, PendingRequest, RequestList},
+    protocol::{NoticeItem, NoticeList, Operation, PendingRequest, RequestList},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -65,6 +65,10 @@ impl Drop for TerminalGuard {
 
 struct View {
     requests: Vec<PendingRequest>,
+    notices: Vec<NoticeItem>,
+    notice_view: bool,
+    notice_current: usize,
+    notice_page: usize,
     current: usize,
     deferred_view: bool,
     priority_edit: bool,
@@ -77,6 +81,10 @@ impl View {
     fn new() -> Self {
         Self {
             requests: Vec::new(),
+            notices: Vec::new(),
+            notice_view: false,
+            notice_current: 0,
+            notice_page: 0,
             current: 0,
             deferred_view: false,
             priority_edit: false,
@@ -113,6 +121,20 @@ impl View {
         }
         true
     }
+    fn update_notices(&mut self, notices: Vec<NoticeItem>) -> bool {
+        if self.notices == notices {
+            return false;
+        }
+        let previous = self.notices.get(self.notice_current).map(|n| n.id);
+        self.notice_current = previous
+            .and_then(|id| notices.iter().position(|n| n.id == id))
+            .unwrap_or(0);
+        if previous != notices.get(self.notice_current).map(|n| n.id) {
+            self.notice_page = 0;
+        }
+        self.notices = notices;
+        true
+    }
     // Presentation position maps back to the original suggestion index; custom is last.
     fn choices(&self) -> Vec<usize> {
         let Some(pending) = self.current() else {
@@ -134,6 +156,45 @@ impl View {
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
+        }
+        if self.notice_view {
+            match key.code {
+                KeyCode::Char('n') | KeyCode::Char('q') | KeyCode::Esc => {
+                    self.notice_view = false;
+                    return Action::Redraw;
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    self.notice_current = self.notice_current.saturating_sub(1);
+                    self.notice_page = 0;
+                    return Action::Redraw;
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    self.notice_current =
+                        (self.notice_current + 1).min(self.notices.len().saturating_sub(1));
+                    self.notice_page = 0;
+                    return Action::Redraw;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let max = self
+                        .notices
+                        .get(self.notice_current)
+                        .map(|n| notice_pages(n).len().saturating_sub(1))
+                        .unwrap_or(0);
+                    self.notice_page = (self.notice_page + 1).min(max);
+                    return Action::Redraw;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.notice_page = self.notice_page.saturating_sub(1);
+                    return Action::Redraw;
+                }
+                KeyCode::Char('d') => {
+                    if let Some(notice) = self.notices.get(self.notice_current) {
+                        return Action::Submit(Operation::DismissNotice { id: notice.id });
+                    }
+                }
+                _ => {}
+            }
+            return Action::None;
         }
         if let Some(page) = self.detail_page {
             match key.code {
@@ -194,6 +255,11 @@ impl View {
                 }
                 _ => {}
             }
+            return Action::Redraw;
+        }
+        if key.code == KeyCode::Char('n') {
+            self.notice_view = true;
+            self.notice_page = 0;
             return Action::Redraw;
         }
         if key.code == KeyCode::Tab {
@@ -316,7 +382,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let response = network::call(address, &operation).await?;
                 let requests: RequestList = serde_json::from_value(response)?;
                 for request in &requests.requests { request.request.validate()?; }
-                if view.update(requests.requests) { display(&view)?; }
+                let notice_response = network::call(address, &Operation::ListNotices { include_dismissed: false }).await?;
+                let notices: NoticeList = serde_json::from_value(notice_response)?;
+                let changed_requests = view.update(requests.requests);
+                let changed_notices = view.update_notices(notices.notices);
+                if changed_requests || changed_notices { display(&view)?; }
             }
             key = receiver.recv() => {
                 let Some(key) = key else { return Ok(()); };
@@ -333,6 +403,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::Submit(operation) => {
                         network::call(address, &operation).await?;
                         view.update(Vec::new());
+                        view.update_notices(Vec::new());
                         display(&view)?;
                         interval.reset_immediately();
                     }
@@ -362,8 +433,35 @@ fn detail_pages(request: &crate::protocol::DecisionRequest) -> Vec<String> {
         .map(|part| part.iter().collect())
         .collect()
 }
+fn notice_pages(item: &NoticeItem) -> Vec<String> {
+    let content = format!(
+        "Work: {}   Result: {}   Activity: {}",
+        safe(&item.notice.work),
+        safe(&item.notice.result),
+        safe(item.notice.activity.as_deref().unwrap_or("(none supplied)"))
+    );
+    let chars: Vec<char> = content.chars().collect();
+    chars
+        .chunks(200)
+        .map(|part| part.iter().collect())
+        .collect()
+}
 fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
+    if view.notice_view {
+        if let Some(notice) = view.notices.get(view.notice_current) {
+            let pages = notice_pages(notice);
+            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", view.notice_current + 1, view.notices.len(), safe(&notice.notice.agent), view.notice_page + 1, pages.len(), pages.get(view.notice_page).map(String::as_str).unwrap_or(""));
+        } else {
+            println!("No open completion notices. n or q returns.");
+        }
+        io::stdout().flush()?;
+        return Ok(());
+    }
+    println!(
+        "Open completion notices: {} (n to view)\r",
+        view.notices.len()
+    );
     if let Some(pending) = view.current() {
         let request = &pending.request;
         if let Some(page) = view.detail_page {

@@ -591,3 +591,66 @@ fn priority_override_and_deferred_recovery() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn completion_notice_retry_and_dismissal_recover() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-notice-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let notice = json!({"identity":"notice-1","agent":"worker","work":"Run checks","result":"All passed","activity":"task-1"});
+    let first = call(&address, json!({"op":"submit_notice","notice":notice}))?;
+    let id = first
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing id")?;
+    assert_eq!(
+        call(&address, json!({"op":"submit_notice","notice":notice}))?,
+        first
+    );
+    let mut changed = notice.clone();
+    changed["result"] = json!("Failed");
+    assert_eq!(
+        call(&address, json!({"op":"submit_notice","notice":changed}))?.get("error"),
+        Some(&json!("identity conflict"))
+    );
+    let listed = call(&address, json!({"op":"list_notices"}))?;
+    assert_eq!(
+        listed.pointer("/notices/0/notice/work"),
+        Some(&json!("Run checks"))
+    );
+    assert_eq!(
+        listed.pointer("/notices/0/notice/result"),
+        Some(&json!("All passed"))
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(call(&address, json!({"op":"list_notices"}))?, listed);
+    call(&address, json!({"op":"dismiss_notice","id":id}))?;
+    assert_eq!(
+        call(&address, json!({"op":"list_notices"}))?.get("notices"),
+        Some(&json!([]))
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    let history = call(
+        &address,
+        json!({"op":"list_notices","include_dismissed":true}),
+    )?;
+    assert_eq!(history.pointer("/notices/0/dismissed"), Some(&json!(true)));
+    assert_eq!(
+        call(&address, json!({"op":"submit_notice","notice":notice}))?,
+        first
+    );
+    assert_eq!(
+        call(&address, json!({"op":"list_notices"}))?.get("notices"),
+        Some(&json!([]))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

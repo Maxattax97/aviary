@@ -9,8 +9,8 @@ use sqlx::{
 use crate::{
     error::{AppError, Result},
     protocol::{
-        AnswerType, Channel, CustomAnswer, DecisionRequest, Message, MessageReply, Operation,
-        PendingRequest, SuggestedAnswer, Target,
+        AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, Message,
+        MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
     },
 };
 
@@ -44,6 +44,7 @@ impl Storage {
         sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS request_attention (request_id INTEGER PRIMARY KEY, importance INTEGER, deferred INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (request_id) REFERENCES requests(id))").execute(&pool).await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS completion_notices (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0)").execute(&pool).await?;
         Ok(Self { pool })
     }
 
@@ -64,6 +65,11 @@ impl Storage {
             Operation::Inbox { participant } => self.inbox(participant).await,
             Operation::ReplyMessage { reply } => self.reply_message(reply).await,
             Operation::GetMessageResponse { id } => self.get_message_response(id).await,
+            Operation::SubmitNotice { notice } => self.submit_notice(notice).await,
+            Operation::ListNotices { include_dismissed } => {
+                self.list_notices(include_dismissed).await
+            }
+            Operation::DismissNotice { id } => self.dismiss_notice(id).await,
         }
     }
 
@@ -110,6 +116,57 @@ impl Storage {
             return Err(AppError::IdentityConflict);
         }
         id.ok_or(AppError::IdentityConflict)
+    }
+
+    async fn submit_notice(&self, notice: CompletionNotice) -> Result<Value> {
+        if notice.identity.is_empty()
+            || notice.agent.is_empty()
+            || notice.work.is_empty()
+            || notice.result.is_empty()
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let payload = serde_json::to_string(&notice)?;
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO submission_keys (identity, kind, payload) VALUES (?, 'notice', ?) ON CONFLICT(identity) DO NOTHING")
+            .bind(&notice.identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
+        let id = if inserted {
+            let id =
+                sqlx::query("INSERT INTO completion_notices (identity, payload) VALUES (?, ?)")
+                    .bind(&notice.identity)
+                    .bind(&payload)
+                    .execute(&mut *tx)
+                    .await?
+                    .last_insert_rowid();
+            sqlx::query("UPDATE submission_keys SET record_id = ? WHERE identity = ?")
+                .bind(id)
+                .bind(&notice.identity)
+                .execute(&mut *tx)
+                .await?;
+            id
+        } else {
+            Self::retry_id(&mut tx, &notice.identity, "notice", &payload).await?
+        };
+        tx.commit().await?;
+        Ok(json!({"id": id}))
+    }
+
+    async fn list_notices(&self, include_dismissed: bool) -> Result<Value> {
+        let rows: Vec<(i64, String, bool)> = sqlx::query_as("SELECT id, payload, dismissed FROM completion_notices WHERE ? OR dismissed = 0 ORDER BY id")
+            .bind(include_dismissed).fetch_all(&self.pool).await?;
+        let notices = rows.into_iter().map(|(id, payload, dismissed)| -> Result<Value> { Ok(json!({"id":id, "notice":serde_json::from_str::<CompletionNotice>(&payload)?, "dismissed":dismissed})) }).collect::<Result<Vec<_>>>()?;
+        Ok(json!({"notices":notices}))
+    }
+
+    async fn dismiss_notice(&self, id: i64) -> Result<Value> {
+        let result = sqlx::query("UPDATE completion_notices SET dismissed = 1 WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(AppError::RequestNotFound);
+        }
+        Ok(json!({"id":id, "dismissed":true}))
     }
 
     async fn create_channel(&self, mut channel: Channel) -> Result<Value> {

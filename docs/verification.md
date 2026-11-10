@@ -42,3 +42,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local explanation and context evidence (2026-11-09)
 
 `cargo test --locked` passed structured submission, retry and listing assertions for explanation and context. `python3 tests/terminal_pty.py` showed an explanation, opened a multi-page supporting context and reached its final marker without submitting an answer. This is local pseudo-terminal evidence, not terminal-size, accessibility, tmux, representative-operator or full-payload-limit validation.
+
+
+## Local completion-notice evidence (2026-11-09)
+
+`cargo test --locked` passed notice submission, retry conflict, process-restart recovery, dismissal and retained dismissed-history checks. `python3 tests/terminal_pty.py` submitted a notice while the interface was open, observed its count update, checked displayed work and result, and dismissed it. These are local checks, not representative-operator, cross-machine or OS-crash validation.
