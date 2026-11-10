@@ -251,3 +251,7 @@ On local Linux x86-64, `python3 tests/default_listener.py` started `aviary serve
 ## SQLite connection settings (2026-11-10)
 
 `cargo test --locked --bin aviary pooled_connections_use_wal_and_full_synchronous` opened a pre-existing rollback-journal database, held all five pool connections simultaneously, and checked that each reported WAL mode and SQLite `synchronous=FULL` while retaining the existing record. It repeated those checks after closing and reopening the pool. This verifies reported settings and one local migration fixture; it does not prove filesystem or storage-device flush behavior, OS-crash recovery, power-loss durability, or compatibility with every existing database.
+
+## Transaction failure and retry (2026-11-10)
+
+`cargo test --locked --test slice failed_message_and_reply_writes_leave_no_partial_delivery` injected SQLite trigger errors after a message or reply transaction had inserted its earlier rows. The service returned errors, and the test found no retry identity, message or recipient delivery from either failed operation. After removing the faults, the same identities and content succeeded; the reply was retried after a service restart and remained a single correlated response. This checks two deliberately injected SQL errors on local storage, not disk exhaustion, failure at commit, lost error responses or OS-crash durability.

@@ -1173,6 +1173,99 @@ fn inbox_and_history_pages_cross_frame_limit() -> TestResult<()> {
 }
 
 #[test]
+fn failed_message_and_reply_writes_leave_no_partial_delivery() -> TestResult<()> {
+    use sqlx::{Connection, SqliteConnection};
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-write-failure-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel", "channel":{"name":"team", "members":["a","b"]}}),
+    )?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut connection =
+        runtime.block_on(SqliteConnection::connect(&format!("sqlite://{database}")))?;
+    runtime.block_on(sqlx::query("CREATE TRIGGER fail_delivery BEFORE INSERT ON message_recipients BEGIN SELECT RAISE(ABORT, 'injected delivery failure'); END").execute(&mut connection))?;
+    let send = json!({"op":"send_message", "message":{"identity":"fault-request", "channel":"team", "sender":"a", "target":{"kind":"participant","name":"b"}, "body":"Review", "expects_reply":true}});
+    let failed = call(&address, send.clone())?;
+    assert!(failed.get("error").is_some() && failed.get("id").is_none());
+    let identities: i64 = runtime.block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM submission_keys WHERE identity = 'fault-request'")
+            .fetch_one(&mut connection),
+    )?;
+    let messages: i64 = runtime.block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE identity = 'fault-request'")
+            .fetch_one(&mut connection),
+    )?;
+    assert_eq!((identities, messages), (0, 0));
+    assert_eq!(
+        call(&address, json!({"op":"inbox", "participant":"b"}))?["messages"],
+        json!([])
+    );
+    runtime.block_on(sqlx::query("DROP TRIGGER fail_delivery").execute(&mut connection))?;
+    let request_id = call(&address, send.clone())?["id"]
+        .as_i64()
+        .ok_or("missing request ID")?;
+    assert_eq!(call(&address, send)?["id"], request_id);
+
+    runtime.block_on(sqlx::query("CREATE TRIGGER fail_response BEFORE INSERT ON message_responses BEGIN SELECT RAISE(ABORT, 'injected response failure'); END").execute(&mut connection))?;
+    let reply = json!({"op":"reply_message", "reply":{"identity":"fault-reply", "request_id":request_id, "sender":"b", "body":"Done"}});
+    let failed = call(&address, reply.clone())?;
+    assert!(failed.get("error").is_some() && failed.get("id").is_none());
+    let identities: i64 = runtime.block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM submission_keys WHERE identity = 'fault-reply'")
+            .fetch_one(&mut connection),
+    )?;
+    let messages: i64 = runtime.block_on(
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE identity = 'fault-reply'")
+            .fetch_one(&mut connection),
+    )?;
+    assert_eq!((identities, messages), (0, 0));
+    assert_eq!(
+        call(&address, json!({"op":"inbox", "participant":"a"}))?["messages"],
+        json!([])
+    );
+    assert!(call(
+        &address,
+        json!({"op":"get_message_response", "id":request_id})
+    )?["response"]
+        .is_null());
+    runtime.block_on(sqlx::query("DROP TRIGGER fail_response").execute(&mut connection))?;
+    drop(connection);
+    drop(server);
+    let server = start_server(database, &address)?;
+    let reply_id = call(&address, reply.clone())?["id"]
+        .as_i64()
+        .ok_or("missing reply ID")?;
+    assert_eq!(call(&address, reply)?["id"], reply_id);
+    let response = call(
+        &address,
+        json!({"op":"get_message_response", "id":request_id}),
+    )?;
+    assert_eq!(response["response"]["id"], reply_id);
+    assert_eq!(response["response"]["message"]["body"], "Done");
+    assert_eq!(
+        call(&address, json!({"op":"inbox", "participant":"a"}))?["messages"]
+            .as_array()
+            .ok_or("missing inbox")?
+            .len(),
+        1
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
+
+#[test]
 fn recipient_retrieves_messages_accepted_while_disconnected() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();
