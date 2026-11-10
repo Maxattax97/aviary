@@ -257,3 +257,7 @@ On local Linux x86-64, `python3 tests/default_listener.py` started `aviary serve
 ## Transaction failure and retry (2026-11-10)
 
 `cargo test --locked --test slice failed_message_and_reply_writes_leave_no_partial_delivery` injected SQLite trigger errors after a message or reply transaction had inserted its earlier rows. The service returned errors, and the test found no retry identity, message or recipient delivery from either failed operation. After removing the faults, the same identities and content succeeded; the reply was retried after a service restart and remained a single correlated response. This checks two deliberately injected SQL errors on local storage, not disk exhaustion, failure at commit, lost error responses or OS-crash durability.
+
+## Independent terminal refreshes (2026-11-10)
+
+`python3 tests/terminal_partial_refresh.py` inserted deliberately oversized legacy records into an isolated local test database. An unreadable notice page produced a warning while an ordinary decision remained visible; after that fixture was removed, an unreadable decision page produced a warning while the operator inbox remained usable. The normal terminal, reconnect, history, tmux and Rust regressions also passed. This checks two local page failures, not arbitrary network or database failures, cross-view snapshot consistency or representative operator use.

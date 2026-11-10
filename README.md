@@ -91,6 +91,7 @@ cargo test --locked
 python3 tests/terminal_pty.py
 python3 tests/attention_smoke.py
 python3 tests/terminal_reconnect.py
+python3 tests/terminal_partial_refresh.py
 python3 tests/startup_smoke.py
 python3 tests/default_listener.py  # Linux procfs; skips if port 7432 is occupied
 python3 tests/skill_smoke.py

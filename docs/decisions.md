@@ -128,6 +128,8 @@ A long custom answer shows its tail while being edited. Ctrl-R opens a paged rev
 
 The terminal retains its current view and unsent custom draft when polling fails, displays the error and retries reads; a later successful poll reconciles the view. A failed action is shown as not confirmed, retains the current state, and is never automatically resubmitted. A missing reply can conceal a committed action; check current state before a manual retry. Polling calls use one-second send and receive timeouts per call; queue refreshes run outside the input loop, with one refresh at a time and stale results discarded after queue switches and actions. Submissions run in a separate task; while pending, the interface ignores additional actions and allows Ctrl-C to request exit. Closing the interface still discards unsent drafts.
 
+Decision, notice and open-inbox refreshes are independent: a failed page is identified in the refresh warning while successful pages update normally. Failed views retain their prior contents until a successful read; those contents may be stale. Each read is a separate request and snapshot, so this does not provide a cross-view consistent snapshot or a latency guarantee.
+
 While a custom answer is being edited, a refresh whose current page no longer contains its request retains the displayed request and draft and warns the operator. The request may have been answered or deferred elsewhere; submission remains subject to current service state. Leaving the editor permits the next refresh to reconcile the queue and discard the draft if the request is absent. Drafts are not persisted across interface exit.
 
 

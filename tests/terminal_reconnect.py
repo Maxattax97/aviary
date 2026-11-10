@@ -74,7 +74,7 @@ def main() -> None:
             terminal.send("j\rdraft survives")
             terminal.expect("draft survives")
             stop(service)
-            terminal.expect("Service unavailable", timeout=6)
+            terminal.expect("Refresh incomplete", timeout=6)
             assert terminal.process.poll() is None
             terminal.send("\r")
             terminal.expect("Sending; outcome unknown", timeout=3)
@@ -117,7 +117,7 @@ def main() -> None:
         with Terminal(service) as terminal:
             terminal.expect("No active requests")
             stop(service)
-            terminal.expect("Service unavailable", timeout=6)
+            terminal.expect("Refresh incomplete", timeout=6)
             started = time.monotonic()
             terminal.quit()
             assert time.monotonic() - started < 5

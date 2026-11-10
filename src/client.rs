@@ -1082,12 +1082,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                     let notice_offset = view.notice_offset;
                     let current_generation = generation;
                     refresh = Some(tokio::spawn(async move {
-                        let result = async {
-                            let requests = fetch_requests(&address, deferred, request_offset).await?;
-                            let notices = fetch_notices(&address, notice_offset).await?;
-                            let messages = if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await?) } else { None };
-                            Ok::<_, crate::error::AppError>((requests, notices, messages))
-                        }.await;
+                        let result = tokio::join!(
+                            fetch_requests(&address, deferred, request_offset),
+                            fetch_notices(&address, notice_offset),
+                            async { if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await) } else { None } },
+                        );
                         (current_generation, deferred, inbox_view, result)
                     }));
                 }
@@ -1105,22 +1104,26 @@ pub async fn terminal(address: &str) -> Result<()> {
                 if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy {
                     continue;
                 }
-                match refreshed {
-                    Ok((requests, notices, messages)) => {
-                        let recovered = view.poll_error.take().is_some();
-                        let changed_requests = view.update_request_page(requests);
-                        let changed_notices = view.update_notices(notices);
-                        let changed_inbox = messages.is_some_and(|items| view.update_inbox(items));
-                        if recovered || changed_requests || changed_notices || changed_inbox { display(&view)?; }
-                    }
-                    Err(error) => {
-                        let message = format!("Service unavailable: {error}; retrying");
-                        if view.poll_error.as_ref() != Some(&message) {
-                            view.poll_error = Some(message);
-                            display(&view)?;
-                        }
+                let (requests, notices, messages) = refreshed;
+                let mut errors = Vec::new();
+                let mut changed = false;
+                match requests {
+                    Ok(page) => changed |= view.update_request_page(page),
+                    Err(error) => errors.push(format!("decisions: {error}")),
+                }
+                match notices {
+                    Ok(page) => changed |= view.update_notices(page),
+                    Err(error) => errors.push(format!("notices: {error}")),
+                }
+                if let Some(messages) = messages {
+                    match messages {
+                        Ok(page) => changed |= view.update_inbox(page),
+                        Err(error) => errors.push(format!("inbox: {error}")),
                     }
                 }
+                let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; retrying", errors.join("; "))) };
+                if view.poll_error != error { view.poll_error = error; changed = true; }
+                if changed { display(&view)?; }
             }
             result = async {
                 match history_task.as_mut() {
