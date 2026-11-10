@@ -247,3 +247,7 @@ This verifies a fresh build on one configured host, not installation on a clean 
 ## Default listener inspection (2026-11-10)
 
 On local Linux x86-64, `python3 tests/default_listener.py` started `aviary serve` with no arguments in an isolated temporary directory. It matched the process's socket inodes against procfs TCP listeners and found only `127.0.0.1:7432`, then completed a local CLI request. A separate occupied-port check verified that the test skips without connecting to an existing listener. The initial free-port check and service bind are not atomic: if another process races for the port, the test fails rather than claiming success. A skip is not evidence. This is local socket inspection, not an independent remote connection attempt, an explicit non-loopback listener check, or a supported-platform matrix.
+
+## SQLite connection settings (2026-11-10)
+
+`cargo test --locked --bin aviary pooled_connections_use_wal_and_full_synchronous` opened a pre-existing rollback-journal database, held all five pool connections simultaneously, and checked that each reported WAL mode and SQLite `synchronous=FULL` while retaining the existing record. It repeated those checks after closing and reopening the pool. This verifies reported settings and one local migration fixture; it does not prove filesystem or storage-device flush behavior, OS-crash recovery, power-loss durability, or compatibility with every existing database.

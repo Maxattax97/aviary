@@ -749,6 +749,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pooled_connections_use_wal_and_full_synchronous(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let directory = std::env::temp_dir().join(format!("aviary-pragmas-{}", std::process::id()));
+        std::fs::create_dir_all(&directory)?;
+        let database_path = directory.join("state.sqlite");
+        let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+        // Start with a pre-existing database in rollback-journal mode.
+        let original = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(database)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Delete)
+                    .synchronous(SqliteSynchronous::Off),
+            )
+            .await?;
+        sqlx::query("CREATE TABLE preserved (value TEXT NOT NULL)")
+            .execute(&original)
+            .await?;
+        sqlx::query("INSERT INTO preserved (value) VALUES ('existing')")
+            .execute(&original)
+            .await?;
+        original.close().await;
+
+        for _ in 0..2 {
+            let storage = Storage::open(database).await?;
+            // Hold all five simultaneously so the pool must initialize five
+            // distinct connections rather than reusing one checked connection.
+            let mut connections = Vec::new();
+            for _ in 0..5 {
+                connections.push(storage.pool.acquire().await?);
+            }
+            for connection in &mut connections {
+                let journal: String = sqlx::query_scalar("PRAGMA journal_mode")
+                    .fetch_one(&mut **connection)
+                    .await?;
+                let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+                    .fetch_one(&mut **connection)
+                    .await?;
+                let value: String = sqlx::query_scalar("SELECT value FROM preserved")
+                    .fetch_one(&mut **connection)
+                    .await?;
+                assert_eq!(journal.to_lowercase(), "wal");
+                assert_eq!(synchronous, 2); // SQLite FULL
+                assert_eq!(value, "existing");
+            }
+            drop(connections);
+            storage.pool.close().await;
+        }
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn opens_existing_prototype_database(
     ) -> std::result::Result<(), Box<dyn std::error::Error>> {
         let directory = std::env::temp_dir().join(format!("aviary-legacy-{}", std::process::id()));
