@@ -73,5 +73,19 @@ with tempfile.TemporaryDirectory() as d:
         assert proc.returncode == 0 and termios.tcgetattr(slave) == before
         os.close(master); os.close(slave)
         print('defer, reopen, priority override, restore passed; terminal restored')
+        call({'op':'answer','id':ident,'index':0})
+        details = {'identity':'details','agent':'agent','question':'Detail check','options':['Yes'],'recommendation':0,'reason':'Ready','explanation':'Why this matters','context':'A'*430 + ' END-CONTEXT'}
+        detail_id = call({'op':'submit','request':details})['id']
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        wait_output(b'Why this matters')
+        os.write(master,b'c'); wait_output(b'page 1/')
+        os.write(master,b'jj'); wait_output(b'END-CONTEXT')
+        os.write(master,b'q'); wait_output(b'Detail check')
+        assert call({'op':'get','id':detail_id})['answer'] is None
+        os.write(master,b'q'); proc.wait(timeout=5)
+        assert proc.returncode == 0 and termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        print('explanation and paged context passed; no answer submitted')
     finally:
         server.kill(); server.wait()

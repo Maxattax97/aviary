@@ -13,6 +13,10 @@ pub struct DecisionRequest {
     pub identity: String,
     pub agent: String,
     pub question: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explanation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<String>,
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub importance: u8,

@@ -68,6 +68,7 @@ struct View {
     current: usize,
     deferred_view: bool,
     priority_edit: bool,
+    detail_page: Option<usize>,
     selected: Option<usize>,
     editing: bool,
     custom: String,
@@ -79,6 +80,7 @@ impl View {
             current: 0,
             deferred_view: false,
             priority_edit: false,
+            detail_page: None,
             selected: None,
             editing: false,
             custom: String::new(),
@@ -93,6 +95,7 @@ impl View {
             .and_then(|r| r.request.recommendation.map(|_| 0));
         self.editing = false;
         self.priority_edit = false;
+        self.detail_page = None;
         self.custom.clear();
     }
     fn update(&mut self, requests: Vec<PendingRequest>) -> bool {
@@ -131,6 +134,23 @@ impl View {
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
+        }
+        if let Some(page) = self.detail_page {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => self.detail_page = None,
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
+                    let max_page = self
+                        .current()
+                        .map(|r| detail_pages(&r.request).len().saturating_sub(1))
+                        .unwrap_or(0);
+                    self.detail_page = Some((page + 1).min(max_page));
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => {
+                    self.detail_page = Some(page.saturating_sub(1))
+                }
+                _ => return Action::None,
+            }
+            return Action::Redraw;
         }
         if self.priority_edit {
             match key.code {
@@ -203,6 +223,10 @@ impl View {
                 id: request.id,
                 deferred: !self.deferred_view,
             }),
+            KeyCode::Char('c') => {
+                self.detail_page = Some(0);
+                Action::Redraw
+            }
             KeyCode::Char('p') => {
                 self.priority_edit = true;
                 Action::Redraw
@@ -324,10 +348,36 @@ fn safe(text: &str) -> String {
         .map(|c| if c.is_control() { ' ' } else { c })
         .collect()
 }
+fn detail_pages(request: &crate::protocol::DecisionRequest) -> Vec<String> {
+    let explanation = request.explanation.as_deref().unwrap_or("(none supplied)");
+    let context = request.context.as_deref().unwrap_or("(none supplied)");
+    let content = format!(
+        "Explanation: {}   Supporting context: {}",
+        safe(explanation),
+        safe(context)
+    );
+    let chars: Vec<char> = content.chars().collect();
+    chars
+        .chunks(200)
+        .map(|part| part.iter().collect())
+        .collect()
+}
 fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
     if let Some(pending) = view.current() {
         let request = &pending.request;
+        if let Some(page) = view.detail_page {
+            let pages = detail_pages(request);
+            println!(
+                "Request {} details, page {}/{}\r\n\r\n{}\r\n\r\nj/k pages; c, q or Esc returns.",
+                pending.id,
+                page + 1,
+                pages.len(),
+                pages.get(page).map(String::as_str).unwrap_or("")
+            );
+            io::stdout().flush()?;
+            return Ok(());
+        }
         println!(
             "{} queue: {}/{} | importance {}\r\nRequest {} from {}\r\n{}\r\n",
             if view.deferred_view {
@@ -342,6 +392,16 @@ fn display(view: &View) -> Result<()> {
             safe(&request.agent),
             safe(&request.question)
         );
+        if let Some(explanation) = &request.explanation {
+            let clean = safe(explanation);
+            let summary: String = clean.chars().take(160).collect();
+            let suffix = if clean.chars().count() > 160 {
+                "…"
+            } else {
+                ""
+            };
+            println!("Explanation: {summary}{suffix}\r");
+        }
         let choices = view.choices();
         for (position, index) in choices.iter().enumerate() {
             if let Some(option) = request.options.get(*index) {
@@ -383,7 +443,7 @@ fn display(view: &View) -> Result<()> {
                 safe(&view.custom)
             );
         } else {
-            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; Tab queues; q quits.");
+            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; Tab queues; q quits.");
         }
     } else {
         println!(
@@ -413,6 +473,8 @@ mod tests {
                 identity: "test".into(),
                 agent: "agent".into(),
                 question: "Choose".into(),
+                explanation: None,
+                context: None,
                 options: (0..count).map(|i| format!("option {i}")).collect(),
                 importance: 0,
                 recommendation,

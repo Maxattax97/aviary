@@ -60,3 +60,8 @@ A directly addressed message can set `expects_reply`; group requests are rejecte
 ## Decision queue priority and deferral
 
 A decision submission may specify an integer importance from 0 through 5, default 0; higher values sort first and equal values sort by request ID (submission order). The operator may persist an override without changing the submitted content or its retry identity. Deferral moves a pending decision to a separate durable queue until the operator restores or answers it; it is not a response and does not resurface automatically. The interface exposes h/l request navigation, d for deferral or restoration, Tab to switch queues and p then 0–5 for an override. Classification of notices, large-content display, and broader accessibility remain open.
+
+
+## Decision explanation and context
+
+Decision requests may carry optional explanation and supporting-context strings. The queue shows the first 160 displayed characters of the explanation, with an ellipsis when truncated; c opens the complete explanation and context in 200-character pages. Control characters are rendered as spaces to prevent terminal injection; stored text is unchanged. The transport frame limit applies, and terminal-size-aware layout and queue pagination remain open.

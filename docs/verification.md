@@ -37,3 +37,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local decision priority and deferral evidence (2026-11-09)
 
 `cargo test --locked` passed priority ordering across agents, submission-order ties, a persistent override, active/deferred separation, and service restart recovery. `python3 tests/terminal_pty.py` additionally deferred a decision, closed and reopened the interface, switched to the deferred view, changed priority, and restored it, with terminal settings restored on normal exit. This does not establish completion-notice behavior, the full attention interface, representative operator validation, tmux, other platforms or OS-crash recovery.
+
+
+## Local explanation and context evidence (2026-11-09)
+
+`cargo test --locked` passed structured submission, retry and listing assertions for explanation and context. `python3 tests/terminal_pty.py` showed an explanation, opened a multi-page supporting context and reached its final marker without submitting an answer. This is local pseudo-terminal evidence, not terminal-size, accessibility, tmux, representative-operator or full-payload-limit validation.

@@ -274,7 +274,7 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
     let database = database_path.to_str().ok_or("database path is not UTF-8")?;
     let server = start_server(database, &address)?;
     let requests = [
-        json!({"identity":"none","agent":"agent","question":"What next?","options":[]}),
+        json!({"identity":"none","agent":"agent","question":"What next?","explanation":"Why","context":"Supporting context","options":[]}),
         json!({"identity":"two","agent":"agent","question":"Choose","options":["Yes","No"]}),
         json!({"identity":"many","agent":"agent","question":"Choose","options":["0","1","2","3","4","5","6","7","8","9","10"],"recommendation":10,"reason":"Last is best"}),
     ];
@@ -299,6 +299,14 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
     assert_eq!(
         listed.pointer("/requests/0/request/options"),
         Some(&json!([]))
+    );
+    assert_eq!(
+        listed.pointer("/requests/0/request/explanation"),
+        Some(&json!("Why"))
+    );
+    assert_eq!(
+        listed.pointer("/requests/0/request/context"),
+        Some(&json!("Supporting context"))
     );
     assert_eq!(
         listed.pointer("/requests/1/request/options"),
