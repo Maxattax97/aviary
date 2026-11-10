@@ -292,15 +292,19 @@ def main() -> None:
             service.call(
                 {
                     "op": "create_channel",
-                    "channel": {"name": "ops", "members": ["operator", "agent"]},
+                    "channel": {"name": "all", "members": ["operator", "agent"]},
                 }
             )
             tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
+            tmux("send-keys", "-t", "aviary:", "?")
+            wait_for_screen("Keyboard help 1/3")
+            tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("Keyboard help 2/3")
+            tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("Keyboard help 3/3")
+            tmux("send-keys", "-t", "aviary:", "Escape")
+            wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "m")
-            wait_for_screen("Retry identity")
-            for value in ["tmux-long-instruction", "ops", "agent"]:
-                tmux("send-keys", "-t", "aviary:", "-l", value)
-                tmux("send-keys", "-t", "aviary:", "Enter")
             wait_for_screen("Instruction text")
             instruction = "x" * 145 + " END-INSTRUCTION"
             tmux("send-keys", "-t", "aviary:", "-l", instruction)

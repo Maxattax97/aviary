@@ -33,6 +33,62 @@ use crate::{
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_TIMEOUT_MS: i32 = 1_000;
 
+fn rejection(error: &crate::error::AppError) -> bool {
+    matches!(error, crate::error::AppError::Remote(message)
+        if matches!(message.as_str(), "invalid request" | "identity conflict" | "request not found" | "request already answered" | "invalid option"))
+}
+
+async fn submit_checked(address: &str, operation: &Operation) -> Result<serde_json::Value> {
+    let response = network::call(address, operation).await?;
+    let id = response.get("id").and_then(serde_json::Value::as_i64);
+    let valid = match operation {
+        Operation::SendMessage { .. } => id.is_some_and(|id| id > 0),
+        Operation::ReplyMessage { reply } => {
+            id.is_some_and(|id| id > 0)
+                && response
+                    .get("request_id")
+                    .and_then(serde_json::Value::as_i64)
+                    == Some(reply.request_id)
+        }
+        Operation::Answer { id: expected, .. } | Operation::AnswerCustom { id: expected, .. } => {
+            id == Some(*expected)
+        }
+        Operation::SetDeferred {
+            id: expected,
+            deferred,
+        } => {
+            id == Some(*expected)
+                && response
+                    .get("deferred")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(*deferred)
+        }
+        Operation::SetImportance {
+            id: expected,
+            importance,
+        } => {
+            id == Some(*expected)
+                && response
+                    .get("importance")
+                    .and_then(serde_json::Value::as_u64)
+                    == Some(u64::from(*importance))
+        }
+        Operation::DismissNotice { id: expected } => {
+            id == Some(*expected)
+                && response
+                    .get("dismissed")
+                    .and_then(serde_json::Value::as_bool)
+                    == Some(true)
+        }
+        _ => false,
+    };
+    if valid {
+        Ok(response)
+    } else {
+        Err(crate::error::AppError::InvalidFrame)
+    }
+}
+
 pub async fn wait_for_answer(address: &str, id: i64) -> Result<()> {
     loop {
         let response = network::call(address, &Operation::Get { id }).await?;
@@ -337,6 +393,7 @@ impl Arrivals {
 
 struct View {
     help: bool,
+    help_page: usize,
     page_size: usize,
     requests: Vec<PendingRequest>,
     request_offset: usize,
@@ -385,6 +442,7 @@ impl View {
     fn new() -> Self {
         Self {
             help: false,
+            help_page: 0,
             page_size: detail_page_size(),
             requests: Vec::new(),
             request_offset: 0,
@@ -615,7 +673,16 @@ impl View {
                 self.help = false;
                 return Action::Redraw;
             }
-            return Action::None;
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
+                    self.help_page = (self.help_page + 1).min(2)
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => {
+                    self.help_page = self.help_page.saturating_sub(1)
+                }
+                _ => return Action::None,
+            }
+            return Action::Redraw;
         }
         if (key.code == KeyCode::Char('g') && key.modifiers.contains(KeyModifiers::CONTROL))
             || (key.code == KeyCode::Char('?')
@@ -624,6 +691,7 @@ impl View {
                 && self.history_lookup.is_none())
         {
             self.help = true;
+            self.help_page = 0;
             return Action::Redraw;
         }
         if let Some(composer) = &mut self.composer {
@@ -1188,7 +1256,7 @@ pub async fn terminal(address: &str) -> Result<()> {
         tokio::select! {
             _ = interrupt.recv() => return Ok(()),
             _ = terminate.recv() => return Ok(()),
-            _ = interval.tick(), if (view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none()) => {
+            _ = interval.tick(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
                 if let Some(history) = &mut view.history {
                     history.needs_load = false;
                     let (kind, id, section, offset) = (history.kind, history.id, history.section, history.offset);
@@ -1223,7 +1291,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let (started, deferred, inbox_view, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
-                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy {
+                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy || view.help {
                     continue;
                 }
                 let (requests, notices, messages) = refreshed;
@@ -1298,8 +1366,8 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(_) => { view.status = None; if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
-                        Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
+                        Ok(response) => { view.status = Some(format!("Accepted: {response}")); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
+                        Err(error) => { view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else { format!("Unconfirmed: {error}; check state before retry") }); }
                     }
                 }
                 display(&mut screen, &view)?;
@@ -1379,7 +1447,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, false, network::call(&address, &Operation::SendMessage { message }).await)
+                            (true, false, submit_checked(&address, &Operation::SendMessage { message }).await)
                         }));
                     },
                     Action::SendReply(reply) => {
@@ -1389,7 +1457,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, false, network::call(&address, &Operation::ReplyMessage { reply }).await)
+                            (true, false, submit_checked(&address, &Operation::ReplyMessage { reply }).await)
                         }));
                     },
                     Action::Submit(operation) => {
@@ -1400,7 +1468,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         let address = address.to_owned();
                         let is_notice = matches!(&operation, Operation::DismissNotice { .. });
                         submission = Some(tokio::spawn(async move {
-                            (false, is_notice, network::call(&address, &operation).await)
+                            (false, is_notice, submit_checked(&address, &operation).await)
                         }));
                     }
                 }
@@ -1563,23 +1631,18 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
     }
     if view.help {
         println!(
-            "Keyboard help | Esc or Ctrl-G closes\r\n\
-            Decisions: h/l request; j/k or 1-9 choose; Enter confirm\r\n\
-            d defer/restore; p importance; c context; o answer detail\r\n\
-            Tab queues; R clear arrival; i inbox; n notices; m instruction\r\n\
-            Inbox: h/l message; j/k text; r reply; H history\r\n\
-            Notices: h/l notice; j/k text; d dismiss\r\n\
-            History: H selected; g lookup; 1-3 section; h/l record\r\n\
-            j/k text; [/] page; R refresh; q returns\r\n\
-            Composer: Enter continues/confirms; Esc cancels; j/k review pages\r\n\
-            Custom answer: Ctrl-R review; Enter confirms; Esc cancels\r\n\
-            ? opens help outside text entry; Ctrl-G opens help anywhere\r\n\
-            Ctrl-C quits."
+            "Keyboard help {}/3 | j/k pages\r\nEsc or Ctrl-G closes",
+            view.help_page + 1
         );
+        match view.help_page {
+            0 => println!("Decisions: h/l request; j/k or 1-9 choose; Enter confirms\r\nd defer/restore; p importance\r\nc context; o answer detail\r\nTab queues; R clear arrival\r\ni inbox; n notices; m instruction"),
+            1 => println!("Inbox: h/l message; j/k text\r\nr reply; H history\r\nNotices: h/l notice; j/k text; d dismiss\r\nHistory: H selected; g lookup\r\n1-3 section; h/l record; j/k text\r\n[ ] page; R refresh; q returns"),
+            _ => println!("Composer: Enter continues/confirms\r\nEsc cancels; j/k review pages\r\nCustom: Ctrl-R review; Enter confirms\r\n? opens help outside text entry\r\nCtrl-G opens help anywhere; Ctrl-C quits"),
+        }
         return render(screen, &output);
     }
     if view.busy {
-        println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
+        println!("Action in progress; outcome unconfirmed. Ctrl-C quits.\r");
     }
     if let Some(error) = &view.poll_error {
         let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
@@ -1737,7 +1800,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                 reply_hint
             );
         } else {
-            println!("Operator inbox: no messages. i or q returns.");
+            println!("Operator inbox: no messages. ? help; q returns.");
         }
         return render(screen, &output);
     }
@@ -1761,9 +1824,9 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                     .saturating_add(view.notices.len())
                     .to_string()
             };
-            println!("Completion notice {}/{} | notice {} | page {}/{}\r\n\r\n{}\r\n\r\nd dismiss; ? help; q returns.", position, total, notice.id, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            println!("Completion notice {}/{} | notice {} | page {}/{}\r\n\r\n{}\r\n\r\nj/k pages; d dismiss; ? help; q returns.", position, total, notice.id, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
         } else {
-            println!("No open completion notices. n or q returns.");
+            println!("No open completion notices. ? help; q returns.");
         }
         return render(screen, &output);
     }
@@ -1794,7 +1857,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         );
     }
     if !view.request_loaded {
-        println!("Loading requests. i inbox; g history; Tab queues; q quits.\r");
+        println!("Loading requests. i inbox; ? help; q quits.\r");
         return render(screen, &output);
     }
     if let Some(pending) = view.current() {
@@ -1885,11 +1948,19 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                 preview_tail(&view.custom)
             );
         } else {
-            println!("\r\nj/k select; Enter confirms; ? help.");
+            println!(
+                "\r\nEnter confirms answer to {}; d {}; p importance; ? help.",
+                pending.id,
+                if view.deferred_view {
+                    "restores"
+                } else {
+                    "defers"
+                }
+            );
         }
     } else {
         println!(
-            "No {} requests. i inbox; g history; Tab queues; q quits.",
+            "No {} requests. i inbox; ? help; q quits.",
             if view.deferred_view {
                 "deferred"
             } else {

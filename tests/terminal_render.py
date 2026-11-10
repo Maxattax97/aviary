@@ -32,17 +32,25 @@ def main() -> None:
                  "sh", str(BINARY), service.address)
             lines = screen_with("No active requests")
             assert lines[0] == "Open completion notices: 0 (n to view); i inbox; m compose", lines
-            assert lines[1] == "No active requests. i inbox; g history; Tab queues; q quits.", lines
+            assert lines[1] == "No active requests. i inbox; ? help; q quits.", lines
             assert all(not line.strip() for line in lines[2:]), lines
             request_id = service.call({"op": "submit", "request": {"identity": "render-test", "agent": "agent", "question": "Render this decision", "options": ["Yes"], "recommendation": 0, "reason": "Ready"}})["id"]
             lines = screen_with("Render this decision")
             assert not any("OLD SCREEN" in line or "SECOND OLD LINE" in line for line in lines), lines
+            assert any(f"Request {request_id}" in line for line in lines), lines
+            tmux("send-keys", "-t", "render:", "?")
+            screen_with("Keyboard help")
+            assert service.call({"op": "get", "id": request_id})["answer"] is None
+            tmux("send-keys", "-t", "render:", "Escape")
+            lines = screen_with("Render this decision")
+            assert any("> 1." in line for line in lines), lines
             tmux("send-keys", "-t", "render:", "Enter")
             service.wait_for(lambda: service.call({"op": "get", "id": request_id})["answer"] is not None, "render decision")
             lines = screen_with("No active requests")
             assert lines[0].startswith("Open completion notices: 0"), lines
-            assert lines[1] == "No active requests. i inbox; g history; Tab queues; q quits.", lines
-            assert all(not line.strip() for line in lines[2:]), lines
+            assert lines[1] == f'Accepted: {{"id":{request_id}}}', lines
+            assert lines[2] == "No active requests. i inbox; ? help; q quits.", lines
+            assert all(not line.strip() for line in lines[3:]), lines
             tmux("send-keys", "-t", "render:", "q")
             lines = screen_with("RETURNED_TO_SHELL")
             assert any("OLD SCREEN CONTENT THAT MUST NOT LEAK" in line for line in lines), lines

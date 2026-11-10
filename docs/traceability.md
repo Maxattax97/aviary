@@ -17,20 +17,20 @@
 | SYS-009 | US-014 | V1 | T-009 (test) | V1-06 | Draft / not run |
 | SYS-010 | US-015, US-028, US-029 | V1 | T-010 (test) | V1-06 | Draft / not run |
 | SYS-011 | US-016 | V1 | T-011 (test) | SL-02, SL-04, V1-06 | Partial / full acceptance not run |
-| SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Existing manual flow exercised; target default not implemented |
+| SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Default group workflow locally exercised; direct/group CLI retained |
 | SYS-050 | US-062 | V1 | T-050 (test) | V1-24 | Planned / not implemented |
 | SYS-051 | US-063 | V1 | T-051 (test) | V1-25 | Planned / not implemented |
 | SYS-052 | US-064 | V1 | T-052 (test) | V1-26 | Planned / not implemented |
-| SYS-053 | US-065, US-058 | V1 | T-053 (test) | V1-27 | Planned / not implemented |
-| SYS-054 | US-066 | V1 | T-054 (test) | V1-28 | Planned / not implemented |
+| SYS-053 | US-065, US-058 | V1 | T-053 (test) | V1-27 | Local view and selection checks; broader validation open |
+| SYS-054 | US-066 | V1 | T-054 (test) | V1-28 | Local outcome and lost-ack checks; broader validation open |
 | SYS-055 | US-067 | V1 | T-055 (test) | V1-29 | Planned / not implemented |
 | SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Planned / not implemented |
-| SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Planned / not implemented |
+| SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Local target and concurrent-answer checks; broader validation open |
 | SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
 | SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |
-| SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Planned / not implemented |
+| SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Local help and draft checks; platform matrix open |
 | SYS-047 | US-059, US-039, US-040 | V1 | T-047 (test) | V1-18 | Planned / not implemented |
-| SYS-045 | US-056 | V1 | T-045 (test) | V1-09 | Planned / not implemented |
+| SYS-045 | US-056 | V1 | T-045 (test) | V1-09 | Local group and lost-ack retry checks |
 | SYS-013 | US-020 | V1 | T-013 (test) | V1-08 | Draft / not run |
 | SYS-014 | US-021 | V1 | T-014 (test) | V1-08 | Draft / not run |
 | SYS-015 | US-022 | V1 | T-015 (test) | SL-04, SL-05, V1-10 | Partial / full acceptance not run |

@@ -129,7 +129,14 @@ def exercise_context_and_notices(service: Service) -> int:
         )["id"]
         terminal.expect("Open completion notices: 1")
         terminal.send("n")
-        assert b"Tests passed" in terminal.expect("Build package")
+        screen = terminal.expect("Build package")
+        assert b"Tests passed" in screen and f"notice {notice_id}".encode() in screen
+        terminal.send("?")
+        terminal.expect("Keyboard help 1/3")
+        terminal.send("j")
+        terminal.expect("Notices: h/l notice")
+        terminal.send("\x1b")
+        terminal.expect(f"notice {notice_id}")
         terminal.send("d")
         service.wait_for(
             lambda: not service.call({"op": "list_notices"})["notices"],
@@ -259,7 +266,14 @@ def exercise_operator_inbox(service: Service) -> None:
         )["id"]
         terminal.expect("Operator inbox 2/3")
         terminal.send("l")
-        terminal.expect("Need operator response")
+        screen = terminal.expect("Need operator response")
+        assert f"message {incoming}".encode() in screen
+        terminal.send("?")
+        terminal.expect("Keyboard help 1/3")
+        terminal.send("j")
+        terminal.expect("Inbox: h/l message")
+        terminal.send("\x1b")
+        terminal.expect(f"message {incoming}")
         original_reply_id = None
         for attempt, identity in enumerate(
             ["operator-reply", "operator-reply", "different-reply"]
@@ -416,6 +430,44 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
     print("Terminal navigated decision, notice, and inbox data above frame limit")
 
 
+def exercise_concurrent_answer() -> None:
+    with Service() as service:
+        request_id = submit(service, {"identity": "concurrent-answer", "agent": "worker", "question": "Concurrent decision", "options": []})
+        with Terminal(service) as terminal:
+            terminal.expect("Concurrent decision")
+            terminal.send("j\rmy draft")
+            terminal.expect("my draft")
+            service.call({"op": "answer_custom", "id": request_id, "value": "other answer"})
+            terminal.send("\r")
+            terminal.expect("Rejected: request already answered")
+            assert service.call({"op": "get", "id": request_id})["answer"]["value"] == "other answer"
+            terminal.send("\x1b")
+            terminal.expect("No active requests")
+            terminal.quit()
+    print("Concurrent answer is rejected without replacing the existing answer")
+
+
+def exercise_unsuitable_channel() -> None:
+    with Service() as service:
+        channel = {"name": "all", "members": ["operator"]}
+        service.call({"op": "create_channel", "channel": channel})
+        with Terminal(service) as terminal:
+            terminal.expect("No active requests")
+            terminal.send("m")
+            terminal.expect("Instruction text")
+            terminal.send("Cannot deliver\r")
+            terminal.expect("Review instruction")
+            terminal.send("\r")
+            terminal.expect("Rejected:")
+            assert service.call({"op": "create_channel", "channel": channel})["channel"] == channel
+            assert service.run({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "worker"]}}).returncode != 0
+            assert not service.call({"op": "inbox", "participant": "worker"})["messages"]
+            terminal.send("\x1b")
+            terminal.expect("No active requests")
+            terminal.quit()
+    print("Unsuitable all channel is rejected without membership changes")
+
+
 def main() -> None:
     with Service() as service:
         exercise_answers(service)
@@ -424,6 +476,8 @@ def main() -> None:
         exercise_instructions(service)
         exercise_operator_inbox(service)
         exercise_large_queues(service, request_id)
+    exercise_concurrent_answer()
+    exercise_unsuitable_channel()
 
 
 if __name__ == "__main__":

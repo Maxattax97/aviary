@@ -101,6 +101,7 @@ The terminal keeps its current view and retries reads when polling fails. A fail
 cargo test --locked
 python3 tests/terminal_pty.py
 python3 tests/terminal_render.py  # requires tmux
+python3 tests/terminal_lost_ack.py  # requires system libzmq
 python3 tests/terminal_arrivals.py
 python3 tests/terminal_signals.py
 python3 tests/decision_slice.py

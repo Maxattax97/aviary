@@ -48,7 +48,7 @@ def responsive_while_poll_is_waiting() -> None:
             with connection:
                 started = time.monotonic()
                 terminal.send("m")
-                terminal.expect("Retry identity", timeout=0.75)
+                terminal.expect("Instruction text", timeout=0.75)
                 assert time.monotonic() - started < 0.75
                 terminal.send("\x1b")
                 terminal.expect("Loading requests")
@@ -77,11 +77,11 @@ def main() -> None:
             terminal.expect("Refresh incomplete", timeout=6)
             assert terminal.process.poll() is None
             terminal.send("\r")
-            terminal.expect("Sending; outcome unknown", timeout=3)
+            terminal.expect("Action in progress", timeout=3)
             terminal.send(
                 "\r"
             )  # A repeated confirmation while busy must not queue a retry.
-            terminal.expect("Not confirmed", timeout=16)
+            terminal.expect("Unconfirmed", timeout=16)
             assert terminal.process.poll() is None
             restart(service)
             terminal.expect("draft survives", timeout=8)
