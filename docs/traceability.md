@@ -1,55 +1,55 @@
 # Requirements traceability matrix
 
-**Status:** Draft; all planned tests are not run and implementation tickets are not created. Source: [stories v0.2](user-stories.md). Requirement details, rationale and acceptance criteria are in [requirements](requirements.md); test approach is in [verification](verification.md).
+**Status:** Initial direction approved; full planned acceptance tests remain open. First-slice tickets, complete requirement outlines and partial evidence are in [tickets](tickets.md). Source: [stories v0.2](user-stories.md). Requirement details, rationale and acceptance criteria are in [requirements](requirements.md); test approach is in [verification](verification.md).
 
 ## Requirements to stories and verification
 
 | Requirement | Originating stories | Priority | Planned verification | Ticket | Status |
 |---|---|---|---|---|---|---|
-| SYS-001 | US-001, US-002 | V1 | T-001 (test) | None | Draft / not run |
-| SYS-002 | US-003 | V1 | T-002 (test) | None | Draft / not run |
-| SYS-003 | US-004 | V1 | T-003 (inspection/test) | None | Draft / not run |
-| SYS-004 | US-005 | V1 | T-004 (test) | None | Draft / not run |
-| SYS-005 | US-006 | V1 | T-005 (test) | None | Draft / not run |
-| SYS-006 | US-011, US-014 | V1 | T-006 (test) | None | Draft / not run |
-| SYS-007 | US-012 | V1 | T-007 (test) | None | Draft / not run |
-| SYS-008 | US-013 | V1 | T-008 (test) | None | Draft / not run |
-| SYS-009 | US-014 | V1 | T-009 (test) | None | Draft / not run |
-| SYS-010 | US-015, US-028, US-029 | V1 | T-010 (test) | None | Draft / not run |
-| SYS-011 | US-016 | V1 | T-011 (test) | None | Draft / not run |
-| SYS-012 | US-019, US-020 | V1 | T-012 (test) | None | Draft / not run |
-| SYS-013 | US-020 | V1 | T-013 (test) | None | Draft / not run |
-| SYS-014 | US-021 | V1 | T-014 (test) | None | Draft / not run |
-| SYS-015 | US-022 | V1 | T-015 (test) | None | Draft / not run |
-| SYS-016 | US-023 | V1 | T-016 (test) | None | Draft / not run |
-| SYS-017 | US-024 | V1 | T-017 (test) | None | Draft / not run |
-| SYS-018 | US-025 | V1 | T-018 (test) | None | Draft / not run |
-| SYS-019 | US-028 | V1 | T-019 (test) | None | Draft / not run |
-| SYS-020 | US-029 | V1 | T-020 (test) | None | Draft / not run |
-| SYS-021 | US-030 | V1 | T-021 (test) | None | Draft / not run |
-| SYS-022 | US-031 | V1 | T-022 (demonstration) | None | Draft / not run |
-| SYS-023 | US-034 | V1 | T-023 (inspection/test) | None | Draft / not run |
-| SYS-024 | US-035 | V1 | T-024 (inspection/demonstration) | None | Draft / not run |
-| SYS-025 | US-036 | V1 | T-025 (test) | None | Draft / not run |
-| SYS-026 | US-037 | V1 | T-026 (test) | None | Draft / not run |
-| SYS-027 | US-038 | V1 | T-027 (test) | None | Draft / not run |
-| SYS-028 | US-039 | V1 | T-028 (test) | None | Draft / not run |
-| SYS-029 | US-040 | V1 | T-029 (demonstration) | None | Draft / not run |
-| SYS-030 | US-042 | V1 | T-030 (test) | None | Draft / not run |
-| SYS-031 | US-049 | V1 | T-031 (test) | None | Draft / not run |
-| SYS-032 | US-051 | V1 | T-032 (test) | None | Draft / not run |
-| SYS-033 | US-053 | V1 | T-033 (test) | None | Draft / not run |
-| SYS-034 | US-054 | Future | T-034 (test) | None | Deferred / not run |
-| SYS-035 | US-054, US-020, US-021 | Future | T-035 (test) | None | Deferred / not run |
-| SYS-036 | US-016, US-036, US-037 | V1 | T-036 (test) | None | Draft / not run |
-| SYS-037 | US-055 | Future | T-037 (test) | None | Deferred / not run |
-| SYS-038 | US-003; stakeholder clarification | V1 | T-038 (test) | None | Draft / not run |
-| SYS-039 | Stakeholder platform constraint | V1 | T-039 (demonstration) | None | Draft / not run |
-| SYS-040 | US-020, US-021; stakeholder clarification | V1 | T-040 (test) | None | Draft / not run |
-| SYS-041 | US-037; stakeholder clarification | V1 | T-041 (test) | None | Draft / not run |
-| SYS-042 | US-037; stakeholder clarification | V1 | T-042 (test) | None | Draft / not run |
-| SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | None | Draft / not run |
-| SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | None | Draft / not run |
+| SYS-001 | US-001, US-002 | V1 | T-001 (test) | SL-03, V1-01 | Partial / full acceptance not run |
+| SYS-002 | US-003 | V1 | T-002 (test) | V1-02 | Draft / not run |
+| SYS-003 | US-004 | V1 | T-003 (inspection/test) | V1-03 | Draft / not run |
+| SYS-004 | US-005 | V1 | T-004 (test) | V1-03 | Draft / not run |
+| SYS-005 | US-006 | V1 | T-005 (test) | V1-04 | Draft / not run |
+| SYS-006 | US-011, US-014 | V1 | T-006 (test) | V1-05 | Draft / not run |
+| SYS-007 | US-012 | V1 | T-007 (test) | SL-03, V1-05 | Partial / full acceptance not run |
+| SYS-008 | US-013 | V1 | T-008 (test) | SL-03, V1-06 | Partial / full acceptance not run |
+| SYS-009 | US-014 | V1 | T-009 (test) | V1-06 | Draft / not run |
+| SYS-010 | US-015, US-028, US-029 | V1 | T-010 (test) | V1-06 | Draft / not run |
+| SYS-011 | US-016 | V1 | T-011 (test) | SL-02, SL-04, V1-06 | Partial / full acceptance not run |
+| SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Draft / not run |
+| SYS-013 | US-020 | V1 | T-013 (test) | V1-08 | Draft / not run |
+| SYS-014 | US-021 | V1 | T-014 (test) | V1-08 | Draft / not run |
+| SYS-015 | US-022 | V1 | T-015 (test) | SL-04, SL-05, V1-10 | Partial / full acceptance not run |
+| SYS-016 | US-023 | V1 | T-016 (test) | SL-02, SL-04, SL-05, V1-10 | Partial / full acceptance not run |
+| SYS-017 | US-024 | V1 | T-017 (test) | V1-11 | Draft / not run |
+| SYS-018 | US-025 | V1 | T-018 (test) | V1-11 | Draft / not run |
+| SYS-019 | US-028 | V1 | T-019 (test) | V1-12 | Draft / not run |
+| SYS-020 | US-029 | V1 | T-020 (test) | V1-12 | Draft / not run |
+| SYS-021 | US-030 | V1 | T-021 (test) | SL-03, V1-13 | Partial / full acceptance not run |
+| SYS-022 | US-031 | V1 | T-022 (demonstration) | V1-12, V1-22 | Draft / not run |
+| SYS-023 | US-034 | V1 | T-023 (inspection/test) | SL-02, V1-14 | Partial / full acceptance not run |
+| SYS-024 | US-035 | V1 | T-024 (inspection/demonstration) | V1-14 | Draft / not run |
+| SYS-025 | US-036 | V1 | T-025 (test) | SL-01, SL-05, V1-15 | Partial / full acceptance not run |
+| SYS-026 | US-037 | V1 | T-026 (test) | SL-01, SL-05, V1-15 | Partial / full acceptance not run |
+| SYS-027 | US-038 | V1 | T-027 (test) | V1-17 | Draft / not run |
+| SYS-028 | US-039 | V1 | T-028 (test) | SL-03, SL-05, V1-18 | Partial / full acceptance not run |
+| SYS-029 | US-040 | V1 | T-029 (demonstration) | V1-18 | Draft / not run |
+| SYS-030 | US-042 | V1 | T-030 (test) | SL-05, V1-19 | Partial / full acceptance not run |
+| SYS-031 | US-049 | V1 | T-031 (test) | V1-20 | Draft / not run |
+| SYS-032 | US-051 | V1 | T-032 (test) | V1-20 | Draft / not run |
+| SYS-033 | US-053 | V1 | T-033 (test) | V1-21 | Draft / not run |
+| SYS-034 | US-054 | Future | T-034 (test) | L-13 | Deferred / not run |
+| SYS-035 | US-054, US-020, US-021 | Future | T-035 (test) | L-14 | Deferred / not run |
+| SYS-036 | US-016, US-036, US-037 | V1 | T-036 (test) | SL-02, V1-16 | Partial / full acceptance not run |
+| SYS-037 | US-055 | Future | T-037 (test) | L-15 | Deferred / not run |
+| SYS-038 | US-003; stakeholder clarification | V1 | T-038 (test) | V1-02 | Draft / not run |
+| SYS-039 | Stakeholder platform constraint | V1 | T-039 (demonstration) | V1-22 | Draft / not run |
+| SYS-040 | US-020, US-021; stakeholder clarification | V1 | T-040 (test) | V1-07 | Draft / not run |
+| SYS-041 | US-037; stakeholder clarification | V1 | T-041 (test) | SL-01, V1-15 | Partial / full acceptance not run |
+| SYS-042 | US-037; stakeholder clarification | V1 | T-042 (test) | SL-01, V1-15 | Partial / full acceptance not run |
+| SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
+| SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 
 ## Stories to requirements and disposition
 

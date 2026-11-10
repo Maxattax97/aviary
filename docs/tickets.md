@@ -1,0 +1,63 @@
+# Implementation and verification backlog
+
+These are local implementation tickets for the approved initial direction. Requirements are only partially exercised until their full acceptance criteria are met. Test IDs are defined in [verification](verification.md).
+
+| Ticket | Work and acceptance | Requirements and tests | State |
+|---|---|---|---|
+| SL-01 | Store decision submissions durably; deduplicate identical retry identities and reject conflicts; preserve responses across process restart. | SYS-025, 026, 041, 042; T-025, 026, 041, 042 | Implemented; local process-kill test passes, full crash scope pending |
+| SL-02 | Serve structured submit, list, answer and retrieval over a configurable TCP listener, defaulting to localhost. Reject a second decision. | SYS-011, 016, 023, 036, 043, 044; T-011, 016, 023, 036, 043, 044 | Prototype implemented; complete acceptance and remote test pending |
+| SL-03 | Display pending decisions in an independent terminal client, show the recommendation first and require explicit confirmation. Refresh automatically. | SYS-001, 007, 008, 021, 028; T-001, 007, 008, 021, 028 | Prototype implemented; interactive terminal verification pending |
+| SL-04 | Wait for and retrieve a correlated structured answer after requester restart. | SYS-011, 015, 016; T-011, 015, 016 | Prototype implemented; end-to-end acceptance pending |
+| SL-05 | Run the full slice on two separately networked machines, including service and requester restarts, retry, and interface closure; capture evidence. | SYS-015, 016, 025, 026, 028, 030, 043, 044; T-015, 016, 025, 026, 028, 030, 043, 044 | Not run; requires second machine and trusted test network |
+
+## V1 delivery backlog
+
+These outlines cover the remaining V1 obligations, including work partially represented by SL-01–05. They are local planning records, not external issues. Each acceptance statement refers to the full corresponding criterion in [requirements](requirements.md); a ticket is not complete merely because its slice counterpart works. Dependencies indicate useful ordering, not a claim that unresolved design choices have been approved. Resolve the relevant questions in [decisions](decisions.md) before implementing dependent behavior.
+
+| Ticket | Scope and acceptance | Requirements / planned tests | Dependencies / state |
+|---|---|---|---|
+| V1-01 | Define actionable request and notice classification; consolidate requests from multiple agents while excluding routine execution from the default queue. Verify mixed input from at least two agents. | SYS-001 / T-001 | SL-03; open attention policy |
+| V1-02 | Define importance scale, default and tie-breaking; order the queue and persist operator overrides. Verify distinct values and reordering after override. | SYS-002, SYS-038 / T-002, T-038 | V1-01; open attention policy |
+| V1-03 | Show request explanations and provide on-demand supporting context, including documented treatment of oversized content. Verify both without opening an agent session. | SYS-003, SYS-004 / T-003, T-004 | V1-01; payload and display limits open |
+| V1-04 | Persist deferral and provide retrieval after interface restart; exercise deferral and recovery. Automatic resurfacing remains V2. | SYS-005 / T-005 | V1-01; deferral lifecycle open |
+| V1-05 | Accept zero, two and many suggested answers, with an optional valid recommendation and reason. Retain and display them; reject invalid recommendations according to a documented contract. | SYS-006, SYS-007 / T-006, T-007 | SL-01, SL-02; payload and no-recommendation policy open |
+| V1-06 | Present recommendations first and selected without submitting automatically; support selection of suggested options and a last custom answer. Verify approval, denial, exact custom text and structured answer type/value. | SYS-008–011 / T-008–011 | V1-05; SL-02, SL-03; keyboard and no-recommendation details open |
+| V1-07 | Define channel membership and addressed-recipient semantics; implement one-to-one, one-to-many, many-to-one and many-to-many exchange. Verify all four arrangements. Routing labels are not access controls. | SYS-040 / T-040 | Membership and group semantics open |
+| V1-08 | Implement agent messages addressed to an individual or group and retrieval by the intended recipient or members; test that an unrelated label is not returned the message by the routing API. Do not claim authentication or authorization. | SYS-013, SYS-014 / T-013, T-014 | V1-07; delivery and membership timing open |
+| V1-09 | Add operator composition and dispatch of instructions to an agent and a group from the terminal interface; verify retrieval by each addressed target. | SYS-012 / T-012 | V1-07, V1-08 |
+| V1-10 | Support a targeted agent-to-agent request with one correlated response, waiting and retrieval after requester restart. Verify both live wait and later retrieval. | SYS-015, SYS-016 / T-015, T-016 | V1-07, V1-08, SL-04; timeout and response semantics open |
+| V1-11 | Define and implement completion-notice classification and lifecycle; show the associated work and supplied results. Verify visibility and contents. | SYS-017, SYS-018 / T-017, T-018 | V1-01; notice policy open |
+| V1-12 | Complete keyboard navigation and consistent selection, confirmation, deferral and navigation actions across views; demonstrate in supported terminals and tmux. | SYS-019, SYS-020, SYS-022 / T-019, T-020, T-022 | V1-03, V1-04, V1-06; terminal support matrix open |
+| V1-13 | Ensure new requests appear without manual refresh while the interface is open. Verify arrival during an active session and document the agreed latency bound if one is adopted. | SYS-021 / T-021 | SL-03; latency threshold open |
+| V1-14 | Publish a documented machine-readable agent CLI and portable on-demand skill; verify submit/retrieve and error status from the documentation without MCP. Define schema/version compatibility. | SYS-023, SYS-024 / T-023, T-024 | SL-02; V1-08, V1-10; schema and distribution open |
+| V1-15 | Complete durability and retry verification for messages and responses: acknowledge only after durable commit, crash/restart with intact storage, deduplicate identical retries and reject conflicting ones while returning the original identity. | SYS-025, SYS-026, SYS-041, SYS-042 / T-025, T-026, T-041, T-042 | SL-01; validate OS-crash scope separately from process-kill evidence |
+| V1-16 | Enforce one decision under competing concurrent answer submissions; verify one accepted answer and consistent retrieval, including error behavior. | SYS-036 / T-036 | SL-02; concurrency and answer retry semantics open |
+| V1-17 | Record and retrieve request history containing linked messages, decisions and outcomes, with documented ordering. Verify all related records. | SYS-027 / T-027 | V1-08, V1-10; history ordering open |
+| V1-18 | Keep the service independent of the interface and document a startup path requiring no manual orchestration of multiple background processes. Exercise service communication with the interface closed and clean-environment startup. | SYS-028, SYS-029 / T-028, T-029 | SL-03; service lifecycle and prerequisites open |
+| V1-19 | Verify participants on two networked machines can exchange targeted messages; test localhost-only default and explicit non-loopback listener. Record actual addresses, setup and evidence on a trusted test network. | SYS-030, SYS-043, SYS-044 / T-030, T-043, T-044 | V1-08, SL-05; second machine required |
+| V1-20 | Carry and display originating agent and work context; associate exchanges with a supplied activity reference and retrieve it for both. | SYS-031, SYS-032 / T-031, T-032 | V1-08; context vocabulary open |
+| V1-21 | Define delivery/acknowledgment semantics and recover accepted communications after recipient disconnect and reconnect. Verify messages accepted during disconnection are retrievable. | SYS-033 / T-033 | V1-08, V1-15; delivery policy open |
+| V1-22 | Agree and document POSIX platform and terminal support matrix, minimum dimensions, prerequisites and accessibility expectations; install and exercise service, CLI and interface on each supported platform. | SYS-039 / T-039; SYS-022 / T-022 | Matrix and measurable bounds require review |
+| V1-23 | Run representative operator validation of attention reduction, one-confirmation acceptance, context switching and resumed agent work; record observations and findings. | Validation plan and US-001–006, US-013, US-023 | Working workflow and representative operator; not a substitute for T tests |
+
+## Later-scope outlines
+
+These are discovery or future implementation outlines, not V1 commitments. V2 and Future stories without SYS/T IDs have no approved acceptance tests yet; define those before implementation. Security and isolation require a separate threat model and design, not an extension of V1 routing labels.
+
+| Ticket | Scope and acceptance to define | Sources / planned tests | Dependencies / state |
+|---|---|---|---|
+| L-01 | Explore a primary objective and attention weighting, periodic resurfacing, duplicate consolidation and lower-priority review. Define operator controls and evaluation before implementation. | US-007, US-008, US-009, US-010; no SYS/T yet | V2; attention policy |
+| L-02 | Design pending-request revision and clarification with authority, visibility and preserved context. | US-017; no SYS/T yet | V2; request history |
+| L-03 | Assess feasibility and cost of linked corrections that preserve the original and report delivery where a correction can still influence action. Do not promise cancellation, rollback or that delivery precedes action. | US-018; no SYS/T yet | V2; feasibility and review |
+| L-04 | Define richer direct agent exchange beyond the limited V1 targeted request/reply, including its distinction from future autonomous coordination. | US-026; no SYS/T yet | V2; V1-10 |
+| L-05 | Design configurable keybindings and filtering, plus fast overview/detail transitions. | US-032, US-033; no SYS/T yet | V2; V1-12 |
+| L-06 | Investigate safe navigation to an available originating work environment and optional tmux/Herder integration. | US-050; no SYS/T yet | V2; environment and safety decisions |
+| L-07 | Design and verify an activity timeline spanning agents and sessions. | US-052; no SYS/T yet | V2; V1-17, V1-20 |
+| L-08 | Design configurable retention and associated deletion/history behavior without silently weakening retry guarantees. | Retention decision; no SYS/T yet | V2; V1-15, V1-17 |
+| L-09 | Define visibility into excessive or unhelpful sources and unresolved inter-agent requests or communication failures; do not assume automatic suppression. | US-041, US-046; no SYS/T yet | Future; observability design |
+| L-10 | Explore participant/group capability discovery and richer structured autonomous coordination. | US-043, US-044; no SYS/T yet | Future; V1-07, V1-10 |
+| L-11 | Define and test broader delivery to temporarily unavailable recipients beyond V1 recovery of communications already accepted by the service. | US-047; no SYS/T yet | Future; V1-21 |
+| L-12 | Define client interfaces and compatibility for alternative web or graphical interfaces. | US-048; no SYS/T yet | Future; protocol contract |
+| L-13 | Threat-model and design participant authentication for network communication; test authorized and unauthorized access. | SYS-034 / T-034; US-054 | Future; separate security design |
+| L-14 | Design and test per-communication authorization and impersonation resistance for agents and groups. | SYS-035 / T-035; US-020, US-021, US-045, US-054 | Future; L-13; separate security design |
+| L-15 | Design and test multi-user isolation across listing, retrieval and modification, including direct identifiers. | SYS-037 / T-037; US-055 | Future; L-13, L-14; account and sharing design open |

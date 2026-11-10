@@ -1,6 +1,6 @@
 # System requirements specification
 
-**Status:** Draft for stakeholder and architecture review; no implementation authorization.
+**Status:** Initial requirements and architecture direction approved by the stakeholder on 2026-11-09; implementation of the first slice is authorized. Unresolved operational parameters remain open.
 **Baseline:** [User stories v0.2](user-stories.md). IDs below are reserved and must not be reused. Requirements are V1 targets unless explicitly marked Future or pending a decision; all are subject to vertical-slice and sizing review. Each acceptance criterion is a proposed verification oracle, not evidence of a completed test.
 
 The target operating environment is POSIX systems, with the supported platform matrix to be defined. The system is a standalone Rust product, independent of model and orchestration framework. Messaging and durable state serve agents independently of the human attention interface. “Accepted” means the system has positively acknowledged a submission after its durability boundary; the precise storage failure model remains open. In V1 a participant is an agent or operator in one trusted local user context; participant labels are not authenticated identities; an activity is a supplied correlation reference, not a managed project. “Pending communications” in SYS-033 means messages accepted by the system for that agent and not yet retrieved under the eventual delivery policy.

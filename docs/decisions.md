@@ -1,6 +1,6 @@
 # Open product and engineering decisions
 
-**Status:** For human review before requirements and initial architecture are baselined. No option below is a requirement unless separately adopted.
+**Status:** Initial requirements and architecture direction approved 2026-11-09. The remaining decisions below are open; the first-slice choices are recorded separately below.
 
 1. **Attention policy:** The operator controls importance; agent suggestions and operator overrides suffice in V1. Choose the scale, default, tie-breaks, actionable classification, completion-notice visibility, deferral and notice lifecycle. How are oversized summaries and context handled? US-008 resurfacing is V2.
 2. **Request/reply scope:** V1 includes a targeted agent-to-agent request and one correlated response through channels. Channels support one or many senders and recipients; clarify membership, addressed subsets, timeouts, concurrent responders and group reply semantics. US-026 remains V2 and US-044 remains Future; richer autonomous coordination is not a V1 commitment.
@@ -28,3 +28,7 @@ Run a single-user service bound to localhost by default, without application-lev
 All participants within the single user’s context may create channels. Future multi-user support must isolate users and their channels; account creation, registration, authentication and sharing mechanisms remain undecided, with no assumption of a username/password system or trusted administrator. Do not claim V1 supplies that isolation. A future public service requires its own threat model and security design.
 
 Use Vim-style navigation (`j`/`k`), Enter to confirm, and numbered options beginning at 1; the recommendation remains preselected. Use a separate selection mechanism for more than nine options so the number of choices is not capped. Reserve `q` for leaving a view rather than overloading it as an answer.
+
+## First-slice engineering choices
+
+Use newline-delimited JSON over TCP, a separate terminal client, and SQLite in WAL mode with FULL synchronous commits. Bind IPv4 loopback by default and accept an explicit bind address. A submission identity is unique across the deployment and retained with its record. Compare the complete normalized request for retry conflicts. The slice accepts a nonempty set of options with exactly one valid recommendation; it displays the oldest pending request and explicitly confirms its recommendation. This restriction is a milestone limitation, not a change to SYS-006 or SYS-009. Poll for updates and responses every 500 ms without a promised latency bound. Retain all records indefinitely. A second answer is rejected; no answer retry identity is defined yet. Limit a protocol message to 1 MiB including its newline for this prototype. The process-crash durability test does not establish storage-device or power-loss guarantees. The full channel model, interaction policy, and supported platform matrix remain open.
