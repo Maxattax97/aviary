@@ -167,3 +167,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local operator reply evidence (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux over loopback. An agent submitted a direct request to `operator`; the test opened its inbox item, composed a reply, verified no response existed before confirmation, and retrieved the correlated body and inherited activity afterward. An identical retry returned the original reply ID; a different second reply was rejected while its draft remained visible. This does not simulate an actually lost reply, verify remote operation, establish operator identity, or replace representative-operator validation.
+
+
+## Local clean-directory startup and interface closure (2026-11-10)
+
+`python3 tests/startup_smoke.py` passed on local Linux. Using the already-built executable, an empty temporary working directory and a minimal HOME/PATH/TERM environment, the test started one service with an explicit loopback port and relative database path. It opened and closed the terminal, exchanged a direct request and reply while the terminal was closed, reopened it to view the reply and context, and retrieved both linked records through history. The service remained running until the test stopped it. This is not an installation on a clean OS, a different supported platform, a remote machine, or representative operator validation.

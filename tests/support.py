@@ -97,8 +97,16 @@ class Service:
 class Terminal:
     """Drive the real terminal client on a PTY and restore settings on failure."""
 
-    def __init__(self, service: Service) -> None:
+    def __init__(
+        self,
+        service: Service,
+        *,
+        cwd: Path | None = None,
+        env: dict[str, str] | None = None,
+    ) -> None:
         self.service = service
+        self.cwd = cwd
+        self.env = env
 
     def __enter__(self) -> Terminal:
         self.master, self.slave = pty.openpty()
@@ -109,6 +117,8 @@ class Terminal:
                 stdin=self.slave,
                 stdout=self.slave,
                 stderr=self.slave,
+                cwd=self.cwd,
+                env=self.env,
             )
         except BaseException:
             os.close(self.master)

@@ -87,6 +87,7 @@ The terminal keeps its current view and retries reads when polling fails. A fail
 cargo test --locked
 python3 tests/terminal_pty.py
 python3 tests/terminal_reconnect.py
+python3 tests/startup_smoke.py
 python3 tests/skill_smoke.py
 python3 tests/cli_reference.py
 python3 tests/tmux_smoke.py  # requires tmux
