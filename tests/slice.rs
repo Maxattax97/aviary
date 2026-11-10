@@ -828,3 +828,66 @@ fn local_send_queue_applies_backpressure_and_terminates() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn queue_pages_cross_frame_limit() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-pages-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let large = "x".repeat(350_000);
+    for i in 0..4 {
+        let request = json!({"identity":format!("page-request-{i}"),"agent":"a","question":"Choose","context":large,"options":[],"importance":i});
+        assert!(call(&address, json!({"op":"submit","request":request}))?
+            .get("id")
+            .is_some());
+        let notice =
+            json!({"identity":format!("page-notice-{i}"),"agent":"a","work":"Work","result":large});
+        assert!(
+            call(&address, json!({"op":"submit_notice","notice":notice}))?
+                .get("id")
+                .is_some()
+        );
+    }
+    assert_eq!(
+        call(&address, json!({"op":"list"}))?.get("error"),
+        Some(&json!("response too large"))
+    );
+    for (operation, field) in [("list_page", "requests"), ("notices_page", "notices")] {
+        let mut offset = 0u64;
+        let mut seen = Vec::new();
+        let mut pages = 0;
+        loop {
+            let response = call(&address, json!({"op":operation,"offset":offset}))?;
+            let items = response
+                .get(field)
+                .and_then(Value::as_array)
+                .ok_or("missing page")?;
+            assert!(!items.is_empty());
+            seen.extend(
+                items
+                    .iter()
+                    .filter_map(|item| item.get("id").and_then(Value::as_i64)),
+            );
+            pages += 1;
+            match response.get("next_offset").and_then(Value::as_u64) {
+                Some(next) => {
+                    assert!(next > offset);
+                    offset = next;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), 4);
+        assert!(pages > 1);
+        let unique: std::collections::HashSet<_> = seen.into_iter().collect();
+        assert_eq!(unique.len(), 4);
+    }
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

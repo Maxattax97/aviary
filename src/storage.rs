@@ -53,6 +53,17 @@ impl Storage {
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,
+            Operation::ListPage { deferred, offset } => {
+                Self::page(self.list(deferred).await?, "requests", offset)
+            }
+            Operation::NoticesPage {
+                include_dismissed,
+                offset,
+            } => Self::page(
+                self.list_notices(include_dismissed).await?,
+                "notices",
+                offset,
+            ),
             Operation::SetImportance { id, importance } => {
                 self.set_importance(id, importance).await
             }
@@ -72,6 +83,36 @@ impl Storage {
             Operation::DismissNotice { id } => self.dismiss_notice(id).await,
             Operation::History { kind, id } => self.history(kind, id).await,
         }
+    }
+
+    // Keep a page comfortably below the frame limit, with room for its envelope.
+    fn page(mut source: Value, field: &str, offset: usize) -> Result<Value> {
+        const PAGE_BYTES: usize = 900 * 1024;
+        const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_MESSAGE_BYTES as usize) - 2048;
+        let values = source
+            .get_mut(field)
+            .and_then(Value::as_array_mut)
+            .ok_or(AppError::InvalidFrame)?;
+        let mut page = Vec::new();
+        let mut bytes = 0usize;
+        for item in values.iter().skip(offset) {
+            let size = serde_json::to_vec(item)?.len() + 1;
+            if size > MAX_ITEM_BYTES {
+                return Err(AppError::InvalidFrame);
+            }
+            if !page.is_empty() && bytes.saturating_add(size) > PAGE_BYTES {
+                break;
+            }
+            bytes += size;
+            page.push(item.clone());
+        }
+        let next = offset.saturating_add(page.len());
+        let next_offset = if next < values.len() {
+            Some(next)
+        } else {
+            None
+        };
+        Ok(json!({field: page, "next_offset": next_offset}))
     }
 
     async fn submit(&self, request: DecisionRequest) -> Result<Value> {

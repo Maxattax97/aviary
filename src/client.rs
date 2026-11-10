@@ -16,7 +16,7 @@ use tokio::{sync::mpsc, time};
 use crate::{
     error::Result,
     network,
-    protocol::{Message, NoticeItem, NoticeList, Operation, PendingRequest, RequestList, Target},
+    protocol::{Message, NoticeItem, NoticePage, Operation, PendingRequest, RequestPage, Target},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -43,6 +43,48 @@ pub async fn wait_for_message_response(address: &str, id: i64) -> Result<()> {
             return Ok(());
         }
         time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+async fn fetch_requests(address: &str, deferred: bool) -> Result<Vec<PendingRequest>> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: RequestPage = serde_json::from_value(
+            network::call(address, &Operation::ListPage { deferred, offset }).await?,
+        )?;
+        for request in &page.requests {
+            request.request.validate()?;
+        }
+        result.extend(page.requests);
+        match page.next_offset {
+            Some(next) if next > offset => offset = next,
+            Some(_) => return Err(crate::error::AppError::InvalidFrame),
+            None => return Ok(result),
+        }
+    }
+}
+
+async fn fetch_notices(address: &str) -> Result<Vec<NoticeItem>> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: NoticePage = serde_json::from_value(
+            network::call(
+                address,
+                &Operation::NoticesPage {
+                    include_dismissed: false,
+                    offset,
+                },
+            )
+            .await?,
+        )?;
+        result.extend(page.notices);
+        match page.next_offset {
+            Some(next) if next > offset => offset = next,
+            Some(_) => return Err(crate::error::AppError::InvalidFrame),
+            None => return Ok(result),
+        }
     }
 }
 
@@ -461,14 +503,10 @@ pub async fn terminal(address: &str) -> Result<()> {
     loop {
         tokio::select! {
             _ = interval.tick(), if view.composer.is_none() => {
-                let operation = if view.deferred_view { Operation::ListDeferred } else { Operation::List };
-                let response = network::call(address, &operation).await?;
-                let requests: RequestList = serde_json::from_value(response)?;
-                for request in &requests.requests { request.request.validate()?; }
-                let notice_response = network::call(address, &Operation::ListNotices { include_dismissed: false }).await?;
-                let notices: NoticeList = serde_json::from_value(notice_response)?;
-                let changed_requests = view.update(requests.requests);
-                let changed_notices = view.update_notices(notices.notices);
+                let requests = fetch_requests(address, view.deferred_view).await?;
+                let notices = fetch_notices(address).await?;
+                let changed_requests = view.update(requests);
+                let changed_notices = view.update_notices(notices);
                 if changed_requests || changed_notices { display(&view)?; }
             }
             key = receiver.recv() => {

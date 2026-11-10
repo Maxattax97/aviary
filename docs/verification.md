@@ -67,3 +67,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local portable skill evidence (2026-11-09)
 
 The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, `python3 tests/skill_smoke.py` executed the two shell blocks from that file against a local service, parsed decision and message results, retrieved each, and checked a nonzero missing-request error without MCP. This verifies the documented examples in the local environment; it does not establish behavior for every agent framework, platform, or schema version.
+
+
+## Local queue paging evidence (2026-11-09)
+
+`cargo test --locked` passed an integration case with four 350,000-character decisions and notices: legacy decision listing exceeded a frame, while paged operations returned all four distinct records across multiple responses. `python3 tests/terminal_pty.py` navigated ten decisions and ten notices whose respective aggregate sizes exceeded a frame. These checks use a stable local queue and do not prove consistent traversal during concurrent mutation, bounded memory, individual near-limit item handling, inbox/history pagination, or remote operation.

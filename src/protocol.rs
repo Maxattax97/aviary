@@ -56,6 +56,18 @@ pub enum Operation {
     },
     List,
     ListDeferred,
+    ListPage {
+        #[serde(default)]
+        deferred: bool,
+        #[serde(default)]
+        offset: usize,
+    },
+    NoticesPage {
+        #[serde(default)]
+        include_dismissed: bool,
+        #[serde(default)]
+        offset: usize,
+    },
     SetImportance {
         id: i64,
         importance: u8,
@@ -112,11 +124,6 @@ pub struct PendingRequest {
     pub request: DecisionRequest,
     pub importance: u8,
     pub deferred: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RequestList {
-    pub requests: Vec<PendingRequest>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -198,14 +205,20 @@ pub struct NoticeItem {
     pub dismissed: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct NoticeList {
-    pub notices: Vec<NoticeItem>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryKind {
     Decision,
     Message,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RequestPage {
+    pub requests: Vec<PendingRequest>,
+    pub next_offset: Option<usize>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NoticePage {
+    pub notices: Vec<NoticeItem>,
+    pub next_offset: Option<usize>,
 }

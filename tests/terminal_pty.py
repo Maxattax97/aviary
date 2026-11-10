@@ -133,5 +133,20 @@ with tempfile.TemporaryDirectory() as d:
         assert proc.returncode == 0 and termios.tcgetattr(slave) == before
         os.close(master); os.close(slave)
         print('operator direct and group instructions delivered')
+        call({'op':'answer','id':detail_id,'index':0})
+        large = 'x' * 120000
+        for number in range(10):
+            call({'op':'submit','request':{'identity':f'large-request-{number}','agent':'agent','question':f'Queue item {number}','options':[],'context':large}})
+            call({'op':'submit_notice','notice':{'identity':f'large-notice-{number}','agent':'agent','work':f'Notice {number}','result':large}})
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        wait_output(b'Queue item 0')
+        os.write(master,b'l'*9); wait_output(b'Queue item 9')
+        os.write(master,b'n'); wait_output(b'Notice 0')
+        os.write(master,b'l'*9); wait_output(b'Notice 9')
+        os.write(master,b'qq'); proc.wait(timeout=5)
+        assert proc.returncode == 0 and termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        print('terminal navigated decision and notice queues above frame limit')
     finally:
         server.kill(); server.wait()

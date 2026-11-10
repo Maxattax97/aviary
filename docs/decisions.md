@@ -85,3 +85,8 @@ A decision or channel message can be the history root. Related decisions, messag
 ## Agent skill distribution and compatibility
 
 The portable on-demand skill is maintained in `skills/aviary/` and can be copied or supplied directly to an agent without MCP. Its examples use the installed Aviary CLI and Python 3 JSON serialization. The version-1 transport envelope and CLI operation schemas are provisional; deploy service, CLI and skill as a matched version until a stable compatibility policy is established. A caller must preserve submission identity and content for unknown outcomes.
+
+
+## Initial queue wire paging
+
+The terminal retrieves decision and notice queues in offset pages targeted at 900 KiB, with a larger single item allowed within a reserved frame budget. Legacy list operations remain unchanged. Each page is evaluated against current state, not a snapshot, so concurrent queue changes can shift offsets; later refreshes reconcile the view. A single near-frame-limit stored item can still exceed the page budget. Server queries currently materialize the full list before slicing, and terminal aggregation, inbox and history are not memory-bounded or fully paginated. These limitations remain open for V1 readiness.
