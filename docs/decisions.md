@@ -101,6 +101,8 @@ On POSIX, SIGINT and SIGTERM request service shutdown. Once the signal is observ
 
 The decision view estimates the available choice rows from terminal height, keeps the selected choice in that window, and redraws on resize. The custom answer is included as the last choice. This is an initial row-count approximation: wrapped question, explanation, option and help text can still consume extra rows, and very small panes are not supported by an established minimum. Full terminal-size-aware layout remains open.
 
+When the full recommendation reason does not fit the preview, the option uses a shorter `[rec]` marker so that some answer text remains visible; `o` opens its complete text and reason. On terminals narrower than 60 columns, the decision view uses two shorter help lines; the README lists all keys. This reduces wrapping for the tested 40×12 pane but does not establish a minimum size or guarantee every header and Unicode string fits.
+
 
 ## Detail page sizing
 

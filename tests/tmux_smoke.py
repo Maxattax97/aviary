@@ -125,6 +125,31 @@ def main() -> None:
             wait_for_screen("Narrow detail")
             service.call({"op": "answer", "id": detail_id, "index": 0})
             wait_for_screen("No active requests")
+            narrow_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-narrow-recommendation",
+                        "agent": "tmux-agent",
+                        "question": "Proceed?",
+                        "options": ["No", "Yes"],
+                        "recommendation": 1,
+                        "reason": "Ready",
+                        "explanation": "Short explanation",
+                    },
+                }
+            )["id"]
+            screen = wait_for_screen("> 1. [rec] Yes")
+            assert "Active queue:" in screen and "Proceed?" in screen, screen
+            assert "Enter confirms" in screen, screen
+            assert service.call({"op": "get", "id": narrow_id})["answer"] is None
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            service.wait_for(
+                lambda: service.call({"op": "get", "id": narrow_id})["answer"]
+                == {"type": "suggested", "index": 1, "value": "Yes"},
+                "narrow recommended answer",
+            )
+            wait_for_screen("No active requests")
             long_answer = "z" * 280 + " END-OPTION"
             long_id = service.call(
                 {
@@ -140,7 +165,7 @@ def main() -> None:
                 }
             )["id"]
             tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
-            wait_for_screen("[recommended]")
+            wait_for_screen("[rec]")
             tmux("send-keys", "-t", "aviary:", "o")
             wait_for_screen("Answer:")
             tmux("send-keys", "-t", "aviary:", "j")

@@ -110,6 +110,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 
 `python3 tests/tmux_smoke.py` passed on local Linux with tmux 3.7c. In a 40×12 pane, the test opened a request with long supporting context, observed page navigation instructions and reached the final marker without answering. The existing `python3 tests/terminal_pty.py` suite also passed. This checks one ASCII context and terminal size, not every Unicode width, long header, resize during reading, notice contents, or a complete supported terminal matrix.
 
+The tmux test also checks a short recommendation at 40×12: its queue header, question, selected `[rec] Yes` option and confirmation instruction are visible together, no answer is stored before Enter, and Enter stores the recommended answer. This single fixture does not establish general layout or accessibility support.
+
 
 ## Local long answer evidence (2026-11-10)
 

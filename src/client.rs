@@ -1686,12 +1686,7 @@ fn display(view: &View) -> Result<()> {
                     let line = if Some(*index) == request.recommendation
                         && preview(&line) != safe(&line)
                     {
-                        format!(
-                            "{} {}. [recommended] {}",
-                            selected_mark,
-                            position + 1,
-                            option
-                        )
+                        format!("{} {}. [rec] {}", selected_mark, position + 1, option)
                     } else {
                         line
                     };
@@ -1712,7 +1707,12 @@ fn display(view: &View) -> Result<()> {
                 preview_tail(&view.custom)
             );
         } else {
-            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; H history; g lookup; Tab queues; q quits.");
+            let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
+            if width > 0 && width < 60 {
+                println!("\r\nj/k select; Enter confirms; c/o detail\r\nh/l requests; d defer; Tab; q quit");
+            } else {
+                println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; H history; g lookup; Tab queues; q quits.");
+            }
         }
     } else {
         println!(
