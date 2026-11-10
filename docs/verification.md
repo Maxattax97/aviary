@@ -87,3 +87,8 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 ## Local signal shutdown evidence (2026-11-10)
 
 `cargo test --locked --test slice signal_shutdown_preserves_acknowledged_submissions` passed on Linux over loopback. After a submission was acknowledged, the idle service exited successfully within five seconds of SIGTERM and later SIGINT. Each restart recovered the same ID and an identical retry returned it. This does not test a signal during an operation or a saturated peer, establish a general shutdown deadline, or simulate an OS crash or remote connection.
+
+
+## Local in-flight shutdown evidence (2026-11-10)
+
+`cargo test --locked --test slice signal_shutdown_waits_for_in_flight_write` passed on Linux over loopback. The test held an independent SQLite write lock, observed the service start a submission and receive SIGTERM, verified the process remained alive, then released the lock. After successful service exit and restart, the submission was present before retry; retry returned its original ID with one record. The test does not establish delivery of the original reply, saturated-peer shutdown behavior, a general deadline, an OS crash, or remote behavior.

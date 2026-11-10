@@ -136,6 +136,7 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
             {
                 Err(AppError::InvalidFrame)
             } else {
+                debug!("processing request");
                 runtime.block_on(storage.handle(request.operation))
             };
             let result = match result {
@@ -170,10 +171,12 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
     tokio::select! {
         result = &mut worker => result.map_err(|error| AppError::Task(error.to_string()))?,
         _ = interrupt.recv() => {
+            info!("shutdown requested");
             stopping.store(true, Ordering::Release);
             worker.await.map_err(|error| AppError::Task(error.to_string()))?
         },
         _ = terminate.recv() => {
+            info!("shutdown requested");
             stopping.store(true, Ordering::Release);
             worker.await.map_err(|error| AppError::Task(error.to_string()))?
         }

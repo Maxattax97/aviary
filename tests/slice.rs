@@ -1098,3 +1098,114 @@ fn signal_shutdown_preserves_acknowledged_submissions() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+#[cfg(unix)]
+fn signal_shutdown_waits_for_in_flight_write() -> TestResult<()> {
+    use sqlx::{Connection, SqliteConnection};
+    use std::{
+        io::{BufRead, BufReader},
+        sync::mpsc,
+    };
+
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-shutdown-inflight-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let child = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["serve", database, &address])
+        .env("RUST_LOG", "aviary=debug")
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut server = Server(child);
+    let stderr = server.0.stderr.take().ok_or("missing service stderr")?;
+    let (log_tx, log_rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            if log_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let wait_for = |needle: &str| -> TestResult<()> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let line = log_rx.recv_timeout(remaining)?;
+            if line.contains(needle) {
+                return Ok(());
+            }
+        }
+    };
+    wait_for("service listening")?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut lock = runtime.block_on(SqliteConnection::connect(&format!("sqlite://{database}")))?;
+    runtime.block_on(sqlx::query("BEGIN IMMEDIATE").execute(&mut lock))?;
+    let context = zmq::Context::new();
+    let socket = dealer(&context, &address)?;
+    let request =
+        json!({"identity":"inflight-shutdown","agent":"agent","question":"Proceed?","options":[]});
+    send_request(
+        &socket,
+        "inflight",
+        json!({"op":"submit","request":request}),
+    )?;
+    wait_for("processing request")?;
+    assert!(Command::new("kill")
+        .args(["-TERM", &server.0.id().to_string()])
+        .status()?
+        .success());
+    wait_for("shutdown requested")?;
+    assert!(
+        server.0.try_wait()?.is_none(),
+        "service exited while the write was locked"
+    );
+    runtime.block_on(sqlx::query("COMMIT").execute(&mut lock))?;
+    drop(lock);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = server.0.try_wait()? {
+            assert!(status.success(), "{status}");
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("service failed to stop".into());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(socket);
+    drop(server);
+    reader.join().map_err(|_| "log reader panicked")?;
+    let server = start_server(database, &address)?;
+    let before_retry = call(&address, json!({"op":"list"}))?;
+    let original_id = before_retry
+        .pointer("/requests/0/id")
+        .and_then(Value::as_i64)
+        .ok_or("in-flight submission did not commit")?;
+    let retry = call(&address, json!({"op":"submit","request":request}))?;
+    let id = retry
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing ID")?;
+    assert_eq!(id, original_id);
+    let list = call(&address, json!({"op":"list"}))?;
+    let requests = list
+        .get("requests")
+        .and_then(Value::as_array)
+        .ok_or("missing requests")?;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests.first().and_then(|item| item.get("id")),
+        Some(&json!(id))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
