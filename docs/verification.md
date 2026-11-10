@@ -112,3 +112,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local long answer evidence (2026-11-10)
 
 `python3 tests/tmux_smoke.py` passed locally with tmux 3.7c. In a 100×15 pane it submitted a long recommended answer, observed the recommendation label in its abbreviated preview, opened the selected answer detail, navigated to its final marker, verified no answer had been submitted, then confirmed it and retrieved the exact full value. This does not establish handling of all Unicode widths, long editor fields, very small panes or representative operator acceptance.
+
+
+## Local long instruction evidence (2026-11-10)
+
+`python3 tests/tmux_smoke.py` passed on Linux with tmux 3.7c. In a 40×12 pane it composed a long direct instruction, observed the draft tail and review controls, verified the recipient inbox was empty before confirmation, paged to the instruction end, then confirmed and retrieved the exact text. The existing pseudo-terminal instruction cases passed as well. This does not validate every Unicode width, resizing during review, actual network failure, other terminals, or representative operators.

@@ -74,7 +74,7 @@ An explicit `submit_notice` represents a meaningful completion and requires agen
 
 ## Operator instruction composition
 
-The terminal uses the routing label `operator`, which must be a member of the selected immutable channel. The operator supplies the deployment-unique retry identity, channel, recipient label or group, and single-line instruction text, then explicitly confirms the review. A failed or unknown send retains the unchanged draft for retry with the same identity while the interface remains open; drafts are not durable, so the operator must retain the identity and content before closing or cancelling. This label is not authenticated.
+The terminal uses the routing label `operator`, which must be a member of the selected immutable channel. The operator supplies the deployment-unique retry identity, channel, recipient label or group, and single-line instruction text, then explicitly confirms the review. Long edit fields show a trailing preview, and the complete review is available in pages navigated with j/k. A failed or unknown send retains the unchanged draft for retry with the same identity while the interface remains open; drafts are not durable, so the operator must retain the identity and content before closing or cancelling. This label is not authenticated.
 
 
 ## Request history
@@ -110,3 +110,8 @@ Decision context and notice detail pages use the terminal dimensions to estimate
 ## Decision previews
 
 Decision queue previews use a conservative two-column-per-character estimate; a truncated recommendation places its label before the answer text. `c` opens the full request detail and `o` opens the full selected suggested answer and recommendation reason. Confirming still requires Enter; opening a detail does not submit. Header, footer and edit-field wrapping, very small panes, and exact display widths for all Unicode remain open.
+
+
+## Instruction review paging
+
+The instruction composer retains complete input while showing the end of long fields. Its confirmation view pages all fields using the same terminal-size estimate as other detail views; j/k navigates pages and Enter explicitly sends the unchanged draft from any page. A failure retains the draft and identity while the interface stays open. Resize can change page boundaries; full layout and usability across supported terminals remain to be verified.

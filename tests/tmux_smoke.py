@@ -155,6 +155,42 @@ def main() -> None:
                 "long recommended answer",
             )
             wait_for_screen("No active requests")
+            service.call(
+                {
+                    "op": "create_channel",
+                    "channel": {"name": "ops", "members": ["operator", "agent"]},
+                }
+            )
+            tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
+            tmux("send-keys", "-t", "aviary:", "m")
+            wait_for_screen("Retry identity")
+            for value in ["tmux-long-instruction", "ops", "agent"]:
+                tmux("send-keys", "-t", "aviary:", "-l", value)
+                tmux("send-keys", "-t", "aviary:", "Enter")
+            wait_for_screen("Instruction text")
+            instruction = "x" * 145 + " END-INSTRUCTION"
+            tmux("send-keys", "-t", "aviary:", "-l", instruction)
+            wait_for_screen("END-INSTRUCTION")
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            screen = wait_for_screen("Review instruction")
+            assert "Enter sends" in screen, screen
+            assert (
+                service.call({"op": "inbox", "participant": "agent"})["messages"] == []
+            )
+            for _ in range(4):
+                tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("END-INSTRUCTION")
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            service.wait_for(
+                lambda: [
+                    item["message"]["body"]
+                    for item in service.call({"op": "inbox", "participant": "agent"})[
+                        "messages"
+                    ]
+                ]
+                == [instruction],
+                "long instruction delivery",
+            )
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:

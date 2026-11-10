@@ -108,6 +108,7 @@ impl Drop for TerminalGuard {
 #[derive(Default)]
 struct Composer {
     stage: usize,
+    review_page: usize,
     fields: [String; 4],
     error: Option<String>,
 }
@@ -242,6 +243,13 @@ impl View {
                 KeyCode::Esc => {
                     self.composer = None;
                     return Action::Redraw;
+                }
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right if composer.stage == 4 => {
+                    let last = composer_pages(composer).len().saturating_sub(1);
+                    composer.review_page = (composer.review_page + 1).min(last);
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left if composer.stage == 4 => {
+                    composer.review_page = composer.review_page.saturating_sub(1);
                 }
                 KeyCode::Enter if composer.stage == 4 => {
                     if let Some(message) = composer.message() {
@@ -584,6 +592,25 @@ fn preview(text: &str) -> String {
     result
 }
 
+fn preview_tail(text: &str) -> String {
+    let clean = safe(text);
+    let (width, _) = terminal::size().unwrap_or((80, 24));
+    let width = if width == 0 { 80 } else { width };
+    let limit = (usize::from(width.saturating_sub(1)) / 2).max(1);
+    if clean.chars().count() <= limit {
+        return clean;
+    }
+    let tail: String = clean
+        .chars()
+        .rev()
+        .take(limit.saturating_sub(1))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{tail}")
+}
+
 // Do not let remote content inject terminal control sequences.
 fn safe(text: &str) -> String {
     text.chars()
@@ -631,6 +658,25 @@ fn detail_pages(request: &crate::protocol::DecisionRequest, option: Option<usize
         .map(|part| part.iter().collect())
         .collect()
 }
+fn composer_pages(composer: &Composer) -> Vec<String> {
+    let [identity, channel, target, body] = &composer.fields;
+    let content = format!(
+        "Identity: {}   Channel: {}   To: {}   Text: {}",
+        safe(identity),
+        safe(channel),
+        if target.is_empty() {
+            "(group)".into()
+        } else {
+            safe(target)
+        },
+        safe(body)
+    );
+    let chars: Vec<char> = content.chars().collect();
+    chars
+        .chunks(detail_page_size())
+        .map(|part| part.iter().collect())
+        .collect()
+}
 fn notice_pages(item: &NoticeItem) -> Vec<String> {
     let content = format!(
         "Work: {}   Result: {}   Activity: {}",
@@ -657,7 +703,7 @@ fn display(view: &View) -> Result<()> {
             println!(
                 "Compose instruction: {}\r\n{}\r\n\r\nEnter continues; Esc cancels.",
                 labels.get(composer.stage).unwrap_or(&""),
-                safe(
+                preview_tail(
                     composer
                         .fields
                         .get(composer.stage)
@@ -666,8 +712,9 @@ fn display(view: &View) -> Result<()> {
                 )
             );
         } else {
-            let [identity, channel, target, body] = &composer.fields;
-            println!("Review instruction\r\nIdentity: {}\r\nChannel: {}\r\nTo: {}\r\nText: {}\r\n\r\nEnter sends or retries unchanged; Esc cancels.", safe(identity), safe(channel), if target.is_empty() { "(group)".into() } else { safe(target) }, safe(body));
+            let pages = composer_pages(composer);
+            let page = composer.review_page.min(pages.len().saturating_sub(1));
+            println!("Review instruction, page {}/{}\r\n{}\r\n\r\nj/k pages; Enter sends or retries unchanged; Esc cancels.", page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
             if let Some(error) = &composer.error {
                 println!("\r\nSend failed or outcome unknown: {}\r\nRetry with the same identity, or retain it before cancelling.", safe(error));
             }
