@@ -187,3 +187,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local terminal history evidence (2026-11-10)
 
 `python3 tests/history_terminal.py` passed on Linux over loopback. The pseudo-terminal opened a pending decision and an inbox message as history roots, switched among related decision, message and outcome sections, traversed message response pages totaling more than one frame, and verified that merely inspecting did not answer the decision. It then answered the decision and looked up its completed history by ID. This does not establish snapshot consistency across pages, global chronology, representative-operator usability, remote operation or OS-crash recovery.
+
+
+## Local mixed-agent attention evidence (2026-11-10)
+
+`python3 tests/attention_smoke.py` passed on Linux over loopback. It submitted decisions from two agents at different priorities, an ordinary message addressed to the operator, and a completion notice. The CLI queue and pseudo-terminal showed the two decisions in priority order without the routine message; the message was available in the separate inbox, and the notice appeared in the separate notice view. Neither decision was answered by inspection. This checks explicit operation-based classification for one fixture, not whether real agents choose useful requests or whether the workflow reduces operator attention.

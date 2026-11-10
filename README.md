@@ -4,7 +4,7 @@
 
 # Aviary
 
-Aviary is a communication service and terminal attention interface for a human operator and agents working across processes or trusted machines. Agents can request decisions, exchange targeted messages, report completed work, and recover accepted communications after a service restart. The service runs independently of the terminal interface and does not manage agent execution.
+Aviary is a communication service and terminal attention interface for a human operator and agents working across processes or trusted machines. Agents explicitly submit decisions when they need operator action; ordinary messages stay in addressed inboxes and completion notices appear separately. Agents can request decisions, exchange targeted messages, report completed work, and recover accepted communications after a service restart. The service runs independently of the terminal interface and does not manage agent execution.
 
 **Status:** Aviary is an evolving prototype, not a V1 release. The core workflows below work locally; two-machine, OS-crash, supported-platform and representative-operator acceptance are still open. The protocol and CLI are provisional. See [verification](docs/verification.md) for actual evidence and [tickets](docs/tickets.md) for remaining work.
 
@@ -89,6 +89,7 @@ The terminal keeps its current view and retries reads when polling fails. A fail
 ```sh
 cargo test --locked
 python3 tests/terminal_pty.py
+python3 tests/attention_smoke.py
 python3 tests/terminal_reconnect.py
 python3 tests/startup_smoke.py
 python3 tests/skill_smoke.py
