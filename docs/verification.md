@@ -211,3 +211,7 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local terminal notice page navigation (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux over loopback with ten large notices spanning response pages. It navigated forward and backward across a page boundary, dismissed earlier notices through the CLI until the active offset was past the end, observed the terminal fall back to the remaining notices, and dismissed one from the recovered view. The selected decision remained in place. This checks a bounded fixture and one page-shift scenario, not all concurrent mutations, a measured total memory bound, remote operation or representative-operator usability.
+
+## Local terminal decision page navigation (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed on Linux loopback with ten large decisions across multiple response pages. It navigated forward and backward across a boundary, then answered the first seven through another client and observed recovery from an offset beyond the end. The terminal recovery, history and tmux smoke tests and Rust suite also passed. This is one local shift scenario, not consistent traversal during arbitrary concurrent changes, a total memory measurement, remote validation or representative operator acceptance.

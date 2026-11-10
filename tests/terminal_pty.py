@@ -321,8 +321,9 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
     service.call({"op": "answer", "id": request_id, "index": 0})
     large = "x" * 120_000
     notice_ids = []
+    request_ids = []
     for number in range(10):
-        submit(
+        request_ids.append(submit(
             service,
             {
                 "identity": f"large-request-{number}",
@@ -331,7 +332,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
                 "options": [],
                 "context": large,
             },
-        )
+        ))
         notice_ids.append(
             service.call(
                 {
@@ -359,7 +360,19 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         )
     with Terminal(service) as terminal:
         terminal.expect("Queue item 0")
-        terminal.send("l" * 9)
+        terminal.send("l" * 6)
+        terminal.expect("Queue item 6")
+        terminal.send("l")
+        terminal.expect("Queue item 7")
+        terminal.send("l" * 2)
+        terminal.expect("Queue item 9")
+        terminal.send("h" * 2)
+        terminal.expect("Queue item 7")
+        terminal.send("h")
+        terminal.expect("Queue item 6")
+        terminal.send("l")
+        terminal.expect("Queue item 7")
+        terminal.send("l" * 2)
         terminal.expect("Queue item 9")
         terminal.send("n")
         terminal.expect("Notice 0")
@@ -391,6 +404,9 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Notice 7")
         terminal.send("q")
         terminal.expect("Queue item 9")
+        for earlier_id in request_ids[:7]:
+            service.call({"op": "answer_custom", "id": earlier_id, "value": "done"})
+        terminal.expect("Active queue: 3/3")
         terminal.send("i")
         terminal.expect("Ready for review")
         terminal.send("l" * 9)

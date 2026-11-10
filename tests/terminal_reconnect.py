@@ -51,7 +51,7 @@ def responsive_while_poll_is_waiting() -> None:
                 terminal.expect("Retry identity", timeout=0.75)
                 assert time.monotonic() - started < 0.75
                 terminal.send("\x1b")
-                terminal.expect("No active requests")
+                terminal.expect("Loading requests")
                 terminal.quit()
 
 
@@ -88,7 +88,7 @@ def main() -> None:
             time.sleep(0.5)
             assert service.call({"op": "get", "id": request_id})["answer"] is None
             service.call({"op": "set_deferred", "id": request_id, "deferred": True})
-            terminal.expect("Request no longer in this queue; draft retained")
+            terminal.expect("Request not on this queue page; draft retained")
             terminal.expect("draft survives")
             service.call({"op": "set_deferred", "id": request_id, "deferred": False})
             terminal.expect("draft survives")

@@ -50,28 +50,22 @@ pub async fn wait_for_message_response(address: &str, id: i64) -> Result<()> {
     }
 }
 
-async fn fetch_requests(address: &str, deferred: bool) -> Result<Vec<PendingRequest>> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page: RequestPage = serde_json::from_value(
-            network::call_with_timeout(
-                address,
-                &Operation::ListPage { deferred, offset },
-                POLL_TIMEOUT_MS,
-            )
-            .await?,
-        )?;
-        for request in &page.requests {
-            request.request.validate()?;
-        }
-        result.extend(page.requests);
-        match page.next_offset {
-            Some(next) if next > offset => offset = next,
-            Some(_) => return Err(crate::error::AppError::InvalidFrame),
-            None => return Ok(result),
-        }
+async fn fetch_requests(address: &str, deferred: bool, offset: usize) -> Result<RequestPage> {
+    let page: RequestPage = serde_json::from_value(
+        network::call_with_timeout(
+            address,
+            &Operation::ListPage { deferred, offset },
+            POLL_TIMEOUT_MS,
+        )
+        .await?,
+    )?;
+    for request in &page.requests {
+        request.request.validate()?;
     }
+    if page.next_offset.is_some_and(|next| next <= offset) {
+        return Err(crate::error::AppError::InvalidFrame);
+    }
+    Ok(page)
 }
 
 async fn fetch_notices(address: &str, offset: usize) -> Result<NoticePage> {
@@ -288,6 +282,11 @@ impl Composer {
 
 struct View {
     requests: Vec<PendingRequest>,
+    request_offset: usize,
+    request_previous: Vec<usize>,
+    request_next: Option<usize>,
+    request_loaded: bool,
+    request_select_last: Option<bool>,
     composer: Option<Composer>,
     status: Option<String>,
     poll_error: Option<String>,
@@ -327,6 +326,11 @@ impl View {
     fn new() -> Self {
         Self {
             requests: Vec::new(),
+            request_offset: 0,
+            request_previous: Vec::new(),
+            request_next: None,
+            request_loaded: false,
+            request_select_last: None,
             composer: None,
             status: None,
             poll_error: None,
@@ -404,6 +408,41 @@ impl View {
             self.reset_selection();
         }
         true
+    }
+    fn reset_request_page(&mut self) {
+        self.request_offset = 0;
+        self.request_previous.clear();
+        self.request_next = None;
+        self.request_loaded = false;
+        self.request_select_last = None;
+        self.update(Vec::new());
+    }
+    fn update_request_page(&mut self, page: RequestPage) -> bool {
+        if !self.editing && page.requests.is_empty() && self.request_offset > 0 {
+            self.request_offset = self.request_previous.pop().unwrap_or(0);
+            self.request_loaded = false;
+            self.request_select_last = Some(true);
+            self.update(Vec::new());
+            self.request_next = None;
+            return true;
+        }
+        let was_loaded = self.request_loaded;
+        let next_changed = self.request_next != page.next_offset;
+        let changed = self.update(page.requests);
+        if self.draft_request_missing {
+            return changed;
+        }
+        if let Some(last) = self.request_select_last.take() {
+            self.current = if last {
+                self.requests.len().saturating_sub(1)
+            } else {
+                0
+            };
+            self.reset_selection();
+        }
+        self.request_next = page.next_offset;
+        self.request_loaded = true;
+        changed || next_changed || !was_loaded
     }
     fn update_notices(&mut self, page: NoticePage) -> bool {
         // Dismissals on earlier pages can move the end before this offset.
@@ -853,6 +892,13 @@ impl View {
         if key.code == KeyCode::Tab {
             return Action::ToggleDeferred;
         }
+        if !self.request_loaded {
+            return if key.code == KeyCode::Char('q') {
+                Action::Quit
+            } else {
+                Action::None
+            };
+        }
         let choices = self.choices();
         let Some(request) = self.current() else {
             return if key.code == KeyCode::Char('q') {
@@ -864,12 +910,37 @@ impl View {
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
             KeyCode::Char('h') | KeyCode::Left => {
-                self.current = self.current.saturating_sub(1);
+                if !self.request_loaded {
+                    return Action::None;
+                }
+                if self.current == 0 {
+                    if let Some(previous) = self.request_previous.pop() {
+                        self.request_offset = previous;
+                        self.request_loaded = false;
+                        self.request_select_last = Some(true);
+                        return Action::ReloadRequests;
+                    }
+                    return Action::None;
+                }
+                self.current -= 1;
                 self.reset_selection();
                 Action::Redraw
             }
             KeyCode::Char('l') | KeyCode::Right => {
-                self.current = (self.current + 1).min(self.requests.len().saturating_sub(1));
+                if !self.request_loaded {
+                    return Action::None;
+                }
+                if self.current + 1 >= self.requests.len() {
+                    if let Some(next) = self.request_next {
+                        self.request_previous.push(self.request_offset);
+                        self.request_offset = next;
+                        self.request_loaded = false;
+                        self.request_select_last = Some(false);
+                        return Action::ReloadRequests;
+                    }
+                    return Action::None;
+                }
+                self.current += 1;
                 self.reset_selection();
                 Action::Redraw
             }
@@ -940,6 +1011,7 @@ enum Action {
     Redraw,
     Quit,
     ToggleDeferred,
+    ReloadRequests,
     ToggleInbox,
     ReloadInbox,
     ToggleNotices,
@@ -1004,13 +1076,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                 } else {
                     let address = address.to_owned();
                     let deferred = view.deferred_view;
+                    let request_offset = view.request_offset;
                     let inbox_view = view.inbox_view;
                     let inbox_offset = view.inbox_offset;
                     let notice_offset = view.notice_offset;
                     let current_generation = generation;
                     refresh = Some(tokio::spawn(async move {
                         let result = async {
-                            let requests = fetch_requests(&address, deferred).await?;
+                            let requests = fetch_requests(&address, deferred, request_offset).await?;
                             let notices = fetch_notices(&address, notice_offset).await?;
                             let messages = if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await?) } else { None };
                             Ok::<_, crate::error::AppError>((requests, notices, messages))
@@ -1035,7 +1108,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 match refreshed {
                     Ok((requests, notices, messages)) => {
                         let recovered = view.poll_error.take().is_some();
-                        let changed_requests = view.update(requests);
+                        let changed_requests = view.update_request_page(requests);
                         let changed_notices = view.update_notices(notices);
                         let changed_inbox = messages.is_some_and(|items| view.update_inbox(items));
                         if recovered || changed_requests || changed_notices || changed_inbox { display(&view)?; }
@@ -1089,7 +1162,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(_) => { view.status = None; if !is_notice { view.reset_selection(); view.update(Vec::new()); } view.reset_notice_page(); }
+                        Ok(_) => { view.status = None; if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
                         Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
                     }
                 }
@@ -1154,7 +1227,12 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::ToggleDeferred => {
                         generation = generation.wrapping_add(1);
                         view.deferred_view = !view.deferred_view;
-                        view.update(Vec::new());
+                        view.reset_request_page();
+                        display(&view)?;
+                        interval.reset_immediately();
+                    },
+                    Action::ReloadRequests => {
+                        generation = generation.wrapping_add(1);
                         display(&view)?;
                         interval.reset_immediately();
                     },
@@ -1532,8 +1610,13 @@ fn display(view: &View) -> Result<()> {
     }
     if view.draft_request_missing {
         println!(
-            "Request no longer in this queue; draft retained. Check state before submitting.\r"
+            "Request not on this queue page; draft retained. Check state before submitting.\r"
         );
+    }
+    if !view.request_loaded {
+        println!("Loading requests. i inbox; g history; Tab queues; q quits.\r");
+        io::stdout().flush()?;
+        return Ok(());
     }
     if let Some(pending) = view.current() {
         let request = &pending.request;
@@ -1551,14 +1634,15 @@ fn display(view: &View) -> Result<()> {
             return Ok(());
         }
         println!(
-            "{} queue: {}/{} | importance {}\r\n{}\r\n{}\r\n",
+            "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r\n",
             if view.deferred_view {
                 "Deferred"
             } else {
                 "Active"
             },
-            view.current + 1,
-            view.requests.len(),
+            view.request_offset + view.current + 1,
+            view.request_offset + view.requests.len(),
+            if view.request_next.is_some() { "+" } else { "" },
             pending.importance,
             preview(&format!("Request {} from {}", pending.id, request.agent)),
             preview(&request.question)
@@ -1676,6 +1760,7 @@ mod tests {
     fn recommendation_is_first_and_requires_enter() {
         let mut view = View::new();
         view.update(vec![request(Some(2), 3)]);
+        view.request_loaded = true;
         assert_eq!(view.choices(), vec![2, 0, 1]);
         assert_eq!(view.selected, Some(0));
         assert!(matches!(
@@ -1693,6 +1778,7 @@ mod tests {
     fn no_recommendation_and_many_choices_can_reach_custom() {
         let mut view = View::new();
         view.update(vec![request(None, 12)]);
+        view.request_loaded = true;
         assert!(matches!(view.key(key(KeyCode::Enter)), Action::None));
         for _ in 0..13 {
             view.key(key(KeyCode::Char('j')));
@@ -1705,6 +1791,38 @@ mod tests {
         assert!(
             matches!(view.key(key(KeyCode::Enter)), Action::Submit(Operation::AnswerCustom { id: 42, value }) if value == "鳥 q")
         );
+    }
+
+    #[test]
+    fn page_shift_keeps_custom_draft_with_original_request() {
+        let mut view = View::new();
+        view.update_request_page(RequestPage {
+            requests: vec![request(None, 0)],
+            next_offset: None,
+        });
+        view.key(key(KeyCode::Char('j')));
+        view.key(key(KeyCode::Enter));
+        for c in "draft".chars() {
+            view.key(key(KeyCode::Char(c)));
+        }
+        let mut other = request(None, 0);
+        other.id = 43;
+        view.update_request_page(RequestPage {
+            requests: vec![other.clone()],
+            next_offset: Some(1),
+        });
+        assert!(view.draft_request_missing);
+        assert_eq!(view.current().map(|item| item.id), Some(42));
+        assert!(
+            matches!(view.key(key(KeyCode::Enter)), Action::Submit(Operation::AnswerCustom { id: 42, value }) if value == "draft")
+        );
+        view.key(key(KeyCode::Esc));
+        view.update_request_page(RequestPage {
+            requests: vec![other],
+            next_offset: Some(1),
+        });
+        assert_eq!(view.current().map(|item| item.id), Some(43));
+        assert!(!view.draft_request_missing);
     }
 
     #[test]
