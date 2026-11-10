@@ -1,0 +1,7 @@
+# Aviary contributor notes
+
+Read `docs/requirements.md`, `docs/architecture.md`, `docs/verification.md` and `docs/tickets.md` before changing product behavior. The README describes the current implementation; the documents distinguish implemented behavior from V1 acceptance and open decisions. Record engineering choices in `docs/decisions.md` and actual verification and limitations in `docs/verification.md`.
+
+Aviary is a trusted-network, single-user service: participant labels route traffic but do not authenticate or authorize it. Preserve the default loopback listener and do not claim encryption or access control. Acknowledgment must follow durable storage; retain stable submission identities and distinguish unknown outcomes from acceptance. Preserve existing SQLite records and coordinate protocol changes across the service, CLI, terminal and portable skill.
+
+Use `cargo test --locked` for Rust tests. After building, `python3 tests/terminal_pty.py` exercises the terminal and `python3 tests/skill_smoke.py` executes the portable skill examples; both need loopback access. Process-kill tests and local pseudo-terminals do not prove OS-crash recovery, remote operation or representative operator validation. Preserve existing uncommitted work and avoid changing a paused goal without a new instruction.

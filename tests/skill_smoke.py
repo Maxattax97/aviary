@@ -1,57 +1,63 @@
 #!/usr/bin/env python3
-"""Execute the Aviary skill's shell examples against a local test service."""
+"""Execute the portable skill's shell examples against a local service."""
+
 import json
 import os
-from pathlib import Path
 import re
-import socket
 import subprocess
-import tempfile
-import time
 
-root = Path(__file__).resolve().parent.parent
-binary = root / "target/debug/aviary"
-blocks = re.findall(r"```sh\n(.*?)\n```", (root / "skills/aviary/SKILL.md").read_text(), re.S)
-assert len(blocks) == 2
-sock = socket.socket()
-sock.bind(("127.0.0.1", 0))
-port = sock.getsockname()[1]
-sock.close()
-address = f"127.0.0.1:{port}"
-env = dict(os.environ, PATH=f"{binary.parent}:{os.environ.get('PATH', '')}",
-           AVIARY_ADDR=address, AVIARY_AGENT="agent-a", AVIARY_CHANNEL="team",
-           AVIARY_RECIPIENT="agent-b")
-with tempfile.TemporaryDirectory() as directory:
-    server = subprocess.Popen([str(binary), "serve", str(Path(directory) / "state.sqlite"), address],
-                              stderr=subprocess.DEVNULL)
-    try:
-        for _ in range(100):
-            try:
-                with socket.create_connection(("127.0.0.1", port), timeout=.1):
-                    break
-            except OSError:
-                time.sleep(.02)
-        else:
-            raise RuntimeError("test service failed to start")
-        def call(operation):
-            return subprocess.run([str(binary), "call", address, json.dumps(operation)],
-                                  text=True, capture_output=True, timeout=15)
-        channel = call({"op": "create_channel", "channel": {"name": "team", "members": ["agent-a", "agent-b"]}})
-        assert channel.returncode == 0, channel.stderr
-        env["AVIARY_KEY"] = "skill-decision"
-        decision = subprocess.run(["/bin/sh", "-eu", "-c", blocks[0]], env=env, text=True,
-                                  capture_output=True, timeout=15, check=True)
-        result = [json.loads(line) for line in decision.stdout.splitlines()]
-        assert len(result) == 2 and result[0]["id"] == result[1]["id"] and result[1]["answer"] is None
-        env["AVIARY_KEY"] = "skill-message"
-        message = subprocess.run(["/bin/sh", "-eu", "-c", blocks[1]], env=env, text=True,
-                                 capture_output=True, timeout=15, check=True)
-        result = [json.loads(line) for line in message.stdout.splitlines()]
-        assert result[0]["id"] == result[1]["messages"][0]["id"]
-        assert result[1]["messages"][0]["message"]["body"] == "Please review"
-        failed = call({"op": "get", "id": 999999})
-        assert failed.returncode != 0 and "request not found" in failed.stderr
-        print("skill examples: decision, message, retrieval and error status passed")
-    finally:
-        server.kill()
-        server.wait()
+from support import BINARY, ROOT, Service
+
+
+def main() -> None:
+    skill = (ROOT / "skills" / "aviary" / "SKILL.md").read_text()
+    blocks = re.findall(r"```sh\n(.*?)\n```", skill, re.DOTALL)
+    if len(blocks) != 2:
+        raise AssertionError(f"Expected two executable examples, found {len(blocks)}")
+
+    with Service() as service:
+        service.call(
+            {
+                "op": "create_channel",
+                "channel": {
+                    "name": "team",
+                    "members": ["agent-a", "agent-b"],
+                },
+            }
+        )
+        env = dict(
+            os.environ,
+            PATH=f"{BINARY.parent}:{os.environ.get('PATH', '')}",
+            AVIARY_ADDR=service.address,
+            AVIARY_AGENT="agent-a",
+            AVIARY_CHANNEL="team",
+            AVIARY_RECIPIENT="agent-b",
+        )
+
+        def run_example(index: int, identity: str) -> list[dict]:
+            env["AVIARY_KEY"] = identity
+            result = subprocess.run(
+                ["/bin/sh", "-eu", "-c", blocks[index]],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=True,
+            )
+            return [json.loads(line) for line in result.stdout.splitlines()]
+
+        decision = run_example(0, "skill-decision")
+        assert len(decision) == 2
+        assert decision[0]["id"] == decision[1]["id"]
+        assert decision[1]["answer"] is None
+
+        message = run_example(1, "skill-message")
+        assert message[0]["id"] == message[1]["messages"][0]["id"]
+        assert message[1]["messages"][0]["message"]["body"] == "Please review"
+        failure = service.run({"op": "get", "id": 999999})
+        assert failure.returncode != 0 and "request not found" in failure.stderr
+    print("Skill examples: decision, message, retrieval and error status passed")
+
+
+if __name__ == "__main__":
+    main()

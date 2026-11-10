@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+  <title id="title">Aviary</title>
+  <desc id="desc">A bird in flight formed from two overlapping message shapes.</desc>
+  <rect width="160" height="160" rx="36" fill="#102f35"/>
+  <path d="M27 47h58c25 0 41 13 45 34-10-8-20-11-33-10L69 99 27 47Z" fill="#8bd5c7"/>
+  <path d="M35 110 69 99l28-28c-2 19-11 35-27 44l-19 10 3-17-19 2Z" fill="#f4c96b"/>
+  <circle cx="113" cy="57" r="4" fill="#f4c96b"/>
+  <path d="M123 60h16l-13 8" fill="#f4c96b"/>
+</svg>
