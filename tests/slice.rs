@@ -1,7 +1,6 @@
 use serde_json::{json, Value};
 use std::{
     error::Error,
-    io::{BufRead, BufReader, Write},
     net::{TcpListener, TcpStream},
     process::{Child, Command, Stdio},
     sync::{Arc, Barrier},
@@ -36,11 +35,22 @@ fn start_server(database_path: &str, address: &str) -> TestResult<Server> {
 }
 
 fn call(address: &str, request: Value) -> TestResult<Value> {
-    let mut stream = TcpStream::connect(address)?;
-    writeln!(stream, "{request}")?;
-    let mut response = String::new();
-    BufReader::new(stream).read_line(&mut response)?;
-    Ok(serde_json::from_str(&response)?)
+    let context = zmq::Context::new();
+    let socket = context.socket(zmq::DEALER)?;
+    socket.set_linger(0)?;
+    socket.set_rcvtimeo(10_000)?;
+    socket.connect(&format!("tcp://{address}"))?;
+    socket.send(
+        json!({"version":1,"correlation":"test","operation":request})
+            .to_string()
+            .as_bytes(),
+        0,
+    )?;
+    let response = socket.recv_bytes(0)?;
+    let envelope: Value = serde_json::from_slice(&response)?;
+    assert_eq!(envelope.get("version"), Some(&json!(1)));
+    assert_eq!(envelope.get("correlation"), Some(&json!("test")));
+    Ok(envelope.get("result").ok_or("missing result")?.clone())
 }
 
 fn collect_results(tasks: Vec<thread::JoinHandle<TestResult<Value>>>) -> TestResult<Vec<Value>> {

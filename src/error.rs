@@ -23,6 +23,10 @@ pub enum AppError {
     #[error("{0}")]
     Usage(String),
     #[error("{0}")]
+    Task(String),
+    #[error("{0}")]
+    Zmq(#[from] zmq::Error),
+    #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Json(#[from] serde_json::Error),
