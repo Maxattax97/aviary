@@ -17,8 +17,8 @@ use crate::{
     error::Result,
     network,
     protocol::{
-        InboxItem, InboxPage, Message, NoticeItem, NoticePage, Operation, PendingRequest,
-        RequestPage, Target,
+        InboxItem, InboxPage, Message, MessageReply, NoticeItem, NoticePage, Operation,
+        PendingRequest, RequestPage, Target,
     },
 };
 
@@ -141,12 +141,34 @@ impl Drop for TerminalGuard {
 
 #[derive(Default)]
 struct Composer {
+    reply_to: Option<i64>,
     stage: usize,
     review_page: usize,
     fields: [String; 4],
     error: Option<String>,
 }
 impl Composer {
+    fn review_stage(&self) -> usize {
+        if self.reply_to.is_some() {
+            2
+        } else {
+            4
+        }
+    }
+    fn reply(&self) -> Option<MessageReply> {
+        let request_id = self.reply_to?;
+        let identity = self.fields.first()?.clone();
+        let body = self.fields.get(1)?.clone();
+        if identity.is_empty() || body.is_empty() {
+            return None;
+        }
+        Some(MessageReply {
+            identity,
+            request_id,
+            sender: "operator".into(),
+            body,
+        })
+    }
     fn message(&self) -> Option<Message> {
         let [identity, channel, target, body] = &self.fields;
         if identity.is_empty() || channel.is_empty() || body.is_empty() {
@@ -311,20 +333,28 @@ impl View {
                     self.composer = None;
                     return Action::Redraw;
                 }
-                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right if composer.stage == 4 => {
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right
+                    if composer.stage == composer.review_stage() =>
+                {
                     let last = composer_pages(composer).len().saturating_sub(1);
                     composer.review_page = (composer.review_page + 1).min(last);
                 }
-                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left if composer.stage == 4 => {
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left
+                    if composer.stage == composer.review_stage() =>
+                {
                     composer.review_page = composer.review_page.saturating_sub(1);
                 }
-                KeyCode::Enter if composer.stage == 4 => {
-                    if let Some(message) = composer.message() {
+                KeyCode::Enter if composer.stage == composer.review_stage() => {
+                    if composer.reply_to.is_some() {
+                        if let Some(reply) = composer.reply() {
+                            return Action::SendReply(reply);
+                        }
+                    } else if let Some(message) = composer.message() {
                         return Action::SendInstruction(message);
                     }
                 }
                 KeyCode::Enter => {
-                    let valid = composer.stage == 2
+                    let valid = (composer.reply_to.is_none() && composer.stage == 2)
                         || composer
                             .fields
                             .get(composer.stage)
@@ -334,13 +364,13 @@ impl View {
                         composer.error = None;
                     }
                 }
-                KeyCode::Backspace if composer.stage < 4 => {
+                KeyCode::Backspace if composer.stage < composer.review_stage() => {
                     if let Some(field) = composer.fields.get_mut(composer.stage) {
                         field.pop();
                     }
                 }
                 KeyCode::Char(c)
-                    if composer.stage < 4
+                    if composer.stage < composer.review_stage()
                         && !c.is_control()
                         && !key
                             .modifiers
@@ -358,6 +388,23 @@ impl View {
             match key.code {
                 KeyCode::Char('i') | KeyCode::Char('q') | KeyCode::Esc => {
                     return Action::ToggleInbox
+                }
+                KeyCode::Char('r') if self.inbox_loaded => {
+                    if let Some(item) = self.inbox.get(self.inbox_current) {
+                        if item.message.expects_reply
+                            && matches!(&item.message.target, Target::Participant { name } if name == "operator")
+                        {
+                            let mut composer = Composer {
+                                reply_to: Some(item.id),
+                                ..Composer::default()
+                            };
+                            if let Some(target) = composer.fields.get_mut(2) {
+                                *target = item.message.sender.clone();
+                            }
+                            self.composer = Some(composer);
+                            self.status = None;
+                        }
+                    }
                 }
                 KeyCode::Char('h') | KeyCode::Left => {
                     self.inbox_current = self.inbox_current.saturating_sub(1);
@@ -610,6 +657,7 @@ enum Action {
     ToggleDeferred,
     ToggleInbox,
     SendInstruction(Message),
+    SendReply(MessageReply),
     Submit(Operation),
 }
 
@@ -709,7 +757,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let (is_instruction, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 if is_instruction {
                     match result {
-                        Ok(response) => { view.composer = None; view.status = Some(format!("Instruction accepted: {response}")); }
+                        Ok(response) => {
+                            let label = if view.composer.as_ref().is_some_and(|composer| composer.reply_to.is_some()) { "Reply" } else { "Instruction" };
+                            view.composer = None;
+                            view.status = Some(format!("{label} accepted: {response}"));
+                        }
                         Err(error) => { if let Some(composer) = &mut view.composer { composer.error = Some(error.to_string()); } }
                     }
                 } else {
@@ -761,6 +813,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, network::call(&address, &Operation::SendMessage { message }).await)
+                        }));
+                    },
+                    Action::SendReply(reply) => {
+                        generation = generation.wrapping_add(1);
+                        if let Some(composer) = &mut view.composer { composer.error = None; }
+                        view.busy = true;
+                        display(&view)?;
+                        let address = address.to_owned();
+                        submission = Some(tokio::spawn(async move {
+                            (true, network::call(&address, &Operation::ReplyMessage { reply }).await)
                         }));
                     },
                     Action::Submit(operation) => {
@@ -872,6 +934,14 @@ fn text_pages(text: &str) -> Vec<String> {
 }
 fn composer_pages(composer: &Composer) -> Vec<String> {
     let [identity, channel, target, body] = &composer.fields;
+    if let Some(request_id) = composer.reply_to {
+        return text_pages(&format!(
+            "Request: {request_id}   To: {}   Identity: {}   Reply: {}",
+            safe(target),
+            safe(identity),
+            safe(channel)
+        ));
+    }
     let content = format!(
         "Identity: {}   Channel: {}   To: {}   Text: {}",
         safe(identity),
@@ -928,9 +998,16 @@ fn display(view: &View) -> Result<()> {
             "Recipient label (empty means group)",
             "Instruction text",
         ];
-        if composer.stage < 4 {
+        if composer.stage < composer.review_stage() {
+            let reply_labels = ["Retry identity (unique deployment-wide)", "Reply text"];
+            let (title, labels) = if composer.reply_to.is_some() {
+                ("Compose reply", reply_labels.as_slice())
+            } else {
+                ("Compose instruction", labels.as_slice())
+            };
             println!(
-                "Compose instruction: {}\r\n{}\r\n\r\nEnter continues; Esc cancels.",
+                "{}: {}\r\n{}\r\n\r\nEnter continues; Esc cancels.",
+                title,
                 labels.get(composer.stage).unwrap_or(&""),
                 preview_tail(
                     composer
@@ -943,7 +1020,12 @@ fn display(view: &View) -> Result<()> {
         } else {
             let pages = composer_pages(composer);
             let page = composer.review_page.min(pages.len().saturating_sub(1));
-            println!("Review instruction, page {}/{}\r\n{}\r\n\r\nj/k pages; Enter sends or retries unchanged; Esc cancels.", page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            let title = if composer.reply_to.is_some() {
+                "Review reply"
+            } else {
+                "Review instruction"
+            };
+            println!("{}, page {}/{}\r\n{}\r\n\r\nj/k pages; Enter sends or retries unchanged; Esc cancels.", title, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
             if let Some(error) = &composer.error {
                 println!("\r\nSend failed or outcome unknown: {}\r\nRetry with the same identity, or retain it before cancelling.", safe(error));
             }
@@ -964,12 +1046,20 @@ fn display(view: &View) -> Result<()> {
         return Ok(());
     }
     if view.inbox_view {
+        if let Some(status) = &view.status {
+            println!("{}\r", safe(status));
+        }
         if !view.inbox_loaded {
             println!("Loading operator inbox. i or q returns.");
         } else if let Some(item) = view.inbox.get(view.inbox_current) {
             let pages = inbox_pages(item);
             let page = view.inbox_page.min(pages.len().saturating_sub(1));
-            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            let reply_hint = if item.message.expects_reply {
+                "r reply; "
+            } else {
+                ""
+            };
+            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; {}i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""), reply_hint);
         } else {
             println!("Operator inbox: no messages. i or q returns.");
         }

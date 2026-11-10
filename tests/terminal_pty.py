@@ -250,12 +250,71 @@ def exercise_operator_inbox(service: Service) -> None:
         terminal.send("l")
         screen = terminal.expect("Live operator update")
         assert b"From: worker" in screen and b"Work context: Workstream" in screen
+        incoming = service.call(
+            {
+                "op": "send_message",
+                "message": {
+                    "identity": "worker-request",
+                    "channel": "inbox-ops",
+                    "sender": "worker",
+                    "target": {"kind": "participant", "name": "operator"},
+                    "body": "Need operator response",
+                    "expects_reply": True,
+                    "context": "Decision context",
+                    "activity": "release-work",
+                },
+            }
+        )["id"]
+        terminal.expect("Operator inbox 2/3")
+        terminal.send("l")
+        terminal.expect("Need operator response")
+        original_reply_id = None
+        for attempt, identity in enumerate(
+            ["operator-reply", "operator-reply", "different-reply"]
+        ):
+            terminal.send("r")
+            terminal.expect("Compose reply")
+            terminal.send(f"{identity}\rApproved\r")
+            review = terminal.expect("Review reply")
+            assert (
+                identity.encode() in review
+                and b"Approved" in review
+                and b"To: worker" in review
+            )
+            if attempt == 0:
+                assert (
+                    service.call({"op": "get_message_response", "id": incoming})[
+                        "response"
+                    ]
+                    is None
+                )
+            terminal.send("\r")
+            if identity == "different-reply":
+                failure = terminal.expect("Send failed or outcome unknown")
+                assert b"request already answered" in failure and b"Approved" in failure
+                terminal.send("\x1b")
+                terminal.expect("Need operator response")
+            else:
+                terminal.expect("Reply accepted")
+                reply_id = service.call({"op": "get_message_response", "id": incoming})[
+                    "response"
+                ]["id"]
+                if original_reply_id is None:
+                    original_reply_id = reply_id
+                else:
+                    assert reply_id == original_reply_id
+        response = service.call({"op": "get_message_response", "id": incoming})[
+            "response"
+        ]
+        assert response["message"]["identity"] == "operator-reply"
+        assert response["message"]["body"] == "Approved"
+        assert response["message"]["activity"] == "release-work"
         terminal.send("q")
         terminal.expect("Detail check")
         terminal.quit()
     inbox = service.call({"op": "inbox", "participant": "operator"})["messages"]
-    assert len(inbox) == 2
-    print("Operator inbox recovered a reply and displayed a live message")
+    assert len(inbox) == 3
+    print("Operator inbox recovered messages and sent a correlated reply with retry")
 
 
 def exercise_large_queues(service: Service, request_id: int) -> None:
@@ -307,7 +366,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Queue item 9")
         terminal.send("i")
         terminal.expect("Ready for review")
-        terminal.send("l" * 11)
+        terminal.send("l" * 12)
         terminal.expect("Big inbox 9")
         terminal.send("q")
         terminal.quit()

@@ -162,3 +162,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local operator inbox evidence (2026-11-10)
 
 `python3 tests/terminal_pty.py` passed on Linux over loopback. It closed the terminal, sent an operator-to-agent request and a response, reopened the interface, and displayed the response with sender, inherited work context and activity. While that inbox was open it delivered a second message and observed its arrival and context without a manual refresh. Reads remained non-destructive. The test also navigated an operator inbox whose aggregate content exceeded a frame. This is local pseudo-terminal evidence, not a full history view, unread tracking, correlated reply control, bounded terminal memory, remote operation or representative operator validation.
+
+
+## Local operator reply evidence (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed on Linux over loopback. An agent submitted a direct request to `operator`; the test opened its inbox item, composed a reply, verified no response existed before confirmation, and retrieved the correlated body and inherited activity afterward. An identical retry returned the original reply ID; a different second reply was rejected while its draft remained visible. This does not simulate an actually lost reply, verify remote operation, establish operator identity, or replace representative-operator validation.

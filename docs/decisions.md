@@ -149,4 +149,9 @@ A history page resolves its root and reads only the requested section in a singl
 
 ## Operator inbox
 
-The terminal can read the non-destructive inbox for the `operator` routing label. It loads and refreshes inbox pages while that view is open, retains selection by message ID, and pages sender, work context, body and activity for inspection. `i` opens or closes the inbox, h/l moves between messages, and j/k moves through content. There is no unread state, removal, or correlated reply action in this view; use the CLI for reply and history. Routing labels remain unauthenticated. Inbox aggregation is not memory-bounded, and representative operator and remote-machine validation remain open.
+The terminal can read the non-destructive inbox for the `operator` routing label. It loads and refreshes inbox pages while that view is open, retains selection by message ID, and pages sender, work context, body and activity for inspection. `i` opens or closes the inbox, h/l moves between messages, and j/k moves through content. There is no unread state or removal; use the CLI for history. A direct message that requests a reply offers r to compose a correlated response. Routing labels remain unauthenticated. Inbox aggregation is not memory-bounded, and representative operator and remote-machine validation remain open.
+
+
+## Operator inbox replies
+
+For a direct message addressed to `operator` with `expects_reply`, r opens a reply draft tied to that message ID. The operator provides a deployment-unique retry identity and body, reviews the intended recipient and request ID, and explicitly confirms. Identical retries return the same reply ID; a different second reply is rejected by the service. A failed or uncertain send retains the draft and identity until the interface is closed or the operator cancels. The inbox does not indicate whether a request was already answered. Labels remain unauthenticated.
