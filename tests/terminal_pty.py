@@ -107,5 +107,31 @@ with tempfile.TemporaryDirectory() as d:
         assert proc.returncode == 0 and termios.tcgetattr(slave) == before
         os.close(master); os.close(slave)
         print('live completion notice displayed and dismissed')
+        call({'op':'create_channel','channel':{'name':'ops','members':['operator','a','b']}})
+        master, slave = pty.openpty(); before = termios.tcgetattr(slave)
+        proc = subprocess.Popen([binary, 'tui', address], stdin=slave, stdout=slave, stderr=slave)
+        wait_output(b'Detail check')
+        for identity, target, text in [('instruction-direct','a','Review this'),('instruction-group','','Start work')]:
+            os.write(master,b'm'); wait_output(b'Retry identity')
+            os.write(master,(identity+'\r'+'ops'+'\r'+target+'\r'+text+'\r').encode())
+            review = wait_output(b'Review instruction')
+            assert identity.encode() in review and text.encode() in review
+            os.write(master,b'\r'); wait_output(b'Instruction accepted')
+        os.write(master,b'm'); wait_output(b'Retry identity')
+        os.write(master,b'instruction-invalid\rmissing-channel\ra\rHold\r')
+        wait_output(b'Review instruction'); os.write(master,b'\r')
+        failed = wait_output(b'Send failed or outcome unknown')
+        assert b'instruction-invalid' in failed and b'Hold' in failed
+        os.write(master,b'\r'); wait_output(b'Send failed or outcome unknown')
+        os.write(master,b'\x1b'); wait_output(b'Detail check')
+        inbox_a = call({'op':'inbox','participant':'a'})['messages']
+        inbox_b = call({'op':'inbox','participant':'b'})['messages']
+        assert [m['message']['body'] for m in inbox_a] == ['Review this','Start work']
+        assert [m['message']['body'] for m in inbox_b] == ['Start work']
+        assert all(m['message']['sender'] == 'operator' for m in inbox_a)
+        os.write(master,b'q'); proc.wait(timeout=5)
+        assert proc.returncode == 0 and termios.tcgetattr(slave) == before
+        os.close(master); os.close(slave)
+        print('operator direct and group instructions delivered')
     finally:
         server.kill(); server.wait()

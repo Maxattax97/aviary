@@ -70,3 +70,8 @@ Decision requests may carry optional explanation and supporting-context strings.
 ## Completion notice lifecycle
 
 An explicit `submit_notice` represents a meaningful completion and requires agent, work and result text; routine messages do not become notices. It uses the deployment-scoped retry identity. Open notices are indicated by count in the decision interface and viewed separately with n. An operator dismisses a notice with d; it remains stored and can be listed with dismissed entries. There is no automatic deletion or resurfacing. Work, result and optional activity are displayed in 200-character pages with control characters rendered as spaces. Full queue pagination and broader operator validation remain open.
+
+
+## Operator instruction composition
+
+The terminal uses the routing label `operator`, which must be a member of the selected immutable channel. The operator supplies the deployment-unique retry identity, channel, recipient label or group, and single-line instruction text, then explicitly confirms the review. A failed or unknown send retains the unchanged draft for retry with the same identity while the interface remains open; drafts are not durable, so the operator must retain the identity and content before closing or cancelling. This label is not authenticated.

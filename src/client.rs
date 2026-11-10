@@ -16,7 +16,7 @@ use tokio::{sync::mpsc, time};
 use crate::{
     error::Result,
     network,
-    protocol::{NoticeItem, NoticeList, Operation, PendingRequest, RequestList},
+    protocol::{Message, NoticeItem, NoticeList, Operation, PendingRequest, RequestList, Target},
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -63,8 +63,41 @@ impl Drop for TerminalGuard {
     }
 }
 
+#[derive(Default)]
+struct Composer {
+    stage: usize,
+    fields: [String; 4],
+    error: Option<String>,
+}
+impl Composer {
+    fn message(&self) -> Option<Message> {
+        let [identity, channel, target, body] = &self.fields;
+        if identity.is_empty() || channel.is_empty() || body.is_empty() {
+            return None;
+        }
+        Some(Message {
+            identity: identity.clone(),
+            channel: channel.clone(),
+            sender: "operator".into(),
+            target: if target.is_empty() {
+                Target::Group
+            } else {
+                Target::Participant {
+                    name: target.clone(),
+                }
+            },
+            body: body.clone(),
+            expects_reply: false,
+            context: None,
+            activity: None,
+        })
+    }
+}
+
 struct View {
     requests: Vec<PendingRequest>,
+    composer: Option<Composer>,
+    status: Option<String>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     notice_current: usize,
@@ -81,6 +114,8 @@ impl View {
     fn new() -> Self {
         Self {
             requests: Vec::new(),
+            composer: None,
+            status: None,
             notices: Vec::new(),
             notice_view: false,
             notice_current: 0,
@@ -156,6 +191,48 @@ impl View {
         }
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
+        }
+        if let Some(composer) = &mut self.composer {
+            match key.code {
+                KeyCode::Esc => {
+                    self.composer = None;
+                    return Action::Redraw;
+                }
+                KeyCode::Enter if composer.stage == 4 => {
+                    if let Some(message) = composer.message() {
+                        return Action::SendInstruction(message);
+                    }
+                }
+                KeyCode::Enter => {
+                    let valid = composer.stage == 2
+                        || composer
+                            .fields
+                            .get(composer.stage)
+                            .is_some_and(|field| !field.is_empty());
+                    if valid {
+                        composer.stage += 1;
+                        composer.error = None;
+                    }
+                }
+                KeyCode::Backspace if composer.stage < 4 => {
+                    if let Some(field) = composer.fields.get_mut(composer.stage) {
+                        field.pop();
+                    }
+                }
+                KeyCode::Char(c)
+                    if composer.stage < 4
+                        && !c.is_control()
+                        && !key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                {
+                    if let Some(field) = composer.fields.get_mut(composer.stage) {
+                        field.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return Action::Redraw;
         }
         if self.notice_view {
             match key.code {
@@ -257,6 +334,11 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('m') {
+            self.composer = Some(Composer::default());
+            self.status = None;
+            return Action::Redraw;
+        }
         if key.code == KeyCode::Char('n') {
             self.notice_view = true;
             self.notice_page = 0;
@@ -337,6 +419,7 @@ enum Action {
     Redraw,
     Quit,
     ToggleDeferred,
+    SendInstruction(Message),
     Submit(Operation),
 }
 
@@ -377,7 +460,7 @@ pub async fn terminal(address: &str) -> Result<()> {
     display(&view)?;
     loop {
         tokio::select! {
-            _ = interval.tick() => {
+            _ = interval.tick(), if view.composer.is_none() => {
                 let operation = if view.deferred_view { Operation::ListDeferred } else { Operation::List };
                 let response = network::call(address, &operation).await?;
                 let requests: RequestList = serde_json::from_value(response)?;
@@ -399,6 +482,13 @@ pub async fn terminal(address: &str) -> Result<()> {
                         view.update(Vec::new());
                         display(&view)?;
                         interval.reset_immediately();
+                    },
+                    Action::SendInstruction(message) => {
+                        match network::call(address, &Operation::SendMessage { message }).await {
+                            Ok(response) => { view.composer = None; view.status = Some(format!("Instruction accepted: {response}")); interval.reset_immediately(); }
+                            Err(error) => { if let Some(composer) = &mut view.composer { composer.error = Some(error.to_string()); } }
+                        }
+                        display(&view)?;
                     },
                     Action::Submit(operation) => {
                         network::call(address, &operation).await?;
@@ -448,6 +538,35 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
 }
 fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
+    if let Some(composer) = &view.composer {
+        let labels = [
+            "Retry identity (unique deployment-wide)",
+            "Channel (must include operator)",
+            "Recipient label (empty means group)",
+            "Instruction text",
+        ];
+        if composer.stage < 4 {
+            println!(
+                "Compose instruction: {}\r\n{}\r\n\r\nEnter continues; Esc cancels.",
+                labels.get(composer.stage).unwrap_or(&""),
+                safe(
+                    composer
+                        .fields
+                        .get(composer.stage)
+                        .map(String::as_str)
+                        .unwrap_or("")
+                )
+            );
+        } else {
+            let [identity, channel, target, body] = &composer.fields;
+            println!("Review instruction\r\nIdentity: {}\r\nChannel: {}\r\nTo: {}\r\nText: {}\r\n\r\nEnter sends or retries unchanged; Esc cancels.", safe(identity), safe(channel), if target.is_empty() { "(group)".into() } else { safe(target) }, safe(body));
+            if let Some(error) = &composer.error {
+                println!("\r\nSend failed or outcome unknown: {}\r\nRetry with the same identity, or retain it before cancelling.", safe(error));
+            }
+        }
+        io::stdout().flush()?;
+        return Ok(());
+    }
     if view.notice_view {
         if let Some(notice) = view.notices.get(view.notice_current) {
             let pages = notice_pages(notice);
@@ -459,9 +578,12 @@ fn display(view: &View) -> Result<()> {
         return Ok(());
     }
     println!(
-        "Open completion notices: {} (n to view)\r",
+        "Open completion notices: {} (n to view); m composes instruction\r",
         view.notices.len()
     );
+    if let Some(status) = &view.status {
+        println!("{}\r", safe(status));
+    }
     if let Some(pending) = view.current() {
         let request = &pending.request;
         if let Some(page) = view.detail_page {

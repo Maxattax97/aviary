@@ -2,7 +2,7 @@
 
 See the [system architecture](docs/architecture.md) for the V1 design, boundaries and verification map.
 
-This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement operator instruction composition, the full attention interface, or the full V1 requirements.
+This is an incomplete vertical slice, not V1. It submits a decision, presents its recommended answer, and retrieves a durable correlated response. It does not yet implement the full attention interface or the full V1 requirements.
 
 The service has **no authentication or encryption**. Any process that can connect can read requests and submit answers. The default listener is `127.0.0.1:7432`; bind a non-loopback address only on a trusted network. Participant names are labels, not identities.
 
@@ -49,3 +49,7 @@ Decision requests may include optional `explanation` and `context` strings. The 
 ### Completion notices
 
 Submit a meaningful completion with `aviary call ADDRESS '{"op":"submit_notice","notice":{"identity":"unique-notice-key","agent":"agent-a","work":"Build package","result":"Tests passed","activity":"task-1"}}'`. The activity is optional. The terminal displays the number of open notices; press n to view work and results, h/l to move among notices, j/k to page, and d to dismiss. Dismissed notices remain retrievable with `{"op":"list_notices","include_dismissed":true}`; `{"op":"list_notices"}` returns only open notices. Submissions use the same deployment-wide retry-key namespace as messages and decisions. Notice output is unpaginated at the protocol level and remains subject to the 1 MiB response limit.
+
+### Operator instructions
+
+Create a channel that includes the `operator` label and the intended recipients. In the terminal press m, then enter a deployment-unique retry identity, channel name, recipient label (or leave it empty for the channel group), and instruction text. Review the draft and press Enter to send; Escape cancels. A successful send displays its response. On an error or unknown outcome the review and identity remain available for an identical retry; record the identity and content before cancelling or closing the terminal. The draft is not persisted. Any process able to connect can impersonate `operator`; the label is routing, not authentication.

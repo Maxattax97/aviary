@@ -47,3 +47,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local completion-notice evidence (2026-11-09)
 
 `cargo test --locked` passed notice submission, retry conflict, process-restart recovery, dismissal and retained dismissed-history checks. `python3 tests/terminal_pty.py` submitted a notice while the interface was open, observed its count update, checked displayed work and result, and dismissed it. These are local checks, not representative-operator, cross-machine or OS-crash validation.
+
+
+## Local operator instruction evidence (2026-11-09)
+
+`cargo test --locked` passed, and `python3 tests/terminal_pty.py` composed and confirmed direct and group instructions, checked the expected recipient inboxes, and verified that a rejected send retains its draft and retry identity for another attempt. This does not establish recovery of an unsaved draft after terminal exit, real network failure, representative-operator validation or cross-machine operation.
