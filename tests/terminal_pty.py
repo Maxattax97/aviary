@@ -149,46 +149,37 @@ def exercise_context_and_notices(service: Service) -> int:
 
 
 def exercise_instructions(service: Service) -> None:
-    service.call(
-        {
-            "op": "create_channel",
-            "channel": {"name": "ops", "members": ["operator", "a", "b"]},
-        }
-    )
     with Terminal(service) as terminal:
         terminal.expect("Detail check")
-        for identity, target, text in [
-            ("instruction-direct", "a", "Review this"),
-            ("instruction-group", "", "Start work"),
-        ]:
-            terminal.send("m")
-            terminal.expect("Retry identity")
-            terminal.send(f"{identity}\rops\r{target}\r{text}\r")
-            review = terminal.expect("Review instruction")
-            assert identity.encode() in review and text.encode() in review
-            terminal.send("\r")
-            terminal.expect("Instruction accepted")
         terminal.send("m")
-        terminal.expect("Retry identity")
-        terminal.send("instruction-invalid\rmissing-channel\ra\rHold\r")
+        terminal.expect("Instruction text")
+        terminal.send("Start work?")
+        terminal.send("\x07")
+        terminal.expect("Keyboard help")
+        terminal.send("\x1b")
+        assert b"Start work?" in terminal.expect("Instruction text")
+        terminal.send("\r")
+        review = terminal.expect("Review instruction")
+        assert b"all" in review and b"(group)" in review and b"Start work?" in review
+        assert service.call({"op": "inbox", "participant": "a"})["messages"] == []
+        terminal.send("\r")
+        terminal.expect("Rejected:")
+        service.call({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "a", "b"]}})
+        terminal.send("\r")
+        terminal.expect("Instruction accepted")
+        terminal.send("m")
+        terminal.expect("Instruction text")
+        terminal.send("Second instruction\r")
         terminal.expect("Review instruction")
         terminal.send("\r")
-        failure = terminal.expect("Send failed or outcome unknown")
-        assert b"instruction-invalid" in failure and b"Hold" in failure
-        terminal.send("\r")
-        terminal.expect("Send failed or outcome unknown")
-        terminal.send("\x1b")
-        terminal.expect("Detail check")
+        terminal.expect("Instruction accepted")
         inbox_a = service.call({"op": "inbox", "participant": "a"})["messages"]
         inbox_b = service.call({"op": "inbox", "participant": "b"})["messages"]
-        assert [item["message"]["body"] for item in inbox_a] == [
-            "Review this",
-            "Start work",
-        ]
-        assert [item["message"]["body"] for item in inbox_b] == ["Start work"]
-        assert all(item["message"]["sender"] == "operator" for item in inbox_a)
+        assert [item["message"]["body"] for item in inbox_a] == ["Start work?", "Second instruction"]
+        assert [item["message"]["body"] for item in inbox_b] == ["Start work?", "Second instruction"]
+        assert len({item["message"]["identity"] for item in inbox_a}) == 2
         terminal.quit()
-    print("Direct and group operator instructions passed")
+    print("Confirmed group instructions and retry after rejection passed")
 
 
 def exercise_operator_inbox(service: Service) -> None:
@@ -291,7 +282,7 @@ def exercise_operator_inbox(service: Service) -> None:
                 )
             terminal.send("\r")
             if identity == "different-reply":
-                failure = terminal.expect("Send failed or outcome unknown")
+                failure = terminal.expect("Rejected:")
                 assert b"request already answered" in failure and b"Approved" in failure
                 terminal.send("\x1b")
                 terminal.expect("Need operator response")

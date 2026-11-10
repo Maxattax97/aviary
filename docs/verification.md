@@ -321,4 +321,8 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 
 ## Keyboard help increment (2026-11-10)
 
-`cargo test --locked` passed, including a state test for preserving a composer draft and selection across help. `python3 tests/terminal_render.py` passed with loopback access in the local tmux session. The existing render regression does not yet exercise the help screen or each view; small panes and terminal-specific Ctrl-H behavior remain unverified.
+`cargo test --locked` passed, including a state test for preserving a composer draft and selection across help. `python3 tests/terminal_render.py` passed with loopback access in the local tmux session. The existing render regression does not yet exercise the help screen or each view; small panes and terminal-specific Ctrl-G behavior remain unverified.
+
+## Quick instruction increment (2026-11-10)
+
+The Rust suite passed with a composer state test for review, distinct generated identities and unchanged retry content. `python3 tests/terminal_pty.py` passed locally over loopback: it exercised the actual help screen during a draft, confirmed no delivery before confirmation, retried after a missing-channel rejection, and observed two distinct messages in both group members' inboxes. Existing storage integration tests cover durable identical retries and lost acknowledgments; this terminal test does not yet simulate a lost acknowledgment in the composer. `/dev/urandom` availability outside this Linux host remains unverified.
