@@ -124,4 +124,9 @@ A long custom answer shows its tail while being edited. Ctrl-R opens a paged rev
 
 ## Terminal recovery from unavailable service
 
-The terminal retains its current view and unsent custom draft when polling fails, displays the error and retries reads; a later successful poll reconciles the view. A failed action is shown as not confirmed, retains the current state, and is never automatically resubmitted. A missing reply can conceal a committed action; check current state before a manual retry. Polling calls use one-second send and receive timeouts per call; request handling remains sequential and can temporarily delay input, especially with many pages or an action's ten-second transport timeout. Closing the interface still discards unsent drafts.
+The terminal retains its current view and unsent custom draft when polling fails, displays the error and retries reads; a later successful poll reconciles the view. A failed action is shown as not confirmed, retains the current state, and is never automatically resubmitted. A missing reply can conceal a committed action; check current state before a manual retry. Polling calls use one-second send and receive timeouts per call; queue refreshes run outside the input loop, with one refresh at a time and stale results discarded after queue switches and actions. Submissions still run in the input loop and can delay input for their ten-second transport timeout. Closing the interface still discards unsent drafts.
+
+
+## Background terminal refresh
+
+At most one queue-and-notice refresh runs at a time outside the input event loop. A generation check discards a refresh started before a queue switch or state-changing action; a refresh completing while an instruction is being composed is also discarded. An interrupted refresh is reconciled by a later poll. Submission calls remain synchronous in the terminal loop; exit may also wait for an outstanding blocking transport call to time out.

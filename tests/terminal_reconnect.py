@@ -5,6 +5,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from support import BINARY, Service, Terminal
 
@@ -36,7 +37,26 @@ def stop(service: Service) -> None:
     service.process.wait(timeout=5)
 
 
+def responsive_while_poll_is_waiting() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(5)
+        address = "127.0.0.1:" + str(listener.getsockname()[1])
+        with Terminal(SimpleNamespace(address=address)) as terminal:
+            connection, _ = listener.accept()
+            with connection:
+                started = time.monotonic()
+                terminal.send("m")
+                terminal.expect("Retry identity", timeout=0.75)
+                assert time.monotonic() - started < 0.75
+                terminal.send("\x1b")
+                terminal.expect("No active requests")
+                terminal.quit()
+
+
 def main() -> None:
+    responsive_while_poll_is_waiting()
     with Service() as service:
         request_id = service.call(
             {
@@ -92,7 +112,7 @@ def main() -> None:
             terminal.quit()
             assert time.monotonic() - started < 5
         print(
-            "Terminal recovered an unsent draft after restart and exited while offline"
+            "Terminal remained responsive during a stalled poll and recovered after restart"
         )
 
 

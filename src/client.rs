@@ -559,15 +559,37 @@ pub async fn terminal(address: &str) -> Result<()> {
     };
     let mut interval = time::interval(POLL_INTERVAL);
     let mut view = View::new();
+    let mut generation = 0u64;
+    let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
     display(&view)?;
     loop {
         tokio::select! {
-            _ = interval.tick(), if view.composer.is_none() => {
-                let refreshed = async {
-                    let requests = fetch_requests(address, view.deferred_view).await?;
-                    let notices = fetch_notices(address).await?;
-                    Ok::<_, crate::error::AppError>((requests, notices))
-                }.await;
+            _ = interval.tick(), if view.composer.is_none() && refresh.is_none() => {
+                let address = address.to_owned();
+                let deferred = view.deferred_view;
+                let current_generation = generation;
+                refresh = Some(tokio::spawn(async move {
+                    let result = async {
+                        let requests = fetch_requests(&address, deferred).await?;
+                        let notices = fetch_notices(&address).await?;
+                        Ok::<_, crate::error::AppError>((requests, notices))
+                    }.await;
+                    (current_generation, deferred, result)
+                }));
+            }
+            result = async {
+                match refresh.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }
+            }, if refresh.is_some() => {
+                refresh = None;
+                let (started, deferred, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                // A refresh started before a queue switch or action must never
+                // replace newer UI state with an obsolete snapshot.
+                if started != generation || deferred != view.deferred_view || view.composer.is_some() {
+                    continue;
+                }
                 match refreshed {
                     Ok((requests, notices)) => {
                         let recovered = view.poll_error.take().is_some();
@@ -596,12 +618,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::Redraw => display(&view)?,
                     Action::Quit => return Ok(()),
                     Action::ToggleDeferred => {
+                        generation = generation.wrapping_add(1);
                         view.deferred_view = !view.deferred_view;
                         view.update(Vec::new());
                         display(&view)?;
                         interval.reset_immediately();
                     },
                     Action::SendInstruction(message) => {
+                        generation = generation.wrapping_add(1);
                         match network::call(address, &Operation::SendMessage { message }).await {
                             Ok(response) => { view.composer = None; view.status = Some(format!("Instruction accepted: {response}")); interval.reset_immediately(); }
                             Err(error) => { if let Some(composer) = &mut view.composer { composer.error = Some(error.to_string()); } }
@@ -609,6 +633,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&view)?;
                     },
                     Action::Submit(operation) => {
+                        generation = generation.wrapping_add(1);
                         match network::call(address, &operation).await {
                             Ok(_) => {
                                 view.status = None;
