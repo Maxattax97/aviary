@@ -50,12 +50,12 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `h` / `l`, left / right | Navigate requests or notices |
 | `j` / `k`, up / down | Select an answer or move through detail pages |
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
-| `c` | Open explanation and supporting context |
+| `c` / `o` | Open request context / selected answer detail |
 | `d`, Tab, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
 | `n`, `m` | View completion notices; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
 
-The answer list follows the selection when there are more choices than fit in the estimated available rows; resize triggers a redraw. Long wrapped text and very small panes can still displace content. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. Explanation previews are limited to 160 characters; the detail view pages through the full explanation and context. Terminal control characters are rendered as spaces.
+The answer list follows the selection when there are more choices than fit in the estimated available rows; resize triggers a redraw. Long wrapped text and very small panes can still displace content. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. The queue abbreviates long question, explanation and answer text; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
 
 ## Messages and notices
 

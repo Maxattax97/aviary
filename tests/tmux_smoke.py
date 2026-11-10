@@ -123,6 +123,38 @@ def main() -> None:
             assert service.call({"op": "get", "id": detail_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "q")
             wait_for_screen("Narrow detail")
+            service.call({"op": "answer", "id": detail_id, "index": 0})
+            wait_for_screen("No active requests")
+            long_answer = "z" * 280 + " END-OPTION"
+            long_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-long-answer",
+                        "agent": "tmux-agent",
+                        "question": "Long answer review",
+                        "options": [long_answer],
+                        "recommendation": 0,
+                        "reason": "Ready",
+                    },
+                }
+            )["id"]
+            tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
+            wait_for_screen("[recommended]")
+            tmux("send-keys", "-t", "aviary:", "o")
+            wait_for_screen("Answer:")
+            tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("END-OPTION")
+            assert service.call({"op": "get", "id": long_id})["answer"] is None
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("Long answer review")
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            service.wait_for(
+                lambda: service.call({"op": "get", "id": long_id})["answer"]
+                == {"type": "suggested", "index": 0, "value": long_answer},
+                "long recommended answer",
+            )
+            wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:

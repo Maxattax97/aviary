@@ -64,7 +64,7 @@ A decision submission may specify an integer importance from 0 through 5, defaul
 
 ## Decision explanation and context
 
-Decision requests may carry optional explanation and supporting-context strings. The queue shows the first 160 displayed characters of the explanation, with an ellipsis when truncated; c opens the complete explanation and context in pages of at most 200 characters sized conservatively for the current terminal dimensions. Control characters are rendered as spaces to prevent terminal injection; stored text is unchanged. The transport frame limit applies, and terminal-size-aware layout and queue pagination remain open.
+Decision requests may carry optional explanation and supporting-context strings. The queue abbreviates question, agent, explanation and answer previews to fit an estimated single line, with an ellipsis when truncated; c opens the full agent, question, explanation and context, and o opens the selected answer and its recommendation reason. Details use pages of at most 200 characters sized conservatively for the current terminal dimensions. Control characters are rendered as spaces to prevent terminal injection; stored text is unchanged. The transport frame limit applies, and terminal-size-aware layout and queue pagination remain open.
 
 
 ## Completion notice lifecycle
@@ -105,3 +105,8 @@ The decision view estimates the available choice rows from terminal height, keep
 ## Detail page sizing
 
 Decision context and notice detail pages use the terminal dimensions to estimate available space, reserving rows for headings and navigation and allowing two columns per character, capped at 200 characters per page. Resize recalculates page boundaries; the current page index is clamped if needed, so a reader may need to navigate again after a resize. This approximation does not establish a supported minimum size or handle every possible Unicode width and wrapped header.
+
+
+## Decision previews
+
+Decision queue previews use a conservative two-column-per-character estimate; a truncated recommendation places its label before the answer text. `c` opens the full request detail and `o` opens the full selected suggested answer and recommendation reason. Confirming still requires Enter; opening a detail does not submit. Header, footer and edit-field wrapping, very small panes, and exact display widths for all Unicode remain open.

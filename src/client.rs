@@ -148,6 +148,7 @@ struct View {
     deferred_view: bool,
     priority_edit: bool,
     detail_page: Option<usize>,
+    detail_option: Option<usize>,
     selected: Option<usize>,
     editing: bool,
     custom: String,
@@ -166,6 +167,7 @@ impl View {
             deferred_view: false,
             priority_edit: false,
             detail_page: None,
+            detail_option: None,
             selected: None,
             editing: false,
             custom: String::new(),
@@ -181,6 +183,7 @@ impl View {
         self.editing = false;
         self.priority_edit = false;
         self.detail_page = None;
+        self.detail_option = None;
         self.custom.clear();
     }
     fn update(&mut self, requests: Vec<PendingRequest>) -> bool {
@@ -317,11 +320,17 @@ impl View {
         }
         if let Some(page) = self.detail_page {
             match key.code {
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') => self.detail_page = None,
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('c') | KeyCode::Char('o') => {
+                    self.detail_page = None
+                }
                 KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
                     let max_page = self
                         .current()
-                        .map(|r| detail_pages(&r.request).len().saturating_sub(1))
+                        .map(|r| {
+                            detail_pages(&r.request, self.detail_option)
+                                .len()
+                                .saturating_sub(1)
+                        })
                         .unwrap_or(0);
                     self.detail_page = Some((page + 1).min(max_page));
                 }
@@ -414,8 +423,22 @@ impl View {
                 deferred: !self.deferred_view,
             }),
             KeyCode::Char('c') => {
+                self.detail_option = None;
                 self.detail_page = Some(0);
                 Action::Redraw
+            }
+            KeyCode::Char('o') => {
+                if let Some(index) = self
+                    .selected
+                    .and_then(|position| choices.get(position))
+                    .copied()
+                {
+                    self.detail_option = Some(index);
+                    self.detail_page = Some(0);
+                    Action::Redraw
+                } else {
+                    Action::None
+                }
             }
             KeyCode::Char('p') => {
                 self.priority_edit = true;
@@ -546,6 +569,21 @@ pub async fn terminal(address: &str) -> Result<()> {
     }
 }
 
+// Restrict preview lines conservatively to avoid wrapping wide characters.
+// Full question and answer text remain available in their detail views.
+fn preview(text: &str) -> String {
+    let (width, _) = terminal::size().unwrap_or((80, 24));
+    let width = if width == 0 { 80 } else { width };
+    let limit = (usize::from(width.saturating_sub(1)) / 2).max(1);
+    let clean = safe(text);
+    if clean.chars().count() <= limit {
+        return clean;
+    }
+    let mut result: String = clean.chars().take(limit.saturating_sub(1)).collect();
+    result.push('…');
+    result
+}
+
 // Do not let remote content inject terminal control sequences.
 fn safe(text: &str) -> String {
     text.chars()
@@ -563,14 +601,30 @@ fn detail_page_size() -> usize {
         .saturating_mul(usize::from(height.saturating_sub(6)).max(1))
         .clamp(1, 200)
 }
-fn detail_pages(request: &crate::protocol::DecisionRequest) -> Vec<String> {
+fn detail_pages(request: &crate::protocol::DecisionRequest, option: Option<usize>) -> Vec<String> {
     let explanation = request.explanation.as_deref().unwrap_or("(none supplied)");
     let context = request.context.as_deref().unwrap_or("(none supplied)");
-    let content = format!(
-        "Explanation: {}   Supporting context: {}",
-        safe(explanation),
-        safe(context)
-    );
+    let content = if let Some(index) = option {
+        let answer = request.options.get(index).map(String::as_str).unwrap_or("");
+        let reason = if request.recommendation == Some(index) {
+            request.reason.as_deref().unwrap_or("")
+        } else {
+            ""
+        };
+        format!(
+            "Answer: {}   Recommendation reason: {}",
+            safe(answer),
+            safe(reason)
+        )
+    } else {
+        format!(
+            "Agent: {}   Question: {}   Explanation: {}   Supporting context: {}",
+            safe(&request.agent),
+            safe(&request.question),
+            safe(explanation),
+            safe(context)
+        )
+    };
     let chars: Vec<char> = content.chars().collect();
     chars
         .chunks(detail_page_size())
@@ -642,7 +696,7 @@ fn display(view: &View) -> Result<()> {
     if let Some(pending) = view.current() {
         let request = &pending.request;
         if let Some(page) = view.detail_page {
-            let pages = detail_pages(request);
+            let pages = detail_pages(request, view.detail_option);
             let page = page.min(pages.len().saturating_sub(1));
             println!(
                 "Request {} details, page {}/{}\r\n\r\n{}\r\n\r\nj/k pages; c, q or Esc returns.",
@@ -655,7 +709,7 @@ fn display(view: &View) -> Result<()> {
             return Ok(());
         }
         println!(
-            "{} queue: {}/{} | importance {}\r\nRequest {} from {}\r\n{}\r\n",
+            "{} queue: {}/{} | importance {}\r\n{}\r\n{}\r\n",
             if view.deferred_view {
                 "Deferred"
             } else {
@@ -664,19 +718,11 @@ fn display(view: &View) -> Result<()> {
             view.current + 1,
             view.requests.len(),
             pending.importance,
-            pending.id,
-            safe(&request.agent),
-            safe(&request.question)
+            preview(&format!("Request {} from {}", pending.id, request.agent)),
+            preview(&request.question)
         );
         if let Some(explanation) = &request.explanation {
-            let clean = safe(explanation);
-            let summary: String = clean.chars().take(160).collect();
-            let suffix = if clean.chars().count() > 160 {
-                "…"
-            } else {
-                ""
-            };
-            println!("Explanation: {summary}{suffix}\r");
+            println!("{}\r", preview(&format!("Explanation: {explanation}")));
         }
         let choices = view.choices();
         // Leave space for the queue header, explanation and help. Follow the
@@ -704,13 +750,26 @@ fn display(view: &View) -> Result<()> {
                     } else {
                         String::new()
                     };
-                    println!(
-                        "{} {}. {}{}\r",
+                    let line = format!(
+                        "{} {}. {}{}",
                         selected_mark,
                         position + 1,
-                        safe(option),
+                        option,
                         recommended
                     );
+                    let line = if Some(*index) == request.recommendation
+                        && preview(&line) != safe(&line)
+                    {
+                        format!(
+                            "{} {}. [recommended] {}",
+                            selected_mark,
+                            position + 1,
+                            option
+                        )
+                    } else {
+                        line
+                    };
+                    println!("{}\r", preview(&line));
                 }
             } else {
                 println!("{} {}. Custom answer\r", selected_mark, position + 1);
@@ -727,7 +786,7 @@ fn display(view: &View) -> Result<()> {
                 safe(&view.custom)
             );
         } else {
-            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; Tab queues; q quits.");
+            println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; Tab queues; q quits.");
         }
     } else {
         println!(

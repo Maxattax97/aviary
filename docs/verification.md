@@ -107,3 +107,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local narrow detail evidence (2026-11-10)
 
 `python3 tests/tmux_smoke.py` passed on local Linux with tmux 3.7c. In a 40×12 pane, the test opened a request with long supporting context, observed page navigation instructions and reached the final marker without answering. The existing `python3 tests/terminal_pty.py` suite also passed. This checks one ASCII context and terminal size, not every Unicode width, long header, resize during reading, notice contents, or a complete supported terminal matrix.
+
+
+## Local long answer evidence (2026-11-10)
+
+`python3 tests/tmux_smoke.py` passed locally with tmux 3.7c. In a 100×15 pane it submitted a long recommended answer, observed the recommendation label in its abbreviated preview, opened the selected answer detail, navigated to its final marker, verified no answer had been submitted, then confirmed it and retrieved the exact full value. This does not establish handling of all Unicode widths, long editor fields, very small panes or representative operator acceptance.
