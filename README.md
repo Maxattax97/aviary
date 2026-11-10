@@ -91,6 +91,7 @@ The terminal keeps its current view and retries reads when polling fails. A fail
 ```sh
 cargo test --locked
 python3 tests/terminal_pty.py
+python3 tests/decision_slice.py
 python3 tests/attention_smoke.py
 python3 tests/terminal_reconnect.py
 python3 tests/terminal_partial_refresh.py

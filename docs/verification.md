@@ -271,3 +271,7 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 ## CLI standard-input submission (2026-11-10)
 
 `python3 tests/cli_stdin.py` passed on local Linux over loopback. It supplied a JSON operation larger than this host’s single-argument limit but below the request-frame limit through stdin, checked the complete stored context, and verified that an identical retry returned the original ID. Malformed JSON and over-limit stdin exited nonzero without adding a record. The executable CLI reference, portable skill examples, and Rust suite also passed. This does not establish cross-platform command limits, remote operation or OS-crash durability.
+
+## Local decision and recovery slice (2026-11-10)
+
+`python3 tests/decision_slice.py` submitted a recommended decision over local ZeroMQ, started and killed a waiting CLI before an answer, restarted that waiter, and confirmed the recommendation in a pseudo-terminal. The waiter received the structured answer. After a service-process kill and restart, the original submission identity returned the same ID, conflicting content was rejected, a new waiter recovered the answer, and the database contained one request with that identity. This is automated local evidence; it does not demonstrate a real remote machine, OS crash or representative human operator.
