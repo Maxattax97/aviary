@@ -221,3 +221,17 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 The local `version_two_retrieves_near_limit_decision_and_answer` integration test submitted a decision whose request frame was just below 1 MiB, retrieved it in a version-2 queue page, answered with the near-limit suggested option, and retrieved the combined request and answer in a version-2 history page through both a direct client and the CLI. The same oversized history page returned a bounded error to a version-1 client. This does not prove every accepted payload shape or historical database import fits, bound total memory, or validate remote operation.
 
 `near_limit_reply_and_inherited_context_survive_restart` also sent a near-limit message context and a separately near-limit reply body. It retrieved the combined reply through version-2 response, inbox and history operations, observed a version-1 size error, then restarted the service and verified identical retry and retrieval. A page-builder unit test checks that an oversized lookahead does not hide preceding valid items; fetching that item itself still fails. These are local fixtures and a service-process restart, not OS-crash or remote evidence.
+
+## Prepared trusted two-machine exercise
+
+`tests/two_machine.py` provides a coordinated decision and message exchange using an explicitly supplied service address and a fresh token. On the service machine, start an isolated test service bound to its selected trusted-network address, then run the origin role against that address. Use a fresh token each time, generated for example with `python3 -c 'import uuid; print(uuid.uuid4().hex)'`. Supply the matching Aviary executable explicitly on each machine:
+
+```sh
+python3 tests/two_machine.py origin SERVICE_HOST:PORT TOKEN --binary /path/to/aviary
+# After the origin prints a JSON "ready" line, on the second trusted machine:
+python3 tests/two_machine.py peer SERVICE_HOST:PORT TOKEN --binary /path/to/aviary
+```
+
+Start the peer only after `ready` to test retrieval of a message accepted before that client started. The peer checks the message and decision, submits a suggested answer and a correlated reply, and retries the identical reply. The origin checks the persisted answer and reply. Both roles print IDs and hostnames; retain both outputs with the actual network setup and independently verify that the roles ran on separate machines. The test creates durable records and an immutable channel in the selected database; it does not delete them. Use a dedicated test database and a new token, and limit the service to a trusted network. Hostnames and a successful run alone do not prove identity, isolation, or encryption.
+
+`python3 tests/two_machine_smoke.py` passed with both roles and the service on the same Linux host over loopback. That validates the exercise orchestration only. The actual two-machine run, default-loopback remote reachability check, explicit non-loopback binding, network interruption, OS-crash recovery and representative operator validation remain open.

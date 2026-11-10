@@ -95,6 +95,7 @@ python3 tests/startup_smoke.py
 python3 tests/skill_smoke.py
 python3 tests/cli_reference.py
 python3 tests/zeromq_interop.py  # requires system libzmq
+python3 tests/two_machine_smoke.py  # local rehearsal only
 python3 tests/tmux_smoke.py  # requires tmux
 ```
 
