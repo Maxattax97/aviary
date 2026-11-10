@@ -10,6 +10,16 @@ Successful `call` and completed `wait` commands write one JSON object to stdout 
 
 Decision, message, reply, and notice submissions each require a caller-supplied, deployment-wide unique `identity`. Retain the identity and exact content before sending. For an unknown outcome, retry the same operation and content with the same identity: the service returns its original ID for an identical retry and rejects a conflicting reuse. A successful application response follows the SQLite commit. This identity mechanism does **not** apply to operator answers: a second answer is rejected, so retrieve the request's answer before deciding what to do after an uncertain answer. IDs for different record kinds can overlap; use the right operation and history root kind.
 
+## ZeroMQ wire envelope
+
+The CLI is the recommended integration boundary. A direct client compatible with this provisional version connects a DEALER socket to `tcp://HOST:PORT` and sends exactly one UTF-8 JSON frame per operation:
+
+```json
+{"version":1,"correlation":"client-chosen-token","operation":{"op":"list_page","offset":0}}
+```
+
+The service ROUTER supplies its routing identity as transport metadata; the application does not place that identity in its JSON. The service responds to that connection with one JSON frame of the form `{"version":1,"correlation":"client-chosen-token","result":{...}}`. A service error is represented inside `result` as `{"error":"..."}`. Use a nonempty correlation string of at most 128 UTF-8 bytes and match replies by correlation when multiple operations are outstanding; do not use it as a durable retry identity. Unsupported versions receive an error, while malformed envelopes or multipart messages may be discarded without a reply. A send, reconnect, or missing reply is not proof of acceptance. The CLI translates the result into its stdout/exit-status contract above. This envelope is provisional and is not a commitment to interoperability with future versions.
+
 ## Operation shapes
 
 The table lists the JSON object supplied to `call` and the success result. Strings described as required must be nonempty. An `id` is a numeric record ID returned by the service. Payload structs reject unknown fields; the outer operation envelope is provisional. Fields marked optional may be omitted. A field shown as `null` in a result is JSON null.

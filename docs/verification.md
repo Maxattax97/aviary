@@ -192,3 +192,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local mixed-agent attention evidence (2026-11-10)
 
 `python3 tests/attention_smoke.py` passed on Linux over loopback. It submitted decisions from two agents at different priorities, an ordinary message addressed to the operator, and a completion notice. The CLI queue and pseudo-terminal showed the two decisions in priority order without the routine message; the message was available in the separate inbox, and the notice appeared in the separate notice view. Neither decision was answered by inspection. This checks explicit operation-based classification for one fixture, not whether real agents choose useful requests or whether the workflow reduces operator attention.
+
+
+## Local Python/libzmq interoperability (2026-11-10)
+
+`python3 tests/zeromq_interop.py` passed on Linux over loopback using Python ctypes and system libzmq 4.3.5 against the Rust service. One DEALER pipelined a decision submission and list request, matched both correlations, checked an unsupported version error, survived a service process restart, retried the same identity, rejected conflicting content, and retrieved an answer submitted through the CLI. This exercises a different client stack using libzmq, not an independent ZeroMQ implementation, another machine, OS-crash recovery, or a stable future wire contract.

@@ -94,9 +94,10 @@ python3 tests/terminal_reconnect.py
 python3 tests/startup_smoke.py
 python3 tests/skill_smoke.py
 python3 tests/cli_reference.py
+python3 tests/zeromq_interop.py  # requires system libzmq
 python3 tests/tmux_smoke.py  # requires tmux
 ```
 
-Build first for the Python 3.10+ smoke tests. They use an isolated temporary database and loopback sockets; the terminal test requires a POSIX pseudo-terminal. The tmux smoke test starts its own isolated tmux server. These checks exercise actual client workflows but do not replace the two-machine, OS-crash, platform and operator checks in the [verification plan](docs/verification.md).
+Build first for the Python 3.10+ smoke tests. They use an isolated temporary database and loopback sockets; the terminal test requires a POSIX pseudo-terminal. The tmux smoke test starts its own isolated tmux server; the interoperability test requires a system libzmq shared library. These checks exercise actual client workflows but do not replace the two-machine, OS-crash, platform and operator checks in the [verification plan](docs/verification.md).
 
 Further project documents: [requirements](docs/requirements.md), [architecture](docs/architecture.md), [decisions](docs/decisions.md), [verification](docs/verification.md), and [implementation backlog](docs/tickets.md).
