@@ -232,9 +232,8 @@ impl Drop for TerminalGuard {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        let _ = execute!(io::stdout(), Show);
+        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen, Show);
         let _ = terminal::disable_raw_mode();
-        print!("\r\n");
         let _ = io::stdout().flush();
     }
 }
@@ -1122,9 +1121,11 @@ pub async fn terminal(address: &str) -> Result<()> {
         stop,
         thread: Some(thread),
     };
+    execute!(io::stdout(), terminal::EnterAlternateScreen)?;
     let mut interval = time::interval(POLL_INTERVAL);
     let mut view = View::new();
     let mut screen = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    screen.clear()?;
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
     let mut submission: Option<tokio::task::JoinHandle<(bool, bool, Result<serde_json::Value>)>> =

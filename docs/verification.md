@@ -285,3 +285,7 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 ## Clap and Ratatui migration (2026-11-10)
 
 `cargo test --locked` passed the Rust suite, including argument parsing for the existing positional commands, stdin marker and invalid arguments. The CLI reference, stdin, and portable skill smoke tests passed against the migrated executable. On local Linux, the terminal, arrivals, independent-refresh, reconnect, signal-restoration, attention, history, startup and decision-slice tests passed using loopback; the tmux smoke test passed at its exercised sizes. The pseudo-terminal helper now interprets screen updates at 80×24 rather than expecting complete lines in the output stream. The Ratatui and direct Crossterm dependencies resolve to one Crossterm version. These checks cover the existing views and selected workflows, not a finished interface redesign, Herdr, other platforms, a clean installation, comprehensive Unicode rendering or representative operator validation.
+
+## Terminal screen initialization (2026-11-10)
+
+`python3 tests/terminal_render.py` reproduced stale characters on a prepopulated tmux screen before the fix. After the fix, it verified the exact empty-queue rows, an arrival and return to an empty queue, blank remaining rows, and restoration of the previous screen on exit. The Rust suite and terminal, arrival, signal and tmux smoke tests passed locally. This verifies the exercised tmux session, not every terminal emulator, Herdr, abrupt termination or all screen sizes.
