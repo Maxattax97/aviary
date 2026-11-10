@@ -17,6 +17,8 @@ pub struct DecisionRequest {
     pub explanation: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
     pub options: Vec<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub importance: u8,
@@ -33,6 +35,7 @@ impl DecisionRequest {
             || self.question.is_empty()
             || self.options.iter().any(String::is_empty)
             || self.importance > 5
+            || self.activity.as_deref() == Some("")
             || self
                 .recommendation
                 .is_some_and(|index| index >= self.options.len())
@@ -95,6 +98,10 @@ pub enum Operation {
         include_dismissed: bool,
     },
     DismissNotice {
+        id: i64,
+    },
+    History {
+        kind: HistoryKind,
         id: i64,
     },
 }
@@ -194,4 +201,11 @@ pub struct NoticeItem {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NoticeList {
     pub notices: Vec<NoticeItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryKind {
+    Decision,
+    Message,
 }

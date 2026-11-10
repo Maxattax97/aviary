@@ -695,6 +695,7 @@ mod tests {
                 question: "Choose".into(),
                 explanation: None,
                 context: None,
+                activity: None,
                 options: (0..count).map(|i| format!("option {i}")).collect(),
                 importance: 0,
                 recommendation,

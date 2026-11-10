@@ -9,7 +9,7 @@ use sqlx::{
 use crate::{
     error::{AppError, Result},
     protocol::{
-        AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, Message,
+        AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, HistoryKind, Message,
         MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
     },
 };
@@ -70,6 +70,7 @@ impl Storage {
                 self.list_notices(include_dismissed).await
             }
             Operation::DismissNotice { id } => self.dismiss_notice(id).await,
+            Operation::History { kind, id } => self.history(kind, id).await,
         }
     }
 
@@ -349,6 +350,45 @@ impl Storage {
         let response: Option<(i64, String)> = sqlx::query_as("SELECT m.id, m.payload FROM message_responses r JOIN messages m ON m.id = r.response_id WHERE r.request_id = ?").bind(id).fetch_optional(&self.pool).await?;
         let response = response.map(|(response_id, payload)| -> Result<Value> { Ok(json!({"id": response_id, "message": serde_json::from_str::<Message>(&payload)?})) }).transpose()?;
         Ok(json!({"id": id, "response": response}))
+    }
+
+    async fn history(&self, kind: HistoryKind, id: i64) -> Result<Value> {
+        // One read transaction gives all sections the same SQLite snapshot.
+        let mut tx = self.pool.begin().await?;
+        let (table, root_kind) = match kind {
+            HistoryKind::Decision => ("requests", "decision"),
+            HistoryKind::Message => ("messages", "message"),
+        };
+        let root_payload: Option<String> =
+            sqlx::query_scalar(&format!("SELECT payload FROM {table} WHERE id = ?"))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let root: Value = serde_json::from_str(&root_payload.ok_or(AppError::RequestNotFound)?)?;
+        let activity = root
+            .get("activity")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty());
+        let decisions: Vec<(i64, String, Option<String>)> = sqlx::query_as("SELECT id, payload, answer FROM requests WHERE (id = ? AND ? = 'decision') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY id")
+            .bind(id).bind(root_kind).bind(activity).bind(activity).fetch_all(&mut *tx).await?;
+        let decisions = decisions.into_iter().map(|(id, payload, answer)| -> Result<Value> {
+            let answer = answer.map(|value| serde_json::from_str::<Value>(&value)).transpose()?;
+            Ok(json!({"id":id, "request":serde_json::from_str::<Value>(&payload)?, "answer":answer}))
+        }).collect::<Result<Vec<_>>>()?;
+        let messages: Vec<(i64, String, Option<i64>)> = sqlx::query_as("SELECT m.id, m.payload, r.request_id FROM messages m LEFT JOIN message_responses r ON r.response_id = m.id WHERE (m.id = ? AND ? = 'message') OR (r.request_id = ? AND ? = 'message') OR (m.id = (SELECT request_id FROM message_responses WHERE response_id = ?) AND ? = 'message') OR (? IS NOT NULL AND json_extract(m.payload, '$.activity') = ?) ORDER BY m.id")
+            .bind(id).bind(root_kind).bind(id).bind(root_kind).bind(id).bind(root_kind).bind(activity).bind(activity).fetch_all(&mut *tx).await?;
+        let messages = messages.into_iter().map(|(id, payload, reply_to)| -> Result<Value> {
+            Ok(json!({"id":id, "message":serde_json::from_str::<Value>(&payload)?, "reply_to":reply_to}))
+        }).collect::<Result<Vec<_>>>()?;
+        let notices: Vec<(i64, String, bool)> = sqlx::query_as("SELECT id, payload, dismissed FROM completion_notices WHERE ? IS NOT NULL AND json_extract(payload, '$.activity') = ? ORDER BY id")
+            .bind(activity).bind(activity).fetch_all(&mut *tx).await?;
+        let outcomes = notices.into_iter().map(|(id, payload, dismissed)| -> Result<Value> {
+            Ok(json!({"id":id, "notice":serde_json::from_str::<Value>(&payload)?, "dismissed":dismissed}))
+        }).collect::<Result<Vec<_>>>()?;
+        tx.commit().await?;
+        Ok(
+            json!({"root":{"kind":root_kind,"id":id}, "activity":activity, "decisions":decisions, "messages":messages, "outcomes":outcomes}),
+        )
     }
 
     async fn inbox(&self, participant: String) -> Result<Value> {

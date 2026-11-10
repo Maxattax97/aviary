@@ -75,3 +75,8 @@ An explicit `submit_notice` represents a meaningful completion and requires agen
 ## Operator instruction composition
 
 The terminal uses the routing label `operator`, which must be a member of the selected immutable channel. The operator supplies the deployment-unique retry identity, channel, recipient label or group, and single-line instruction text, then explicitly confirms the review. A failed or unknown send retains the unchanged draft for retry with the same identity while the interface remains open; drafts are not durable, so the operator must retain the identity and content before closing or cancelling. This label is not authenticated.
+
+
+## Request history
+
+A decision or channel message can be the history root. Related decisions, messages and completion outcomes share an explicit nonempty activity reference; direct agent request/response links are also included even when no activity is supplied. A single database read transaction supplies a consistent current snapshot. Decisions, messages and outcomes are returned as separate arrays ordered by their own record IDs; this is not a cross-kind chronological timeline. Answer values and dismissed notices remain visible. Records without a shared activity are not inferred as related. Activity references are caller-supplied labels, not access controls. Pagination and a cross-session timeline remain open.

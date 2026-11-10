@@ -654,3 +654,104 @@ fn completion_notice_retry_and_dismissal_recover() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn request_history_links_decisions_messages_and_outcomes() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-history-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let decision = json!({"identity":"hist-decision","agent":"a","question":"Approve?","options":["Yes"],"recommendation":0,"reason":"Ready","activity":"task-x"});
+    let decision_id = call(&address, json!({"op":"submit","request":decision}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing decision")?;
+    call(&address, json!({"op":"answer","id":decision_id,"index":0}))?;
+    let message = json!({"identity":"hist-request","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"Check","expects_reply":true,"activity":"task-x"});
+    let message_id = call(&address, json!({"op":"send_message","message":message}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing message")?;
+    let reply_id = call(&address, json!({"op":"reply_message","reply":{"identity":"hist-reply","request_id":message_id,"sender":"b","body":"Checked"}}))?.get("id").and_then(Value::as_i64).ok_or("missing reply")?;
+    call(
+        &address,
+        json!({"op":"submit_notice","notice":{"identity":"hist-outcome","agent":"b","work":"Check","result":"Passed","activity":"task-x"}}),
+    )?;
+    call(
+        &address,
+        json!({"op":"submit_notice","notice":{"identity":"other-outcome","agent":"b","work":"Other","result":"Ignored","activity":"task-y"}}),
+    )?;
+    let history = call(
+        &address,
+        json!({"op":"history","kind":"decision","id":decision_id}),
+    )?;
+    assert_eq!(history.pointer("/activity"), Some(&json!("task-x")));
+    assert_eq!(
+        history.pointer("/decisions/0/answer/value"),
+        Some(&json!("Yes"))
+    );
+    assert_eq!(history.pointer("/messages/0/id"), Some(&json!(message_id)));
+    assert_eq!(history.pointer("/messages/1/id"), Some(&json!(reply_id)));
+    assert_eq!(
+        history.pointer("/messages/1/reply_to"),
+        Some(&json!(message_id))
+    );
+    assert_eq!(
+        history.pointer("/outcomes/0/notice/result"),
+        Some(&json!("Passed"))
+    );
+    assert_eq!(
+        history
+            .get("outcomes")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(1)
+    );
+    let message_history = call(
+        &address,
+        json!({"op":"history","kind":"message","id":message_id}),
+    )?;
+    assert_eq!(message_history.get("decisions"), history.get("decisions"));
+    assert_eq!(message_history.get("messages"), history.get("messages"));
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"history","kind":"decision","id":decision_id})
+        )?,
+        history
+    );
+    let plain = json!({"identity":"plain-request","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"Check","expects_reply":true});
+    let plain_id = call(&address, json!({"op":"send_message","message":plain}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing request")?;
+    let plain_reply = call(&address, json!({"op":"reply_message","reply":{"identity":"plain-reply","request_id":plain_id,"sender":"b","body":"Done"}}))?.get("id").and_then(Value::as_i64).ok_or("missing reply")?;
+    for root in [plain_id, plain_reply] {
+        let plain_history = call(&address, json!({"op":"history","kind":"message","id":root}))?;
+        assert_eq!(
+            plain_history
+                .get("messages")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+        assert_eq!(
+            plain_history.pointer("/messages/1/reply_to"),
+            Some(&json!(plain_id))
+        );
+        assert_eq!(plain_history.get("outcomes"), Some(&json!([])));
+    }
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

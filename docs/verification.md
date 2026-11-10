@@ -52,3 +52,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local operator instruction evidence (2026-11-09)
 
 `cargo test --locked` passed, and `python3 tests/terminal_pty.py` composed and confirmed direct and group instructions, checked the expected recipient inboxes, and verified that a rejected send retains its draft and retry identity for another attempt. This does not establish recovery of an unsaved draft after terminal exit, real network failure, representative-operator validation or cross-machine operation.
+
+
+## Local request history evidence (2026-11-09)
+
+`cargo test --locked` passed a local ZeroMQ test that creates a decision and answer, a related agent request and response, a completion outcome and an unrelated outcome; it verifies activity association, direct reply linkage, exclusion of unrelated activity and identical history after a service process restart. It also checks direct request/reply history without an activity. This does not establish chronological cross-kind ordering, pagination, remote operation or OS-crash recovery.
