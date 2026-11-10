@@ -160,3 +160,8 @@ For a direct message addressed to `operator` with `expects_reply`, r opens a rep
 ## Malformed multipart handling
 
 The service expects exactly a ROUTER identity and one payload frame. It discards extra frames individually before accepting another message instead of collecting the multipart payload in an application vector; shutdown can interrupt draining. The CLI rejects a response with extra frames. This limits application-side copying for malformed envelopes, not aggregate libzmq buffering, peer count, total process memory, CPU consumed draining a multipart message, or fairness under saturation. Trusted-network deployment and the existing unknown-outcome rules still apply.
+
+
+## Slow peer reply backpressure
+
+The ROUTER uses mandatory routing and nonblocking reply sends. If a recipient is disconnected or its per-peer reply queue is full, the service does not wait for that peer; it logs the failure at debug level and continues. The operation may already have committed, and a missing response remains an unknown outcome requiring the appropriate retry or retrieval procedure. This does not guarantee delivery, bound aggregate libzmq buffering, or ensure fairness under arbitrary request load: operations and malformed-message draining remain serial.

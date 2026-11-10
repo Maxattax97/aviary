@@ -177,3 +177,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local malformed multipart evidence (2026-11-10)
 
 `cargo test --locked` passed a local case sending a valid-looking submission followed by 96 unexpected 65,536-byte frames on one DEALER message. The service discarded it, accepted the next valid request on that connection, and did not store the malformed submission. A second local test confirmed that the CLI rejected a multipart response from a test ROUTER. The terminal, CLI-reference and clean-directory smoke tests also passed. This does not measure peak memory, bound libzmq buffering or drain time, establish fairness under saturation, or test remote behavior.
+
+
+## Local slow-peer backpressure evidence (2026-11-10)
+
+`cargo test --locked --test slice slow_peer_backpressure_does_not_block_other_clients` and the full Rust suite passed on Linux loopback. A DEALER with a small receive queue stopped reading replies while issuing 100 requests whose responses included a 700,000-character record. The service logged its per-peer reply queue as full; a second client then submitted and retrieved a separate request. A further submission from the slow peer was independently observed in SQLite with its application reply unread; an identical retry returned the original ID before and after a service process restart. This is a bounded local fixture, not a latency guarantee, proof of lossless reply delivery, aggregate memory bound, arbitrary-load fairness, remote-network or OS-crash validation.

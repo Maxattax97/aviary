@@ -135,6 +135,7 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
         let context = zmq::Context::new();
         let socket = context.socket(zmq::ROUTER)?;
         configure(&socket)?;
+        socket.set_router_mandatory(true)?;
         socket.set_rcvtimeo(100)?;
         socket.bind(&endpoint(&address))?;
         info!(%address, "service listening");
@@ -188,9 +189,10 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
                     result: json!({"error": "response too large"}),
                 })?;
             }
-            if let Err(error) = socket.send_multipart([identity.as_slice(), response.as_slice()], 0)
-            {
-                debug!(%error, "reply could not be sent");
+            match socket.send_multipart([identity.as_slice(), response.as_slice()], zmq::DONTWAIT) {
+                Ok(()) => {}
+                Err(zmq::Error::EAGAIN) => debug!("reply dropped: peer queue full"),
+                Err(error) => debug!(%error, "reply could not be sent"),
             }
         }
         info!("service stopped");

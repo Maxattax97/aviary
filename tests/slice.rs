@@ -1532,3 +1532,122 @@ fn client_rejects_multipart_response() -> TestResult<()> {
     assert!(String::from_utf8_lossy(&output.stderr).contains("message too large or incomplete"));
     Ok(())
 }
+
+#[test]
+fn slow_peer_backpressure_does_not_block_other_clients() -> TestResult<()> {
+    use sqlx::{Connection, SqliteConnection};
+    use std::{
+        io::{BufRead, BufReader},
+        sync::mpsc,
+    };
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-router-pressure-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let child = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["serve", database, &address])
+        .env("RUST_LOG", "aviary=debug")
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let mut server = Server(child);
+    let stderr = server.0.stderr.take().ok_or("missing service stderr")?;
+    let (tx, rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        for line in BufReader::new(stderr)
+            .lines()
+            .map_while(std::result::Result::ok)
+        {
+            if (line.contains("service listening")
+                || line.contains("reply dropped: peer queue full"))
+                && tx.send(line).is_err()
+            {
+                break;
+            }
+        }
+    });
+    let wait_for = |needle: &str, timeout: Duration| -> TestResult<()> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let line =
+                rx.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))?;
+            if line.contains(needle) {
+                return Ok(());
+            }
+        }
+    };
+    wait_for("service listening", Duration::from_secs(5))?;
+    let large = json!({"identity":"pressure-large","agent":"a","question":"Large","options":[],"context":"x".repeat(700_000)});
+    call(&address, json!({"op":"submit","request":large}))?;
+    let context = zmq::Context::new();
+    let slow = context.socket(zmq::DEALER)?;
+    slow.set_linger(0)?;
+    slow.set_rcvhwm(1)?;
+    slow.set_rcvbuf(1024)?;
+    slow.set_sndtimeo(5_000)?;
+    slow.set_rcvtimeo(5_000)?;
+    slow.connect(&format!("tcp://{address}"))?;
+    send_request(&slow, "ready", json!({"op":"get","id":1}))?;
+    assert_eq!(
+        receive_reply(&slow)?.get("correlation"),
+        Some(&json!("ready"))
+    );
+    for i in 0..100 {
+        send_request(&slow, &format!("load-{i}"), json!({"op":"list_page"}))?;
+    }
+    wait_for("reply dropped: peer queue full", Duration::from_secs(20))?;
+    let other =
+        json!({"identity":"other-client","agent":"b","question":"Still responsive?","options":[]});
+    let before = std::time::Instant::now();
+    let other_id = call(&address, json!({"op":"submit","request":other}))?
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing other id")?;
+    assert!(before.elapsed() < Duration::from_secs(10));
+    assert_eq!(
+        call(&address, json!({"op":"get","id":other_id}))?.get("id"),
+        Some(&json!(other_id))
+    );
+    let request =
+        json!({"identity":"slow-client-submit","agent":"a","question":"Recover?","options":[]});
+    send_request(&slow, "unknown", json!({"op":"submit","request":request}))?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut database_connection =
+        runtime.block_on(SqliteConnection::connect(&format!("sqlite://{database}")))?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let id = loop {
+        let observed: Option<Option<i64>> = runtime.block_on(
+            sqlx::query_scalar("SELECT record_id FROM submission_keys WHERE identity = ?")
+                .bind("slow-client-submit")
+                .fetch_optional(&mut database_connection),
+        )?;
+        if let Some(Some(id)) = observed {
+            break id;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("slow peer submission did not commit".into());
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+    drop(database_connection);
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":request}))?.get("id"),
+        Some(&json!(id))
+    );
+    drop(slow);
+    drop(server);
+    reader.join().map_err(|_| "log reader panicked")?;
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":request}))?.get("id"),
+        Some(&json!(id))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
