@@ -96,6 +96,11 @@ pub enum Operation {
     Inbox {
         participant: String,
     },
+    InboxPage {
+        participant: String,
+        #[serde(default)]
+        offset: usize,
+    },
     ReplyMessage {
         reply: MessageReply,
     },
@@ -115,6 +120,13 @@ pub enum Operation {
     History {
         kind: HistoryKind,
         id: i64,
+    },
+    HistoryPage {
+        kind: HistoryKind,
+        id: i64,
+        section: HistorySection,
+        #[serde(default)]
+        offset: usize,
     },
 }
 
@@ -221,4 +233,12 @@ pub struct RequestPage {
 pub struct NoticePage {
     pub notices: Vec<NoticeItem>,
     pub next_offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistorySection {
+    Decisions,
+    Messages,
+    Outcomes,
 }

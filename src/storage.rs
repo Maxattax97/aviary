@@ -9,8 +9,8 @@ use sqlx::{
 use crate::{
     error::{AppError, Result},
     protocol::{
-        AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, HistoryKind, Message,
-        MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
+        AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, HistoryKind,
+        HistorySection, Message, MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
     },
 };
 
@@ -74,6 +74,10 @@ impl Storage {
             Operation::CreateChannel { channel } => self.create_channel(channel).await,
             Operation::SendMessage { message } => self.send_message(message).await,
             Operation::Inbox { participant } => self.inbox(participant).await,
+            Operation::InboxPage {
+                participant,
+                offset,
+            } => Self::page(self.inbox(participant).await?, "messages", offset),
             Operation::ReplyMessage { reply } => self.reply_message(reply).await,
             Operation::GetMessageResponse { id } => self.get_message_response(id).await,
             Operation::SubmitNotice { notice } => self.submit_notice(notice).await,
@@ -82,6 +86,23 @@ impl Storage {
             }
             Operation::DismissNotice { id } => self.dismiss_notice(id).await,
             Operation::History { kind, id } => self.history(kind, id).await,
+            Operation::HistoryPage {
+                kind,
+                id,
+                section,
+                offset,
+            } => {
+                let field = match section {
+                    HistorySection::Decisions => "decisions",
+                    HistorySection::Messages => "messages",
+                    HistorySection::Outcomes => "outcomes",
+                };
+                let mut page = Self::page(self.history(kind, id).await?, field, offset)?;
+                let object = page.as_object_mut().ok_or(AppError::InvalidFrame)?;
+                object.insert("section".into(), json!(field));
+                object.insert("id".into(), json!(id));
+                Ok(page)
+            }
         }
     }
 

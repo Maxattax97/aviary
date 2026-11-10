@@ -891,3 +891,104 @@ fn queue_pages_cross_frame_limit() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn inbox_and_history_pages_cross_frame_limit() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-history-pages-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let large = "x".repeat(350_000);
+    let mut root = None;
+    for i in 0..4 {
+        let decision = json!({"identity":format!("history-decision-{i}"),"agent":"a","question":"Choose","context":large,"options":[],"activity":"large-history"});
+        let result = call(&address, json!({"op":"submit","request":decision}))?;
+        if root.is_none() {
+            root = result.get("id").and_then(Value::as_i64);
+        }
+        let message = json!({"identity":format!("history-message-{i}"),"channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":large,"activity":"large-history"});
+        assert!(
+            call(&address, json!({"op":"send_message","message":message}))?
+                .get("id")
+                .is_some()
+        );
+        let notice = json!({"identity":format!("history-notice-{i}"),"agent":"a","work":"Work","result":large,"activity":"large-history"});
+        assert!(
+            call(&address, json!({"op":"submit_notice","notice":notice}))?
+                .get("id")
+                .is_some()
+        );
+    }
+    let id = root.ok_or("missing root")?;
+    assert_eq!(
+        call(&address, json!({"op":"inbox","participant":"b"}))?.get("error"),
+        Some(&json!("response too large"))
+    );
+    assert_eq!(
+        call(&address, json!({"op":"history","kind":"decision","id":id}))?.get("error"),
+        Some(&json!("response too large"))
+    );
+    for section in ["inbox", "decisions", "messages", "outcomes"] {
+        let mut offset = 0u64;
+        let mut seen = Vec::new();
+        let mut pages = 0;
+        loop {
+            let query = if section == "inbox" {
+                json!({"op":"inbox_page","participant":"b","offset":offset})
+            } else {
+                json!({"op":"history_page","kind":"decision","id":id,"section":section,"offset":offset})
+            };
+            let response = call(&address, query)?;
+            let field = if section == "inbox" {
+                "messages"
+            } else {
+                section
+            };
+            let items = response
+                .get(field)
+                .and_then(Value::as_array)
+                .ok_or("missing page")?;
+            seen.extend(
+                items
+                    .iter()
+                    .filter_map(|item| item.get("id").and_then(Value::as_i64)),
+            );
+            pages += 1;
+            match response.get("next_offset").and_then(Value::as_u64) {
+                Some(next) => {
+                    assert!(next > offset);
+                    offset = next;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(seen.len(), 4, "{section}");
+        assert!(pages > 1, "{section}");
+        assert_eq!(
+            seen.into_iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            4
+        );
+    }
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"inbox_page","participant":"unrelated"})
+        )?
+        .get("messages"),
+        Some(&json!([]))
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

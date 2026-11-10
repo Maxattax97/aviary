@@ -72,3 +72,8 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 ## Local queue paging evidence (2026-11-09)
 
 `cargo test --locked` passed an integration case with four 350,000-character decisions and notices: legacy decision listing exceeded a frame, while paged operations returned all four distinct records across multiple responses. `python3 tests/terminal_pty.py` navigated ten decisions and ten notices whose respective aggregate sizes exceeded a frame. These checks use a stable local queue and do not prove consistent traversal during concurrent mutation, bounded memory, individual near-limit item handling, inbox/history pagination, or remote operation.
+
+
+## Local inbox and history paging evidence (2026-11-10)
+
+`cargo test --locked --test slice inbox_and_history_pages_cross_frame_limit` passed over loopback. Four large records in each inbox and history section exceeded the unpaged response limit; paging returned four distinct IDs in each section, and an unrelated inbox was empty. This exercises stable data only: pages do not share a snapshot, queries materialize full results, and this does not establish bounded memory, individual near-limit records, remote operation or OS-crash recovery.
