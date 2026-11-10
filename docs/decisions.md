@@ -90,3 +90,8 @@ The portable on-demand skill is maintained in `skills/aviary/` and can be copied
 ## Initial queue wire paging
 
 The terminal retrieves decision and notice queues in offset pages targeted at 900 KiB, with a larger single item allowed within a reserved frame budget. Legacy list operations remain unchanged. Each page is evaluated against current state, not a snapshot, so concurrent queue changes can shift offsets; later refreshes reconcile the view. A single near-frame-limit stored item can still exceed the page budget. Inbox and each history section also offer offset pages; history pages include the root ID and section, while the unpaged history response includes root and activity metadata. Pages are independently evaluated against current state and do not share a snapshot. Server queries currently materialize full lists before slicing, and terminal aggregation is not memory-bounded. These limitations remain open for V1 readiness.
+
+
+## Service signal shutdown
+
+On POSIX, SIGINT and SIGTERM request service shutdown. Once the signal is observed, the service stops accepting further operations and waits for a currently executing operation and its reply attempt before closing the zero-linger socket. Queued requests or replies can be lost; clients treat missing replies as unknown outcomes and retry identical submissions with the same identity. Idle receive polls at 100 ms; there is no guaranteed overall shutdown deadline because storage and reply handling may take longer. This does not replace a supervisor, backup, or crash recovery.

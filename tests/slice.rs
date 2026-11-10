@@ -1048,3 +1048,53 @@ fn recipient_retrieves_messages_accepted_while_disconnected() -> TestResult<()> 
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+#[cfg(unix)]
+fn signal_shutdown_preserves_acknowledged_submissions() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-shutdown-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let request =
+        json!({"identity":"shutdown-retry","agent":"agent","question":"Proceed?","options":[]});
+    let mut server = start_server(database, &address)?;
+    let first = call(&address, json!({"op":"submit","request":request}))?;
+    let id = first
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("missing ID")?;
+    for signal in ["-TERM", "-INT"] {
+        let status = Command::new("kill")
+            .args([signal, &server.0.id().to_string()])
+            .status()?;
+        assert!(status.success());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = server.0.try_wait()? {
+                assert!(status.success(), "{signal}: {status}");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!("{signal}: service failed to stop").into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        drop(server);
+        server = start_server(database, &address)?;
+        assert_eq!(
+            call(&address, json!({"op":"submit","request":request}))?.get("id"),
+            Some(&json!(id))
+        );
+        assert_eq!(
+            call(&address, json!({"op":"get","id":id}))?.get("id"),
+            Some(&json!(id))
+        );
+    }
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

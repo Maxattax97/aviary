@@ -25,7 +25,7 @@ The service defaults to `aviary.sqlite` and `127.0.0.1:7432`. To choose both the
 ./target/debug/aviary serve /path/to/aviary.sqlite 192.168.1.10:7432
 ```
 
-Use an address assigned to the host and a trusted network. Keep the service running while clients connect; closing the interface does not stop it. The SQLite database and its WAL can contain private work: protect their directory and do not remove the WAL while the service is running.
+Use an address assigned to the host and a trusted network. Keep the service running while clients connect; closing the interface does not stop it. Stop the service with Ctrl-C or SIGTERM. It stops taking new work after observing the signal and lets a request already being processed finish; replies may still be lost, so retry unknown outcomes with the same identity. The SQLite database and its WAL can contain private work: protect their directory and do not remove the WAL while the service is running.
 
 ## Ask for a decision
 

@@ -23,7 +23,7 @@ flowchart LR
 
 The diagram shows logical responsibilities, not a commitment to separate executables for every box. The service is the shared point for routing, state and recovery. The terminal interface is an independent client: closing it must not stop the service or agents. The CLI provides a documented machine-readable boundary for agents and scripts. The portable skill describes how to use that boundary; it is not an orchestrator. Local state is owned by the service, and clients use the service interface rather than treating the storage format as their contract.
 
-One central service simplifies shared history, correlation and deduplication but is an availability and trust dependency. Agents cannot submit to it while it is unreachable. No service replication or multi-site availability is promised. The specific V1 process lifecycle, supported POSIX platforms and distribution method remain open.
+One central service simplifies shared history, correlation and deduplication but is an availability and trust dependency. Agents cannot submit to it while it is unreachable. No service replication or multi-site availability is promised. The service handles SIGINT and SIGTERM by stopping its receive loop after the current operation; queued replies may be lost and remain unknown outcomes. Supervision, the supported POSIX platforms and distribution method remain open.
 
 ## Responsibilities and interfaces
 

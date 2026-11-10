@@ -1,3 +1,8 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::{debug, info, warn};
@@ -92,18 +97,28 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
     let storage = Storage::open(database_path).await?;
     let address = address.to_owned();
     let runtime = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
+    // Register both handlers before the worker starts so an early stop cannot
+    // strand a blocking worker while the runtime shuts down.
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let stopping = Arc::new(AtomicBool::new(false));
+    let worker_stopping = Arc::clone(&stopping);
+    let mut worker = tokio::task::spawn_blocking(move || {
         let context = zmq::Context::new();
         let socket = context.socket(zmq::ROUTER)?;
         configure(&socket)?;
+        socket.set_rcvtimeo(100)?;
         socket.bind(&endpoint(&address))?;
         info!(%address, "service listening");
-        loop {
+        while !worker_stopping.load(Ordering::Acquire) {
             let frames = match socket.recv_multipart(0) {
                 Ok(frames) => frames,
-                Err(zmq::Error::EAGAIN) => continue,
+                Err(zmq::Error::EAGAIN | zmq::Error::EINTR) => continue,
                 Err(error) => return Err(error.into()),
             };
+            if worker_stopping.load(Ordering::Acquire) {
+                break;
+            }
             let [identity, frame] = frames.as_slice() else {
                 debug!("discarding invalid ZeroMQ envelope");
                 continue;
@@ -149,7 +164,18 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
                 debug!(%error, "reply could not be sent");
             }
         }
-    })
-    .await
-    .map_err(|error| AppError::Task(error.to_string()))?
+        info!("service stopped");
+        Ok(())
+    });
+    tokio::select! {
+        result = &mut worker => result.map_err(|error| AppError::Task(error.to_string()))?,
+        _ = interrupt.recv() => {
+            stopping.store(true, Ordering::Release);
+            worker.await.map_err(|error| AppError::Task(error.to_string()))?
+        },
+        _ = terminate.recv() => {
+            stopping.store(true, Ordering::Release);
+            worker.await.map_err(|error| AppError::Task(error.to_string()))?
+        }
+    }
 }
