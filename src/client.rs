@@ -1404,7 +1404,8 @@ fn inbox_pages(item: &InboxItem) -> Vec<String> {
 }
 fn notice_pages(item: &NoticeItem) -> Vec<String> {
     let content = format!(
-        "Work: {}   Result: {}   Activity: {}",
+        "Agent: {}   Work: {}   Result: {}   Activity: {}",
+        safe(&item.notice.agent),
         safe(&item.notice.work),
         safe(&item.notice.result),
         safe(item.notice.activity.as_deref().unwrap_or("(none supplied)"))
@@ -1587,7 +1588,7 @@ fn display(view: &View) -> Result<()> {
                     .saturating_add(view.notices.len())
                     .to_string()
             };
-            println!("Completion notice {}/{} from {} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", position, total, safe(&notice.notice.agent), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+            println!("Completion notice {}/{} | page {}/{}\r\n\r\n{}\r\n\r\nh/l notices; j/k pages; d dismiss; n or q returns.", position, total, page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
         } else {
             println!("No open completion notices. n or q returns.");
         }

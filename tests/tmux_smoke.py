@@ -150,6 +150,37 @@ def main() -> None:
                 "narrow recommended answer",
             )
             wait_for_screen("No active requests")
+            notice_id = service.call(
+                {
+                    "op": "submit_notice",
+                    "notice": {
+                        "identity": "tmux-long-notice-agent",
+                        "agent": "a" * 200 + "AGENT-END",
+                        "work": "Work marker",
+                        "result": "RESULT-END",
+                    },
+                }
+            )["id"]
+            wait_for_screen("Open completion notices: 1")
+            tmux("send-keys", "-t", "aviary:", "n")
+            screen = wait_for_screen("Completion notice 1/1")
+            assert "j/k pages" in screen and "d dismiss" in screen, screen
+            tmux("send-keys", "-t", "aviary:", "j")
+            screen = wait_for_screen("AGENT-END")
+            assert "j/k pages" in screen, screen
+            tmux("send-keys", "-t", "aviary:", "j")
+            screen = wait_for_screen("RESULT-END")
+            assert "j/k pages" in screen, screen
+            tmux("send-keys", "-t", "aviary:", "d")
+            service.wait_for(
+                lambda: service.call({"op": "list_notices"})["notices"] == [],
+                "narrow notice dismissal",
+            )
+            assert service.call({"op": "list_notices", "include_dismissed": True})[
+                "notices"
+            ][0]["id"] == notice_id
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("No active requests")
             long_answer = "z" * 280 + " END-OPTION"
             long_id = service.call(
                 {
