@@ -95,3 +95,8 @@ The terminal retrieves decision and notice queues in offset pages targeted at 90
 ## Service signal shutdown
 
 On POSIX, SIGINT and SIGTERM request service shutdown. Once the signal is observed, the service stops accepting further operations and waits for a currently executing operation and its reply attempt before closing the zero-linger socket. Queued requests or replies can be lost; clients treat missing replies as unknown outcomes and retry identical submissions with the same identity. Idle receive polls at 100 ms; there is no guaranteed overall shutdown deadline because storage and reply handling may take longer. This does not replace a supervisor, backup, or crash recovery.
+
+
+## Answer choice viewport
+
+The decision view estimates the available choice rows from terminal height, keeps the selected choice in that window, and redraws on resize. The custom answer is included as the last choice. This is an initial row-count approximation: wrapped question, explanation, option and help text can still consume extra rows, and very small panes are not supported by an established minimum. Full terminal-size-aware layout remains open.

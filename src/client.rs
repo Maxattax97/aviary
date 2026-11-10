@@ -474,8 +474,8 @@ pub async fn terminal(address: &str) -> Result<()> {
         while !thread_stop.load(Ordering::Relaxed) {
             match event::poll(Duration::from_millis(100)) {
                 Ok(true) => match event::read() {
-                    Ok(Event::Key(key)) => {
-                        if sender.send(Ok(key)).is_err() {
+                    Ok(event @ (Event::Key(_) | Event::Resize(_, _))) => {
+                        if sender.send(Ok(event)).is_err() {
                             break;
                         }
                     }
@@ -510,8 +510,13 @@ pub async fn terminal(address: &str) -> Result<()> {
                 if changed_requests || changed_notices { display(&view)?; }
             }
             key = receiver.recv() => {
-                let Some(key) = key else { return Ok(()); };
-                match view.key(key?) {
+                let Some(event) = key else { return Ok(()); };
+                let key = match event? {
+                    Event::Key(key) => key,
+                    Event::Resize(_, _) => { display(&view)?; continue; },
+                    _ => continue,
+                };
+                match view.key(key) {
                     Action::None => {},
                     Action::Redraw => display(&view)?,
                     Action::Quit => return Ok(()),
@@ -661,38 +666,46 @@ fn display(view: &View) -> Result<()> {
             println!("Explanation: {summary}{suffix}\r");
         }
         let choices = view.choices();
-        for (position, index) in choices.iter().enumerate() {
-            if let Some(option) = request.options.get(*index) {
-                let recommended = if Some(*index) == request.recommendation {
-                    format!(
-                        " (recommended: {})",
-                        safe(request.reason.as_deref().unwrap_or(""))
-                    )
-                } else {
-                    String::new()
-                };
-                println!(
-                    "{} {}. {}{}\r",
-                    if view.selected == Some(position) {
-                        ">"
-                    } else {
-                        " "
-                    },
-                    position + 1,
-                    safe(option),
-                    recommended
-                );
-            }
-        }
-        println!(
-            "{} {}. Custom answer\r",
-            if view.selected == Some(choices.len()) {
+        // Leave space for the queue header, explanation and help. Follow the
+        // selection so a long list cannot scroll the selected choice away.
+        let height = terminal::size().map(|(_, rows)| rows).unwrap_or(24);
+        let height = if height == 0 { 24 } else { height };
+        let capacity = usize::from(height).saturating_sub(10).max(1);
+        let total = choices.len() + 1; // Custom answer is the last choice.
+        let selected = view.selected.unwrap_or(0).min(total - 1);
+        let start = selected.saturating_sub(capacity - 1);
+        let end = start.saturating_add(capacity).min(total);
+        for position in start..end {
+            let selected_mark = if view.selected == Some(position) {
                 ">"
             } else {
                 " "
-            },
-            choices.len() + 1
-        );
+            };
+            if let Some(index) = choices.get(position) {
+                if let Some(option) = request.options.get(*index) {
+                    let recommended = if Some(*index) == request.recommendation {
+                        format!(
+                            " (recommended: {})",
+                            safe(request.reason.as_deref().unwrap_or(""))
+                        )
+                    } else {
+                        String::new()
+                    };
+                    println!(
+                        "{} {}. {}{}\r",
+                        selected_mark,
+                        position + 1,
+                        safe(option),
+                        recommended
+                    );
+                }
+            } else {
+                println!("{} {}. Custom answer\r", selected_mark, position + 1);
+            }
+        }
+        if total > capacity {
+            println!("Choices {}-{} of {}\r", start + 1, end, total);
+        }
         if view.priority_edit {
             println!("\r\nSet importance 0-5; Esc cancels.");
         } else if view.editing {

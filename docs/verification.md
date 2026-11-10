@@ -97,3 +97,8 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 ## Local tmux decision evidence (2026-11-10)
 
 On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python3 tests/tmux_smoke.py` started an isolated service and tmux server using a clean configuration and a 100×30 pane. The captured pane showed the recommended answer first and selected; the test checked no answer existed before Enter, confirmed it, retrieved the expected structured answer, and exited the client with q. This is an automated local tmux demonstration, not a supported terminal matrix, a physical terminal or representative operator validation; narrow dimensions and broader navigation remain unverified.
+
+
+## Local choice viewport evidence (2026-11-10)
+
+`python3 tests/tmux_smoke.py` passed with tmux 3.7c on local Linux. After a recommended decision, it submitted a request with twelve short options, resized the pane from 100×30 to 100×15, observed a redraw showing the first five choices, navigated to the visible thirteenth custom choice, and submitted and retrieved its exact text. `python3 tests/terminal_pty.py` also passed the existing local terminal workflows. This is not proof of usable layout for long wrapped content, smaller dimensions, other terminals, accessibility, or representative operators.

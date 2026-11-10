@@ -72,6 +72,32 @@ def main() -> None:
                 "tmux decision",
             )
             wait_for_screen("No active requests")
+            many_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-many-options",
+                        "agent": "tmux-agent",
+                        "question": "Choose from many",
+                        "options": [f"Option {number}" for number in range(12)],
+                    },
+                }
+            )["id"]
+            wait_for_screen("Choose from many")
+            tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
+            wait_for_screen("Choices 1-5 of 13")
+            tmux("send-keys", "-t", "aviary:", *(["j"] * 13))
+            screen = wait_for_screen("> 13. Custom answer")
+            assert "Choices" in screen, screen
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            wait_for_screen("Custom answer:")
+            tmux("send-keys", "-t", "aviary:", "custom text", "Enter")
+            service.wait_for(
+                lambda: service.call({"op": "get", "id": many_id})["answer"]
+                == {"type": "custom", "value": "custom text"},
+                "tmux custom answer",
+            )
+            wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -82,7 +108,9 @@ def main() -> None:
                 raise AssertionError("tmux client did not exit")
         finally:
             tmux("kill-server", check=False)
-        print("tmux: recommendation displayed and confirmed; client exited")
+        print(
+            "tmux: recommendation and long-choice custom answer confirmed; client exited"
+        )
 
 
 if __name__ == "__main__":
