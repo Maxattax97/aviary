@@ -109,6 +109,64 @@ fn version_two_retrieves_near_limit_decision_and_answer() -> TestResult<()> {
 }
 
 #[test]
+fn near_limit_reply_and_inherited_context_survive_restart() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-large-reply-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel", "channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let context = "c".repeat(1_048_000);
+    let body = "b".repeat(1_048_000);
+    let request = json!({"op":"send_message", "message":{"identity":"large-request", "channel":"team", "sender":"a", "target":{"kind":"participant","name":"b"}, "body":"respond", "expects_reply":true, "context":context}});
+    assert!(
+        serde_json::to_vec(&json!({"version":1,"correlation":"test","operation":request}))?.len()
+            < 1_048_576
+    );
+    let id = call(&address, request)?["id"]
+        .as_i64()
+        .ok_or("missing request ID")?;
+    let reply = json!({"op":"reply_message", "reply":{"identity":"large-reply", "request_id":id, "sender":"b", "body":body}});
+    assert!(
+        serde_json::to_vec(&json!({"version":1,"correlation":"test","operation":reply}))?.len()
+            < 1_048_576
+    );
+    let response_id = call(&address, reply.clone())?["id"]
+        .as_i64()
+        .ok_or("missing response ID")?;
+    let get = json!({"op":"get_message_response", "id":id});
+    assert_eq!(call(&address, get.clone())?["error"], "response too large");
+    let response = call_version(&address, get.clone(), 2)?;
+    assert_eq!(response["response"]["id"], response_id);
+    assert_eq!(response["response"]["message"]["context"], context);
+    assert_eq!(response["response"]["message"]["body"], body);
+    let inbox = call_version(&address, json!({"op":"inbox_page", "participant":"a"}), 2)?;
+    assert_eq!(inbox["messages"][0]["message"]["body"], body);
+    let history = call_version(
+        &address,
+        json!({"op":"history_page", "kind":"message", "id":id, "section":"messages", "offset":1}),
+        2,
+    )?;
+    assert_eq!(history["messages"][0]["id"], response_id);
+    assert_eq!(history["messages"][0]["message"]["context"], context);
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(call(&address, reply)?["id"], response_id);
+    let response = call_version(&address, get, 2)?;
+    assert_eq!(response["response"]["message"]["body"], body);
+    assert_eq!(response["response"]["message"]["context"], context);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
+
+#[test]
 fn durable_retry_and_single_answer() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();

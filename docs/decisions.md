@@ -195,3 +195,5 @@ The terminal retains one decision response page and loads adjacent pages with h/
 ## Version-2 response envelope
 
 Version 2 retains the 1 MiB request frame limit and permits a 3 MiB response frame. The service also accepts version 1 and limits its responses to 1 MiB. The CLI and terminal use version 2, so upgrade the service before those clients; a version-2 client cannot use an older version-1-only service. This permits a history decision to include both a near-limit request and a near-limit answer, and leaves room for response metadata. Page collection still targets 900 KiB except for a larger individual record. Legacy records imported from outside these request limits can still exceed a response frame. Frame limits and high-water marks do not bound total process memory.
+
+When an oversized record is encountered as lookahead after valid page entries, return those entries and their next offset first. Fetching the oversized record itself still returns an error; the earlier records remain accessible, but the offset API cannot skip the offending record automatically.

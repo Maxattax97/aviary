@@ -35,11 +35,11 @@ impl PageBuilder {
         const PAGE_BYTES: usize = 900 * 1024;
         const MAX_ITEM_BYTES: usize = (crate::protocol::MAX_RESPONSE_BYTES as usize) - 2048;
         let size = serde_json::to_vec(&item)?.len() + 1;
-        if size > MAX_ITEM_BYTES {
-            return Err(AppError::InvalidFrame);
-        }
         if !self.items.is_empty() && self.bytes.saturating_add(size) > PAGE_BYTES {
             return Ok(false);
+        }
+        if size > MAX_ITEM_BYTES {
+            return Err(AppError::InvalidFrame);
         }
         self.bytes += size;
         self.items.push(item);
@@ -731,6 +731,22 @@ impl Storage {
 mod tests {
     use super::*;
     use crate::protocol::Operation;
+
+    #[test]
+    fn oversized_lookahead_does_not_hide_previous_page() -> Result<()> {
+        let mut page = PageBuilder::new(0);
+        assert!(page.push(json!({"id": 1}))?);
+        let oversized = json!({"data": "x".repeat(crate::protocol::MAX_RESPONSE_BYTES as usize)});
+        assert!(!page.push(oversized.clone())?);
+        let result = page.finish("items", true);
+        assert_eq!(result["items"][0]["id"], 1);
+        assert_eq!(result["next_offset"], 1);
+        assert!(matches!(
+            PageBuilder::new(1).push(oversized),
+            Err(AppError::InvalidFrame)
+        ));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn opens_existing_prototype_database(
