@@ -172,3 +172,8 @@ After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran
 ## Local clean-directory startup and interface closure (2026-11-10)
 
 `python3 tests/startup_smoke.py` passed on local Linux. Using the already-built executable, an empty temporary working directory and a minimal HOME/PATH/TERM environment, the test started one service with an explicit loopback port and relative database path. It opened and closed the terminal, exchanged a direct request and reply while the terminal was closed, reopened it to view the reply and context, and retrieved both linked records through history. The service remained running until the test stopped it. This is not an installation on a clean OS, a different supported platform, a remote machine, or representative operator validation.
+
+
+## Local malformed multipart evidence (2026-11-10)
+
+`cargo test --locked` passed a local case sending a valid-looking submission followed by 96 unexpected 65,536-byte frames on one DEALER message. The service discarded it, accepted the next valid request on that connection, and did not store the malformed submission. A second local test confirmed that the CLI rejected a multipart response from a test ROUTER. The terminal, CLI-reference and clean-directory smoke tests also passed. This does not measure peak memory, bound libzmq buffering or drain time, establish fairness under saturation, or test remote behavior.

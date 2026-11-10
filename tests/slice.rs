@@ -1472,3 +1472,63 @@ fn streamed_pages_match_unpaged_order_and_offsets() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn malformed_multipart_is_discarded_without_losing_next_request() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-multipart-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let context = zmq::Context::new();
+    let socket = dealer(&context, &address)?;
+    let unexpected = json!({"version":1,"correlation":"malformed","operation":{"op":"submit","request":{"identity":"must-not-commit","agent":"a","question":"Never accept","options":[]}}}).to_string().into_bytes();
+    let mut frames = vec![unexpected];
+    frames.extend((0..96).map(|_| vec![b'x'; 65_536]));
+    socket.send_multipart(frames, 0)?;
+    send_request(&socket, "valid", json!({"op":"list"}))?;
+    let response = receive_reply(&socket)?;
+    assert_eq!(response.get("correlation"), Some(&json!("valid")));
+    assert_eq!(response.pointer("/result/requests"), Some(&json!([])));
+    let request =
+        json!({"identity":"after-malformed","agent":"a","question":"Continue?","options":[]});
+    assert!(call(&address, json!({"op":"submit","request":request}))?
+        .get("id")
+        .is_some());
+    drop(socket);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
+
+#[test]
+fn client_rejects_multipart_response() -> TestResult<()> {
+    let context = zmq::Context::new();
+    let socket = context.socket(zmq::ROUTER)?;
+    socket.set_linger(0)?;
+    socket.set_rcvtimeo(5_000)?;
+    socket.bind("tcp://127.0.0.1:*")?;
+    let endpoint = socket
+        .get_last_endpoint()?
+        .map_err(|_| "non-UTF-8 endpoint")?;
+    let address = endpoint
+        .strip_prefix("tcp://")
+        .ok_or("unexpected endpoint")?;
+    let child = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["call", address, r#"{"op":"list"}"#])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let request = socket.recv_multipart(0)?;
+    let identity = request.first().ok_or("missing identity")?;
+    let response = json!({"version":1,"correlation":"1","result":{"requests":[]}}).to_string();
+    socket.send_multipart([identity.as_slice(), response.as_bytes(), b"unexpected"], 0)?;
+    let output = child.wait_with_output()?;
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("message too large or incomplete"));
+    Ok(())
+}

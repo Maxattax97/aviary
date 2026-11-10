@@ -155,3 +155,8 @@ The terminal can read the non-destructive inbox for the `operator` routing label
 ## Operator inbox replies
 
 For a direct message addressed to `operator` with `expects_reply`, r opens a reply draft tied to that message ID. The operator provides a deployment-unique retry identity and body, reviews the intended recipient and request ID, and explicitly confirms. Identical retries return the same reply ID; a different second reply is rejected by the service. A failed or uncertain send retains the draft and identity until the interface is closed or the operator cancels. The inbox does not indicate whether a request was already answered. Labels remain unauthenticated.
+
+
+## Malformed multipart handling
+
+The service expects exactly a ROUTER identity and one payload frame. It discards extra frames individually before accepting another message instead of collecting the multipart payload in an application vector; shutdown can interrupt draining. The CLI rejects a response with extra frames. This limits application-side copying for malformed envelopes, not aggregate libzmq buffering, peer count, total process memory, CPU consumed draining a multipart message, or fairness under saturation. Trusted-network deployment and the existing unknown-outcome rules still apply.

@@ -83,14 +83,11 @@ pub async fn call_with_timeout(
         socket.set_immediate(true)?;
         socket.connect(&endpoint(&address))?;
         socket.send(request, 0).map_err(network_error)?;
-        let frames = socket.recv_multipart(0).map_err(network_error)?;
-        let [frame] = frames.as_slice() else {
-            return Err(AppError::InvalidFrame);
-        };
-        if frame.len() > MAX_MESSAGE_BYTES as usize {
+        let frame = socket.recv_bytes(0).map_err(network_error)?;
+        if socket.get_rcvmore()? || frame.len() > MAX_MESSAGE_BYTES as usize {
             return Err(AppError::InvalidFrame);
         }
-        let response: ResponseEnvelope = serde_json::from_slice(frame)?;
+        let response: ResponseEnvelope = serde_json::from_slice(&frame)?;
         if response.version != VERSION || response.correlation != "1" {
             return Err(AppError::InvalidFrame);
         }
@@ -101,6 +98,27 @@ pub async fn call_with_timeout(
     })
     .await
     .map_err(|error| AppError::Task(error.to_string()))?
+}
+
+// ROUTER messages must contain a routing identity and exactly one payload.
+// Drain malformed extra frames one at a time rather than collecting them all
+// into an application vector. libzmq may still buffer the multipart message.
+fn receive_router(
+    socket: &zmq::Socket,
+    stopping: &AtomicBool,
+) -> std::result::Result<Option<(Vec<u8>, Vec<u8>)>, zmq::Error> {
+    let identity = socket.recv_bytes(0)?;
+    if !socket.get_rcvmore()? {
+        return Ok(None);
+    }
+    let payload = socket.recv_bytes(0)?;
+    if !socket.get_rcvmore()? {
+        return Ok(Some((identity, payload)));
+    }
+    while socket.get_rcvmore()? && !stopping.load(Ordering::Acquire) {
+        let _ = socket.recv_bytes(0)?;
+    }
+    Ok(None)
 }
 
 pub async fn serve(database_path: &str, address: &str) -> Result<()> {
@@ -121,22 +139,22 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
         socket.bind(&endpoint(&address))?;
         info!(%address, "service listening");
         while !worker_stopping.load(Ordering::Acquire) {
-            let frames = match socket.recv_multipart(0) {
-                Ok(frames) => frames,
+            let (identity, frame) = match receive_router(&socket, &worker_stopping) {
+                Ok(Some(frames)) => frames,
+                Ok(None) => {
+                    debug!("discarding invalid ZeroMQ envelope");
+                    continue;
+                }
                 Err(zmq::Error::EAGAIN | zmq::Error::EINTR) => continue,
                 Err(error) => return Err(error.into()),
             };
             if worker_stopping.load(Ordering::Acquire) {
                 break;
             }
-            let [identity, frame] = frames.as_slice() else {
-                debug!("discarding invalid ZeroMQ envelope");
-                continue;
-            };
             if frame.len() > MAX_MESSAGE_BYTES as usize {
                 continue;
             }
-            let request: RequestEnvelope = match serde_json::from_slice(frame) {
+            let request: RequestEnvelope = match serde_json::from_slice(&frame) {
                 Ok(request) => request,
                 Err(_) => continue,
             };
