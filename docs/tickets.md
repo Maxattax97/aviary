@@ -10,6 +10,13 @@ These are local implementation tickets for the approved initial direction. Requi
 | SL-04 | Wait for and retrieve a correlated structured answer after requester restart. | SYS-011, 015, 016; T-011, 015, 016 | Prototype implemented; end-to-end acceptance pending |
 | SL-05 | Run the full slice on two separately networked machines, including service and requester restarts, retry, and interface closure; capture evidence. | SYS-015, 016, 025, 026, 028, 030, 043, 044; T-015, 016, 025, 026, 028, 030, 043, 044 | Not run; requires second machine and trusted test network |
 
+## Transport migration
+
+| Ticket | Scope and acceptance | Requirements / planned tests | Dependencies / state |
+|---|---|---|---|
+| ZM-01 | Replace the prototype raw-TCP protocol with ZeroMQ client/service request-reply using the architecture's ROUTER/DEALER design; select a Tokio-compatible Rust integration, define a versioned application envelope and correlation, preserve documented CLI behavior and existing persisted records. Document the endpoint and coordinated client/service upgrade. | SYS-011, SYS-015, SYS-016, SYS-023, SYS-025, SYS-026, SYS-036, SYS-041–044 / T-011, T-015, T-016, T-023, T-025, T-026, T-036, T-041–044 | Planned; raw-TCP prototype remains in use. Define timeouts, framing, size and bounded queue policies before implementation. |
+| ZM-02 | Verify concurrent clients and correlation, unavailable service, disconnect and reconnect, lost reply after commit and retry, conflicting retry, queue/backpressure and shutdown behavior; rerun crash/restart, terminal and trusted two-machine scenarios using ZeroMQ. Confirm the default listener is loopback-only. | SYS-015, SYS-016, SYS-025, SYS-026, SYS-028, SYS-030, SYS-033, SYS-036, SYS-041–044 / T-015, T-016, T-025, T-026, T-028, T-030, T-033, T-036, T-041–044 | Planned; depends on ZM-01; full channel/reconnect acceptance also depends on V1-07, V1-08 and V1-21. |
+
 ## V1 delivery backlog
 
 These outlines cover the remaining V1 obligations, including work partially represented by SL-01–05. They are local planning records, not external issues. Each acceptance statement refers to the full corresponding criterion in [requirements](requirements.md); a ticket is not complete merely because its slice counterpart works. Dependencies indicate useful ordering, not a claim that unresolved design choices have been approved. Resolve the relevant questions in [decisions](decisions.md) before implementing dependent behavior.

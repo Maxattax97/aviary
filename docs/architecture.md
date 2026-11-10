@@ -15,9 +15,9 @@ flowchart LR
     H[Human operator] --> T[Terminal interface]
     A[Agent or integration] --> C[CLI and portable skill]
     B[Agent on another trusted machine] --> D[CLI and portable skill]
-    T -->|communication interface| S[Central communication service]
-    C -->|communication interface| S
-    D -->|trusted local network| S
+    T -->|ZeroMQ request and reply| S[Central communication service]
+    C -->|ZeroMQ request and reply| S
+    D -->|ZeroMQ over trusted TCP network| S
     S --> P[(Durable local state)]
 ```
 
@@ -35,7 +35,15 @@ One central service simplifies shared history, correlation and deduplication but
 | Agent CLI and skill | Provide a portable, documented way to submit, retrieve and wait for communications using structured results. | Caller retains the identifiers needed for retry and later retrieval. No mandatory MCP, runtime or model. |
 | Agent and operator | Supply request content, context and routing labels; agents act on responses, and the operator controls importance and makes decisions. | Agent suggestions do not make decisions for the operator. Names are routing labels, not authenticated identities. |
 
-The precise wire schema, versioning, message limits, delivery acknowledgments, client compatibility and service lifecycle require further design. The current prototype protocol is described in the [README](../README.md); it is not a stable V1 contract.
+The selected communication transport is ZeroMQ over TCP. The precise application schema, versioning, message limits, delivery acknowledgments, client compatibility and service lifecycle require further design. The current prototype protocol is described in the [README](../README.md); it is not a stable V1 contract.
+
+## ZeroMQ communication design
+
+The target architecture uses ZeroMQ between each CLI or terminal client and the central service. Use a service-side ROUTER socket and client-side DEALER sockets for request/reply, allowing multiple clients and multiple outstanding operations without coupling service processing to strict alternating request/reply. This socket arrangement is the initial design to validate during implementation; the Rust ZeroMQ implementation, Tokio integration and exact multipart envelope remain open. A client request carries an application correlation identifier; the service replies to the originating connection with that identifier and an explicit success or error. A ZeroMQ routing identity is transient transport metadata, not an authenticated participant or a durable submission identity.
+
+Use the operator-selected interface as the ZeroMQ TCP bind endpoint, with IPv4 loopback as the default. Clients connect to that endpoint; they do not need a separate ZeroMQ broker. Continue to expose a documented CLI with machine-readable output so integrations need not speak ZeroMQ directly. Version the application protocol independently of the transport; define framing, size limits, timeouts and compatibility before declaring it stable. Switching transports breaks direct compatibility with the existing raw-TCP prototype; coordinated client and service updates are required. The persisted database and the CLI's documented operations should remain compatible unless a migration is explicitly specified and tested.
+
+ZeroMQ provides asynchronous messaging, routing and reconnection mechanisms, not Aviary's durable acceptance or delivery guarantees. The service must persist before returning an application-level acceptance response. A successful ZeroMQ send or queue insertion is not proof of service acceptance. On a timeout or disconnect, a caller must treat the outcome as unknown and retry submissions using the same stable identity; the service returns the original identity for identical content and rejects conflicts. Queue limits, backpressure, unavailable peers and shutdown behavior require explicit bounded policies and tests; a transport reconnect alone does not establish delivery. Keep database-backed retrieval as the recovery path. If notifications are introduced, use them only as hints and reconcile from durable state: subscribers can miss messages or disconnect. See the [ZeroMQ socket API](https://zeromq.org/socket-api/) and [reliability guide](https://zguide.zeromq.org/docs/chapter4/).
 
 ## Communication and state
 
@@ -54,15 +62,15 @@ The operator queue is a view of actionable work, ordered by importance with oper
 
 ## Deployment, trust and failure boundaries
 
-By default the listener binds to localhost. An operator can explicitly select a network interface for agents on a trusted local cluster. V1 has no application authentication or authorization: **any process able to reach the listener is trusted**, including local processes. It can impersonate routing labels or access work through the available interface. The first-slice protocol also has no transport encryption. Do not expose this listener to an untrusted network. Future authentication, per-communication authorization and multi-user isolation require a separate security design and threat model; they are not properties of channel membership.
+By default the listener binds to localhost. An operator can explicitly select a network interface for agents on a trusted local cluster. V1 has no application authentication or authorization: **any process able to reach the listener is trusted**, including local processes. It can impersonate routing labels or access work through the available interface. The intended V1 ZeroMQ deployment does not add application authentication or transport encryption; the current first-slice protocol is likewise unencrypted. Do not expose this listener to an untrusted network. Future authentication, per-communication authorization and multi-user isolation require a separate security design and threat model; they are not properties of channel membership.
 
 Accepted means positively acknowledged after the durable commit. The approved failure boundary covers service or OS crash and restart with the storage device intact, subject to a functioning storage stack; loss of the device and backup recovery are excluded. Network interruption can prevent submission or response retrieval until connectivity returns. A client must retain its retry identity or request identifier as appropriate; the system cannot recover an identifier that a caller has lost. Capacity limits, filesystem assumptions, timeouts and operational alerting need further decisions. Verification must distinguish process termination from an OS crash, power loss or device failure.
 
 ## First slice and evidence
 
-The current Rust prototype uses Tokio, newline-delimited JSON over TCP, and SQLx with SQLite WAL and `synchronous=FULL`. It uses typed protocol operations, typed errors and tracing for service logs. It binds `127.0.0.1:7432` by default and supports an explicit bind address. A single service executable handles submit, list, answer and get; separate CLI and terminal invocations connect to it. The terminal polls, displays the oldest pending request and confirms its recommended option with Enter. A requester can poll for the correlated answer. The prototype requires at least one option and a recommendation, and it does not yet implement channels, general message delivery, custom answers or choosing another answer in the interface. Its 1 MiB protocol message limit and 500 ms polling interval are prototype choices, not approved V1 limits or latency guarantees.
+The current Rust prototype **has not yet been migrated to ZeroMQ**. It uses Tokio, newline-delimited JSON over raw TCP, and SQLx with SQLite WAL and `synchronous=FULL`. It uses typed protocol operations, typed errors and tracing for service logs. It binds `127.0.0.1:7432` by default and supports an explicit bind address. A single service executable handles submit, list, answer and get; separate CLI and terminal invocations connect to it. The terminal polls, displays the oldest pending request and confirms its recommended option with Enter. A requester can poll for the correlated answer. The prototype requires at least one option and a recommendation, and it does not yet implement channels, general message delivery, custom answers or choosing another answer in the interface. Its 1 MiB protocol message limit and 500 ms polling interval are prototype choices, not approved V1 limits or latency guarantees.
 
-The local integration test exercises acknowledged submission, service process kill/restart, identical and conflicting retries, one answer followed by rejection of a second, concurrent identical submissions and competing answers, and retrieval after restart. This is partial evidence, not full acceptance of the corresponding requirements. An interactive terminal check, two-machine test, full concurrent-answer acceptance, OS-crash evidence and representative operator validation remain outstanding. See [tickets](tickets.md) and [verification](verification.md) for the work and test plan.
+The local integration test exercises acknowledged submission, service process kill/restart, identical and conflicting retries, one answer followed by rejection of a second, concurrent identical submissions and competing answers, and retrieval after restart. This is partial evidence, not full acceptance of the corresponding requirements. The ZeroMQ migration and its transport failure tests, an interactive terminal check, two-machine test, full concurrent-answer acceptance, OS-crash evidence and representative operator validation remain outstanding. See [tickets](tickets.md) and [verification](verification.md) for the work and test plan.
 
 ## Architecture-to-verification map
 
@@ -80,4 +88,4 @@ The following map identifies principal architectural responsibilities and planne
 
 ## Decisions needed before completing V1
 
-The authoritative open-question list is in [decisions](decisions.md). In particular, the channel and delivery model, attention and deferral policy, response races and retry semantics, operational limits, protocol compatibility, lifecycle, and platform/terminal support matrix need decisions and verification before the relevant tickets can be completed. Review changes against the requirements, update the decisions and this architecture together, and retain explicit evidence and limitations in the verification records.
+The authoritative open-question list is in [decisions](decisions.md). In particular, the channel and delivery model, attention and deferral policy, response races and retry semantics, ZeroMQ implementation and integration details, operational limits, protocol compatibility, lifecycle, and platform/terminal support matrix need decisions and verification before the relevant tickets can be completed. Review changes against the requirements, update the decisions and this architecture together, and retain explicit evidence and limitations in the verification records.
