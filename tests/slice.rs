@@ -1209,3 +1209,137 @@ fn signal_shutdown_waits_for_in_flight_write() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn message_and_reply_lost_ack_retry_after_restart() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-message-lost-ack-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let context = zmq::Context::new();
+    let socket = dealer(&context, &address)?;
+    let message = json!({"identity":"message-lost-ack","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"Question","expects_reply":true,"activity":"work"});
+    send_request(
+        &socket,
+        "message",
+        json!({"op":"send_message","message":message}),
+    )?;
+    let mut message_id = None;
+    for _ in 0..100 {
+        let inbox = call(&address, json!({"op":"inbox","participant":"b"}))?;
+        message_id = inbox.pointer("/messages/0/id").and_then(Value::as_i64);
+        if message_id.is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let message_id = message_id.ok_or("message did not commit")?;
+    // Discard the unread application reply and abruptly stop the service.
+    drop(socket);
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"send_message","message":message}))?.get("id"),
+        Some(&json!(message_id))
+    );
+    let mut changed_message = message.clone();
+    changed_message["body"] = json!("Changed");
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"send_message","message":changed_message})
+        )?
+        .get("error"),
+        Some(&json!("identity conflict"))
+    );
+    let socket = dealer(&context, &address)?;
+    let reply = json!({"identity":"reply-lost-ack","request_id":message_id,"sender":"b","body":"Original response"});
+    send_request(
+        &socket,
+        "reply",
+        json!({"op":"reply_message","reply":reply}),
+    )?;
+    let mut response = None;
+    for _ in 0..100 {
+        let result = call(
+            &address,
+            json!({"op":"get_message_response","id":message_id}),
+        )?;
+        if !result.get("response").unwrap_or(&Value::Null).is_null() {
+            response = Some(result);
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let response = response.ok_or("response did not commit")?;
+    let reply_id = response
+        .pointer("/response/id")
+        .and_then(Value::as_i64)
+        .ok_or("missing response id")?;
+    drop(socket);
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"get_message_response","id":message_id})
+        )?,
+        response
+    );
+    assert_eq!(
+        call(&address, json!({"op":"reply_message","reply":reply}))?.get("id"),
+        Some(&json!(reply_id))
+    );
+    let mut changed_reply = reply.clone();
+    changed_reply["body"] = json!("Changed response");
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"reply_message","reply":changed_reply})
+        )?
+        .get("error"),
+        Some(&json!("identity conflict"))
+    );
+    let another_reply = json!({"identity":"different-reply","request_id":message_id,"sender":"b","body":"Another response"});
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"reply_message","reply":another_reply})
+        )?
+        .get("error"),
+        Some(&json!("request already answered"))
+    );
+    for (participant, expected_id, expected_body) in [
+        ("a", reply_id, "Original response"),
+        ("b", message_id, "Question"),
+    ] {
+        let inbox = call(&address, json!({"op":"inbox","participant":participant}))?;
+        let messages = inbox
+            .get("messages")
+            .and_then(Value::as_array)
+            .ok_or("missing inbox")?;
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages.first().and_then(|item| item.get("id")),
+            Some(&json!(expected_id))
+        );
+        assert_eq!(
+            messages
+                .first()
+                .and_then(|item| item.pointer("/message/body")),
+            Some(&json!(expected_body))
+        );
+    }
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

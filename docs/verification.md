@@ -137,3 +137,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local pending-action evidence (2026-11-10)
 
 `python3 tests/terminal_reconnect.py` passed on Linux over loopback. With the service stopped, it submitted a custom draft, observed the pending/unknown indicator, sent Enter again while the operation was pending, and observed the unconfirmed result. After restart no answer was present until an explicit new confirmation. The pseudo-terminal and tmux smoke suites also passed. This does not simulate an action committed with its reply lost, prove cancellation on exit, or cover all event-order races and remote failures.
+
+
+## Local message and reply lost-ack recovery (2026-11-10)
+
+`cargo test --locked --test slice message_and_reply_lost_ack_retry_after_restart` passed on Linux over loopback. For a direct request and its reply, the test independently observed the committed record, discarded the unread application response, killed and restarted the service, and retried the same identity and content. Each retry returned the original ID; changed-content retries conflicted, a different second reply was rejected, and each recipient inbox retained one unchanged record. This demonstrates two local process kills and unread replies, not arbitrary network loss, a service acknowledgment observed before a machine crash, OS-crash durability, or remote-machine behavior.
