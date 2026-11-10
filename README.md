@@ -78,6 +78,8 @@ In the terminal, `H` opens history for the current decision or inbox message. `g
 
 The [CLI and operation reference](docs/cli.md) documents every current operation, result shape and an executable workflow. The [portable agent skill](skills/aviary/SKILL.md) contains CLI examples for decisions and messaging and can be copied to a compatible agent or supplied as instructions. It does not require MCP.
 
+For larger operations, use `aviary call ADDRESS - < operation.json` to read the JSON from standard input instead of passing it as a command-line argument. The input and wire-frame limits are described in the CLI reference.
+
 ## Reliability and interface limits
 
 The service uses ZeroMQ ROUTER/DEALER over TCP and SQLite WAL with `synchronous=FULL`. A successful application response follows the durable commit. The service does not wait for a disconnected or full reply queue; a reply may be lost even after commit. On a timeout or disconnect, acceptance is unknown: retry the **same content with the same identity**. An identical retry returns the original ID; conflicting content or a different submission type under that identity is rejected. Keep the ID for later retrieval. The intended durability boundary covers service or OS crash with intact storage and a functioning storage stack; storage loss and backup recovery are outside it. Local process-kill tests do not establish OS-crash or power-loss behavior.
@@ -97,6 +99,7 @@ python3 tests/storage_limit.py  # Linux per-process file-limit fault fixture
 python3 tests/default_listener.py  # Linux procfs; skips if port 7432 is occupied
 python3 tests/skill_smoke.py
 python3 tests/cli_reference.py
+python3 tests/cli_stdin.py
 python3 tests/zeromq_interop.py  # requires system libzmq
 python3 tests/two_machine_smoke.py  # local rehearsal only
 python3 tests/tmux_smoke.py  # requires tmux
