@@ -77,10 +77,15 @@ def main() -> None:
             terminal.expect("Service unavailable", timeout=6)
             assert terminal.process.poll() is None
             terminal.send("\r")
+            terminal.expect("Sending; outcome unknown", timeout=3)
+            terminal.send(
+                "\r"
+            )  # A repeated confirmation while busy must not queue a retry.
             terminal.expect("Not confirmed", timeout=16)
             assert terminal.process.poll() is None
             restart(service)
             terminal.expect("draft survives", timeout=8)
+            time.sleep(0.5)
             assert service.call({"op": "get", "id": request_id})["answer"] is None
             terminal.send("\r")
             service.wait_for(

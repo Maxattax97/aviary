@@ -149,6 +149,7 @@ struct View {
     composer: Option<Composer>,
     status: Option<String>,
     poll_error: Option<String>,
+    busy: bool,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     notice_current: usize,
@@ -170,6 +171,7 @@ impl View {
             composer: None,
             status: None,
             poll_error: None,
+            busy: false,
             notices: Vec::new(),
             notice_view: false,
             notice_current: 0,
@@ -561,10 +563,11 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut view = View::new();
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
+    let mut submission: Option<tokio::task::JoinHandle<(bool, Result<serde_json::Value>)>> = None;
     display(&view)?;
     loop {
         tokio::select! {
-            _ = interval.tick(), if view.composer.is_none() && refresh.is_none() => {
+            _ = interval.tick(), if view.composer.is_none() && refresh.is_none() && submission.is_none() => {
                 let address = address.to_owned();
                 let deferred = view.deferred_view;
                 let current_generation = generation;
@@ -587,7 +590,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let (started, deferred, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
-                if started != generation || deferred != view.deferred_view || view.composer.is_some() {
+                if started != generation || deferred != view.deferred_view || view.composer.is_some() || view.busy {
                     continue;
                 }
                 match refreshed {
@@ -606,6 +609,29 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 }
             }
+            result = async {
+                match submission.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }
+            }, if submission.is_some() => {
+                submission = None;
+                view.busy = false;
+                let (is_instruction, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                if is_instruction {
+                    match result {
+                        Ok(response) => { view.composer = None; view.status = Some(format!("Instruction accepted: {response}")); }
+                        Err(error) => { if let Some(composer) = &mut view.composer { composer.error = Some(error.to_string()); } }
+                    }
+                } else {
+                    match result {
+                        Ok(_) => { view.status = None; view.update(Vec::new()); view.update_notices(Vec::new()); }
+                        Err(error) => { view.status = Some(format!("Not confirmed: {error}; check state before retry")); }
+                    }
+                }
+                display(&view)?;
+                interval.reset_immediately();
+            }
             key = receiver.recv() => {
                 let Some(event) = key else { return Ok(()); };
                 let key = match event? {
@@ -613,6 +639,12 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Event::Resize(_, _) => { display(&view)?; continue; },
                     _ => continue,
                 };
+                if view.busy {
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        return Ok(());
+                    }
+                    continue;
+                }
                 match view.key(key) {
                     Action::None => {},
                     Action::Redraw => display(&view)?,
@@ -626,26 +658,23 @@ pub async fn terminal(address: &str) -> Result<()> {
                     },
                     Action::SendInstruction(message) => {
                         generation = generation.wrapping_add(1);
-                        match network::call(address, &Operation::SendMessage { message }).await {
-                            Ok(response) => { view.composer = None; view.status = Some(format!("Instruction accepted: {response}")); interval.reset_immediately(); }
-                            Err(error) => { if let Some(composer) = &mut view.composer { composer.error = Some(error.to_string()); } }
-                        }
+                        if let Some(composer) = &mut view.composer { composer.error = None; }
+                        view.busy = true;
                         display(&view)?;
+                        let address = address.to_owned();
+                        submission = Some(tokio::spawn(async move {
+                            (true, network::call(&address, &Operation::SendMessage { message }).await)
+                        }));
                     },
                     Action::Submit(operation) => {
                         generation = generation.wrapping_add(1);
-                        match network::call(address, &operation).await {
-                            Ok(_) => {
-                                view.status = None;
-                                view.update(Vec::new());
-                                view.update_notices(Vec::new());
-                            }
-                            Err(error) => {
-                                view.status = Some(format!("Not confirmed: {error}; check state before retry"));
-                            }
-                        }
+                        view.status = None;
+                        view.busy = true;
                         display(&view)?;
-                        interval.reset_immediately();
+                        let address = address.to_owned();
+                        submission = Some(tokio::spawn(async move {
+                            (false, network::call(&address, &operation).await)
+                        }));
                     }
                 }
             }
@@ -778,6 +807,9 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
 }
 fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
+    if view.busy {
+        println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
+    }
     if let Some(composer) = &view.composer {
         let labels = [
             "Retry identity (unique deployment-wide)",

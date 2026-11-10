@@ -132,3 +132,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local stalled-poll responsiveness (2026-11-10)
 
 `python3 tests/terminal_reconnect.py` passed on Linux. A local TCP listener accepted a terminal refresh connection but did not perform the ZeroMQ handshake; while that connection remained open, the test sent m and observed the instruction composer within 750 ms. The test also passed the service-interruption and live-arrival cases. The existing pseudo-terminal and tmux smoke suites and `cargo test --locked` passed. This is not a general responsiveness or latency guarantee: submission calls can block the input loop, and stale-result races and remote partitions need broader testing.
+
+
+## Local pending-action evidence (2026-11-10)
+
+`python3 tests/terminal_reconnect.py` passed on Linux over loopback. With the service stopped, it submitted a custom draft, observed the pending/unknown indicator, sent Enter again while the operation was pending, and observed the unconfirmed result. After restart no answer was present until an explicit new confirmation. The pseudo-terminal and tmux smoke suites also passed. This does not simulate an action committed with its reply lost, prove cancellation on exit, or cover all event-order races and remote failures.
