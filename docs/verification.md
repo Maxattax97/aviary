@@ -62,3 +62,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local transport failure evidence (2026-11-09)
 
 `cargo test --locked --test slice` passed an unavailable-service case: a TCP port held without a ZeroMQ service caused the CLI call to exit nonzero with `operation timed out` after the configured interval. On Linux, a separate test connected a DEALER, stopped the test service process, observed `EAGAIN` while filling the DEALER's one-message local send high-water mark, then closed the zero-linger socket and killed the stopped service in under five seconds. This checks local backpressure and forced termination only. It does not establish graceful service shutdown, service-side saturation fairness, bounded total memory, lossless delivery, network partition behavior, or remote-machine behavior.
+
+
+## Local portable skill evidence (2026-11-09)
+
+The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, `python3 tests/skill_smoke.py` executed the two shell blocks from that file against a local service, parsed decision and message results, retrieved each, and checked a nonzero missing-request error without MCP. This verifies the documented examples in the local environment; it does not establish behavior for every agent framework, platform, or schema version.

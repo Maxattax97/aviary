@@ -80,3 +80,8 @@ The terminal uses the routing label `operator`, which must be a member of the se
 ## Request history
 
 A decision or channel message can be the history root. Related decisions, messages and completion outcomes share an explicit nonempty activity reference; direct agent request/response links are also included even when no activity is supplied. A single database read transaction supplies a consistent current snapshot. Decisions, messages and outcomes are returned as separate arrays ordered by their own record IDs; this is not a cross-kind chronological timeline. Answer values and dismissed notices remain visible. Records without a shared activity are not inferred as related. Activity references are caller-supplied labels, not access controls. Pagination and a cross-session timeline remain open.
+
+
+## Agent skill distribution and compatibility
+
+The portable on-demand skill is maintained in `skills/aviary/` and can be copied or supplied directly to an agent without MCP. Its examples use the installed Aviary CLI and Python 3 JSON serialization. The version-1 transport envelope and CLI operation schemas are provisional; deploy service, CLI and skill as a matched version until a stable compatibility policy is established. A caller must preserve submission identity and content for unknown outcomes.
