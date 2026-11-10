@@ -211,6 +211,18 @@ pub struct CompletionNotice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InboxItem {
+    pub id: i64,
+    pub message: Message,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InboxPage {
+    pub messages: Vec<InboxItem>,
+    pub next_offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NoticeItem {
     pub id: i64,
     pub notice: CompletionNotice,

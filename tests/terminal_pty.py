@@ -190,6 +190,74 @@ def exercise_instructions(service: Service) -> None:
     print("Direct and group operator instructions passed")
 
 
+def exercise_operator_inbox(service: Service) -> None:
+    service.call(
+        {
+            "op": "create_channel",
+            "channel": {"name": "inbox-ops", "members": ["operator", "worker"]},
+        }
+    )
+    with Terminal(service) as terminal:
+        terminal.expect("Detail check")
+        terminal.quit()
+    request_id = service.call(
+        {
+            "op": "send_message",
+            "message": {
+                "identity": "operator-request",
+                "channel": "inbox-ops",
+                "sender": "operator",
+                "target": {"kind": "participant", "name": "worker"},
+                "body": "Check release",
+                "expects_reply": True,
+                "context": "Build release",
+                "activity": "release-work",
+            },
+        }
+    )["id"]
+    service.call(
+        {
+            "op": "reply_message",
+            "reply": {
+                "identity": "worker-reply",
+                "request_id": request_id,
+                "sender": "worker",
+                "body": "Ready for review",
+            },
+        }
+    )
+    with Terminal(service) as terminal:
+        terminal.expect("Detail check")
+        terminal.send("i")
+        screen = terminal.expect("Ready for review")
+        assert b"From: worker" in screen and b"Work context: Build release" in screen
+        assert b"Activity: release-work" in screen
+        service.call(
+            {
+                "op": "send_message",
+                "message": {
+                    "identity": "worker-live",
+                    "channel": "inbox-ops",
+                    "sender": "worker",
+                    "target": {"kind": "participant", "name": "operator"},
+                    "body": "Live operator update",
+                    "context": "Workstream",
+                    "activity": "release-work",
+                },
+            }
+        )
+        terminal.expect("Operator inbox 1/2")
+        terminal.send("l")
+        screen = terminal.expect("Live operator update")
+        assert b"From: worker" in screen and b"Work context: Workstream" in screen
+        terminal.send("q")
+        terminal.expect("Detail check")
+        terminal.quit()
+    inbox = service.call({"op": "inbox", "participant": "operator"})["messages"]
+    assert len(inbox) == 2
+    print("Operator inbox recovered a reply and displayed a live message")
+
+
 def exercise_large_queues(service: Service, request_id: int) -> None:
     service.call({"op": "answer", "id": request_id, "index": 0})
     large = "x" * 120_000
@@ -215,6 +283,18 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
                 },
             }
         )
+        service.call(
+            {
+                "op": "send_message",
+                "message": {
+                    "identity": f"large-inbox-{number}",
+                    "channel": "inbox-ops",
+                    "sender": "worker",
+                    "target": {"kind": "participant", "name": "operator"},
+                    "body": f"Big inbox {number} " + large,
+                },
+            }
+        )
     with Terminal(service) as terminal:
         terminal.expect("Queue item 0")
         terminal.send("l" * 9)
@@ -224,8 +304,14 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.send("l" * 9)
         terminal.expect("Notice 9")
         terminal.send("q")
+        terminal.expect("Queue item 9")
+        terminal.send("i")
+        terminal.expect("Ready for review")
+        terminal.send("l" * 11)
+        terminal.expect("Big inbox 9")
+        terminal.send("q")
         terminal.quit()
-    print("Terminal navigated decision and notice queues above frame limit")
+    print("Terminal navigated decision, notice, and inbox data above frame limit")
 
 
 def main() -> None:
@@ -234,6 +320,7 @@ def main() -> None:
         exercise_deferral(service)
         request_id = exercise_context_and_notices(service)
         exercise_instructions(service)
+        exercise_operator_inbox(service)
         exercise_large_queues(service, request_id)
 
 

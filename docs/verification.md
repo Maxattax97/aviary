@@ -157,3 +157,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local CLI reference workflow (2026-11-10)
 
 After `cargo build --locked`, `python3 tests/cli_reference.py` extracted and ran the Python example from `docs/cli.md` against an isolated loopback service. It exercised channel creation, decision submit and retry, answer and retrieval, direct message, reply and retry, completion notice and linked history; `python3 tests/skill_smoke.py` also passed. The operation table was checked against the current implementation but is not exhaustively generated or tested for every parameter, failure, page boundary, platform or agent framework.
+
+
+## Local operator inbox evidence (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed on Linux over loopback. It closed the terminal, sent an operator-to-agent request and a response, reopened the interface, and displayed the response with sender, inherited work context and activity. While that inbox was open it delivered a second message and observed its arrival and context without a manual refresh. Reads remained non-destructive. The test also navigated an operator inbox whose aggregate content exceeded a frame. This is local pseudo-terminal evidence, not a full history view, unread tracking, correlated reply control, bounded terminal memory, remote operation or representative operator validation.

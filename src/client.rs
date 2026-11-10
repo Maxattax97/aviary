@@ -16,7 +16,10 @@ use tokio::{sync::mpsc, time};
 use crate::{
     error::Result,
     network,
-    protocol::{Message, NoticeItem, NoticePage, Operation, PendingRequest, RequestPage, Target},
+    protocol::{
+        InboxItem, InboxPage, Message, NoticeItem, NoticePage, Operation, PendingRequest,
+        RequestPage, Target,
+    },
 };
 
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -95,6 +98,30 @@ async fn fetch_notices(address: &str) -> Result<Vec<NoticeItem>> {
     }
 }
 
+async fn fetch_operator_inbox(address: &str) -> Result<Vec<InboxItem>> {
+    let mut result = Vec::new();
+    let mut offset = 0;
+    loop {
+        let page: InboxPage = serde_json::from_value(
+            network::call_with_timeout(
+                address,
+                &Operation::InboxPage {
+                    participant: "operator".into(),
+                    offset,
+                },
+                POLL_TIMEOUT_MS,
+            )
+            .await?,
+        )?;
+        result.extend(page.messages);
+        match page.next_offset {
+            Some(next) if next > offset => offset = next,
+            Some(_) => return Err(crate::error::AppError::InvalidFrame),
+            None => return Ok(result),
+        }
+    }
+}
+
 // Restore the terminal and stop the input thread on every ordinary exit path.
 struct TerminalGuard {
     stop: Arc<AtomicBool>,
@@ -152,6 +179,11 @@ struct View {
     busy: bool,
     notices: Vec<NoticeItem>,
     notice_view: bool,
+    inbox_view: bool,
+    inbox_loaded: bool,
+    inbox: Vec<InboxItem>,
+    inbox_current: usize,
+    inbox_page: usize,
     notice_current: usize,
     notice_page: usize,
     current: usize,
@@ -174,6 +206,11 @@ impl View {
             busy: false,
             notices: Vec::new(),
             notice_view: false,
+            inbox_view: false,
+            inbox_loaded: false,
+            inbox: Vec::new(),
+            inbox_current: 0,
+            inbox_page: 0,
             notice_current: 0,
             notice_page: 0,
             current: 0,
@@ -228,6 +265,22 @@ impl View {
             self.notice_page = 0;
         }
         self.notices = notices;
+        true
+    }
+    fn update_inbox(&mut self, messages: Vec<InboxItem>) -> bool {
+        let first_load = !self.inbox_loaded;
+        self.inbox_loaded = true;
+        if self.inbox == messages {
+            return first_load;
+        }
+        let previous = self.inbox.get(self.inbox_current).map(|item| item.id);
+        self.inbox_current = previous
+            .and_then(|id| messages.iter().position(|item| item.id == id))
+            .unwrap_or(0);
+        if previous != messages.get(self.inbox_current).map(|item| item.id) {
+            self.inbox_page = 0;
+        }
+        self.inbox = messages;
         true
     }
     // Presentation position maps back to the original suggestion index; custom is last.
@@ -298,6 +351,35 @@ impl View {
                     }
                 }
                 _ => {}
+            }
+            return Action::Redraw;
+        }
+        if self.inbox_view {
+            match key.code {
+                KeyCode::Char('i') | KeyCode::Char('q') | KeyCode::Esc => {
+                    return Action::ToggleInbox
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    self.inbox_current = self.inbox_current.saturating_sub(1);
+                    self.inbox_page = 0;
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    self.inbox_current =
+                        (self.inbox_current + 1).min(self.inbox.len().saturating_sub(1));
+                    self.inbox_page = 0;
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let last = self
+                        .inbox
+                        .get(self.inbox_current)
+                        .map(|item| inbox_pages(item).len().saturating_sub(1))
+                        .unwrap_or(0);
+                    self.inbox_page = (self.inbox_page + 1).min(last);
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.inbox_page = self.inbox_page.saturating_sub(1)
+                }
+                _ => return Action::None,
             }
             return Action::Redraw;
         }
@@ -424,6 +506,9 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('i') {
+            return Action::ToggleInbox;
+        }
         if key.code == KeyCode::Char('m') {
             self.composer = Some(Composer::default());
             self.status = None;
@@ -523,6 +608,7 @@ enum Action {
     Redraw,
     Quit,
     ToggleDeferred,
+    ToggleInbox,
     SendInstruction(Message),
     Submit(Operation),
 }
@@ -570,14 +656,16 @@ pub async fn terminal(address: &str) -> Result<()> {
             _ = interval.tick(), if view.composer.is_none() && refresh.is_none() && submission.is_none() => {
                 let address = address.to_owned();
                 let deferred = view.deferred_view;
+                let inbox_view = view.inbox_view;
                 let current_generation = generation;
                 refresh = Some(tokio::spawn(async move {
                     let result = async {
                         let requests = fetch_requests(&address, deferred).await?;
                         let notices = fetch_notices(&address).await?;
-                        Ok::<_, crate::error::AppError>((requests, notices))
+                        let messages = if inbox_view { Some(fetch_operator_inbox(&address).await?) } else { None };
+                        Ok::<_, crate::error::AppError>((requests, notices, messages))
                     }.await;
-                    (current_generation, deferred, result)
+                    (current_generation, deferred, inbox_view, result)
                 }));
             }
             result = async {
@@ -587,18 +675,19 @@ pub async fn terminal(address: &str) -> Result<()> {
                 }
             }, if refresh.is_some() => {
                 refresh = None;
-                let (started, deferred, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                let (started, deferred, inbox_view, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
-                if started != generation || deferred != view.deferred_view || view.composer.is_some() || view.busy {
+                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.busy {
                     continue;
                 }
                 match refreshed {
-                    Ok((requests, notices)) => {
+                    Ok((requests, notices, messages)) => {
                         let recovered = view.poll_error.take().is_some();
                         let changed_requests = view.update(requests);
                         let changed_notices = view.update_notices(notices);
-                        if recovered || changed_requests || changed_notices { display(&view)?; }
+                        let changed_inbox = messages.is_some_and(|items| view.update_inbox(items));
+                        if recovered || changed_requests || changed_notices || changed_inbox { display(&view)?; }
                     }
                     Err(error) => {
                         let message = format!("Service unavailable: {error}; retrying");
@@ -649,6 +738,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::None => {},
                     Action::Redraw => display(&view)?,
                     Action::Quit => return Ok(()),
+                    Action::ToggleInbox => {
+                        generation = generation.wrapping_add(1);
+                        view.inbox_view = !view.inbox_view;
+                        view.inbox_loaded = false;
+                        view.inbox_page = 0;
+                        display(&view)?;
+                        interval.reset_immediately();
+                    },
                     Action::ToggleDeferred => {
                         generation = generation.wrapping_add(1);
                         view.deferred_view = !view.deferred_view;
@@ -792,6 +889,17 @@ fn composer_pages(composer: &Composer) -> Vec<String> {
         .map(|part| part.iter().collect())
         .collect()
 }
+fn inbox_pages(item: &InboxItem) -> Vec<String> {
+    let message = &item.message;
+    let content = format!(
+        "From: {}   Work context: {}   Message: {}   Activity: {}",
+        safe(&message.sender),
+        safe(message.context.as_deref().unwrap_or("(none supplied)")),
+        safe(&message.body),
+        safe(message.activity.as_deref().unwrap_or("(none supplied)"))
+    );
+    text_pages(&content)
+}
 fn notice_pages(item: &NoticeItem) -> Vec<String> {
     let content = format!(
         "Work: {}   Result: {}   Activity: {}",
@@ -809,6 +917,9 @@ fn display(view: &View) -> Result<()> {
     print!("\x1b[2J\x1b[H");
     if view.busy {
         println!("Sending; outcome unknown until confirmed. Ctrl-C quits.\r");
+    }
+    if let Some(error) = &view.poll_error {
+        println!("{}\r", safe(error));
     }
     if let Some(composer) = &view.composer {
         let labels = [
@@ -852,6 +963,19 @@ fn display(view: &View) -> Result<()> {
         io::stdout().flush()?;
         return Ok(());
     }
+    if view.inbox_view {
+        if !view.inbox_loaded {
+            println!("Loading operator inbox. i or q returns.");
+        } else if let Some(item) = view.inbox.get(view.inbox_current) {
+            let pages = inbox_pages(item);
+            let page = view.inbox_page.min(pages.len().saturating_sub(1));
+            println!("Operator inbox {}/{} | page {}/{}\r\n{}\r\n\r\nh/l messages; j/k pages; i or q returns.", view.inbox_current + 1, view.inbox.len(), page + 1, pages.len(), pages.get(page).map(String::as_str).unwrap_or(""));
+        } else {
+            println!("Operator inbox: no messages. i or q returns.");
+        }
+        io::stdout().flush()?;
+        return Ok(());
+    }
     if view.notice_view {
         if let Some(notice) = view.notices.get(view.notice_current) {
             let pages = notice_pages(notice);
@@ -864,12 +988,9 @@ fn display(view: &View) -> Result<()> {
         return Ok(());
     }
     println!(
-        "Open completion notices: {} (n to view); m composes instruction\r",
+        "Open completion notices: {} (n to view); i inbox; m compose\r",
         view.notices.len()
     );
-    if let Some(error) = &view.poll_error {
-        println!("{}\r", safe(error));
-    }
     if let Some(status) = &view.status {
         println!("{}\r", safe(status));
     }
@@ -970,7 +1091,7 @@ fn display(view: &View) -> Result<()> {
         }
     } else {
         println!(
-            "No {} requests. Tab switches queues; q quits.",
+            "No {} requests. i inbox; Tab switches queues; q quits.",
             if view.deferred_view {
                 "deferred"
             } else {

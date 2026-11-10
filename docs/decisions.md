@@ -145,3 +145,8 @@ Decision, notice and inbox page operations read ordered database rows incrementa
 ## Incremental history pages
 
 A history page resolves its root and reads only the requested section in a single SQLite read transaction, stopping after a page plus one lookahead item. Related activity and direct request/reply linkage retain the same per-section ID order as unpaged history. Each page is a separate snapshot, so changes between requests can shift offset traversal. SQL scan and temporary-storage costs, total process memory, unpaged history and cross-kind chronological ordering remain outside this change.
+
+
+## Operator inbox
+
+The terminal can read the non-destructive inbox for the `operator` routing label. It loads and refreshes inbox pages while that view is open, retains selection by message ID, and pages sender, work context, body and activity for inspection. `i` opens or closes the inbox, h/l moves between messages, and j/k moves through content. There is no unread state, removal, or correlated reply action in this view; use the CLI for reply and history. Routing labels remain unauthenticated. Inbox aggregation is not memory-bounded, and representative operator and remote-machine validation remain open.
