@@ -92,3 +92,8 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 ## Local in-flight shutdown evidence (2026-11-10)
 
 `cargo test --locked --test slice signal_shutdown_waits_for_in_flight_write` passed on Linux over loopback. The test held an independent SQLite write lock, observed the service start a submission and receive SIGTERM, verified the process remained alive, then released the lock. After successful service exit and restart, the submission was present before retry; retry returned its original ID with one record. The test does not establish delivery of the original reply, saturated-peer shutdown behavior, a general deadline, an OS crash, or remote behavior.
+
+
+## Local tmux decision evidence (2026-11-10)
+
+On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python3 tests/tmux_smoke.py` started an isolated service and tmux server using a clean configuration and a 100×30 pane. The captured pane showed the recommended answer first and selected; the test checked no answer existed before Enter, confirmed it, retrieved the expected structured answer, and exited the client with q. This is an automated local tmux demonstration, not a supported terminal matrix, a physical terminal or representative operator validation; narrow dimensions and broader navigation remain unverified.

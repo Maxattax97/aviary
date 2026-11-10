@@ -85,8 +85,9 @@ The CLI prints JSON on success and exits nonzero on errors. Requests and respons
 cargo test --locked
 python3 tests/terminal_pty.py
 python3 tests/skill_smoke.py
+python3 tests/tmux_smoke.py  # requires tmux
 ```
 
-Build first for the Python 3.10+ smoke tests. They use an isolated temporary database and loopback sockets; the terminal test requires a POSIX pseudo-terminal. They exercise actual client workflows but do not replace the two-machine, OS-crash, platform and operator checks in the [verification plan](docs/verification.md).
+Build first for the Python 3.10+ smoke tests. They use an isolated temporary database and loopback sockets; the terminal test requires a POSIX pseudo-terminal. The tmux smoke test starts its own isolated tmux server. These checks exercise actual client workflows but do not replace the two-machine, OS-crash, platform and operator checks in the [verification plan](docs/verification.md).
 
 Further project documents: [requirements](docs/requirements.md), [architecture](docs/architecture.md), [decisions](docs/decisions.md), [verification](docs/verification.md), and [implementation backlog](docs/tickets.md).
