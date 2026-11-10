@@ -755,3 +755,76 @@ fn request_history_links_decisions_messages_and_outcomes() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn unavailable_service_reports_timeout() -> TestResult<()> {
+    // Hold the port without a ZeroMQ service, so another process cannot bind it.
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    let start = std::time::Instant::now();
+    let result = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["call", &address, r#"{"op":"list"}"#])
+        .output()?;
+    let elapsed = start.elapsed();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("operation timed out"));
+    assert!(
+        elapsed >= Duration::from_secs(8) && elapsed < Duration::from_secs(25),
+        "elapsed {elapsed:?}"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn local_send_queue_applies_backpressure_and_terminates() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-pressure-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let context = zmq::Context::new();
+    let socket = context.socket(zmq::DEALER)?;
+    socket.set_linger(0)?;
+    socket.set_sndhwm(1)?;
+    socket.set_immediate(true)?;
+    socket.set_sndtimeo(5_000)?;
+    socket.set_rcvtimeo(5_000)?;
+    socket.connect(&format!("tcp://{address}"))?;
+    send_request(&socket, "ready", json!({"op":"list"}))?;
+    assert_eq!(
+        receive_reply(&socket)?.get("correlation"),
+        Some(&json!("ready"))
+    );
+    assert!(Command::new("kill")
+        .args(["-STOP", &server.0.id().to_string()])
+        .status()?
+        .success());
+    // A non-reading stopped peer eventually fills the local per-peer queue.
+    let payload = vec![b'x'; 512 * 1024];
+    let mut accepted = 0;
+    let mut backpressure = false;
+    for _ in 0..2048 {
+        match socket.send(payload.as_slice(), zmq::DONTWAIT) {
+            Ok(()) => accepted += 1,
+            Err(zmq::Error::EAGAIN) => {
+                backpressure = true;
+                break;
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(
+        accepted > 0 && backpressure,
+        "accepted={accepted}, backpressure={backpressure}"
+    );
+    let started = std::time::Instant::now();
+    drop(socket);
+    drop(server);
+    assert!(started.elapsed() < Duration::from_secs(5));
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

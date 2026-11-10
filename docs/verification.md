@@ -57,3 +57,8 @@ On this Linux host, `cargo test --locked` passed keyboard-state and service test
 ## Local request history evidence (2026-11-09)
 
 `cargo test --locked` passed a local ZeroMQ test that creates a decision and answer, a related agent request and response, a completion outcome and an unrelated outcome; it verifies activity association, direct reply linkage, exclusion of unrelated activity and identical history after a service process restart. It also checks direct request/reply history without an activity. This does not establish chronological cross-kind ordering, pagination, remote operation or OS-crash recovery.
+
+
+## Local transport failure evidence (2026-11-09)
+
+`cargo test --locked --test slice` passed an unavailable-service case: a TCP port held without a ZeroMQ service caused the CLI call to exit nonzero with `operation timed out` after the configured interval. On Linux, a separate test connected a DEALER, stopped the test service process, observed `EAGAIN` while filling the DEALER's one-message local send high-water mark, then closed the zero-linger socket and killed the stopped service in under five seconds. This checks local backpressure and forced termination only. It does not establish graceful service shutdown, service-side saturation fairness, bounded total memory, lossless delivery, network partition behavior, or remote-machine behavior.
