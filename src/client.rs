@@ -152,6 +152,7 @@ struct View {
     detail_option: Option<usize>,
     selected: Option<usize>,
     editing: bool,
+    custom_review: Option<usize>,
     custom: String,
 }
 impl View {
@@ -171,6 +172,7 @@ impl View {
             detail_option: None,
             selected: None,
             editing: false,
+            custom_review: None,
             custom: String::new(),
         }
     }
@@ -182,6 +184,7 @@ impl View {
             .current()
             .and_then(|r| r.request.recommendation.map(|_| 0));
         self.editing = false;
+        self.custom_review = None;
         self.priority_edit = false;
         self.detail_page = None;
         self.detail_option = None;
@@ -367,8 +370,25 @@ impl View {
             }
             return Action::None;
         }
+        if let Some(page) = self.custom_review {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => self.custom_review = None,
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::Right => {
+                    let last = text_pages(&self.custom).len().saturating_sub(1);
+                    self.custom_review = Some((page + 1).min(last));
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => {
+                    self.custom_review = Some(page.saturating_sub(1));
+                }
+                _ => return Action::None,
+            }
+            return Action::Redraw;
+        }
         if self.editing {
             match key.code {
+                KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.custom_review = Some(0);
+                }
                 KeyCode::Esc => self.editing = false,
                 KeyCode::Backspace => {
                     self.custom.pop();
@@ -658,6 +678,16 @@ fn detail_pages(request: &crate::protocol::DecisionRequest, option: Option<usize
         .map(|part| part.iter().collect())
         .collect()
 }
+fn text_pages(text: &str) -> Vec<String> {
+    let chars: Vec<char> = safe(text).chars().collect();
+    if chars.is_empty() {
+        return vec![String::new()];
+    }
+    chars
+        .chunks(detail_page_size())
+        .map(|part| part.iter().collect())
+        .collect()
+}
 fn composer_pages(composer: &Composer) -> Vec<String> {
     let [identity, channel, target, body] = &composer.fields;
     let content = format!(
@@ -719,6 +749,18 @@ fn display(view: &View) -> Result<()> {
                 println!("\r\nSend failed or outcome unknown: {}\r\nRetry with the same identity, or retain it before cancelling.", safe(error));
             }
         }
+        io::stdout().flush()?;
+        return Ok(());
+    }
+    if let Some(page) = view.custom_review {
+        let pages = text_pages(&view.custom);
+        let page = page.min(pages.len().saturating_sub(1));
+        println!(
+            "Custom answer review, page {}/{}\r\n{}\r\n\r\nj/k pages; q or Esc returns to editing.",
+            page + 1,
+            pages.len(),
+            pages.get(page).map(String::as_str).unwrap_or("")
+        );
         io::stdout().flush()?;
         return Ok(());
     }
@@ -829,8 +871,8 @@ fn display(view: &View) -> Result<()> {
             println!("\r\nSet importance 0-5; Esc cancels.");
         } else if view.editing {
             println!(
-                "\r\nCustom answer: {}_\r\nEnter submits; Esc cancels editing.",
-                safe(&view.custom)
+                "\r\nCustom answer: {}_\r\nCtrl-R reviews; Enter submits; Esc cancels.",
+                preview_tail(&view.custom)
             );
         } else {
             println!("\r\nj/k select; h/l requests; 1-9 select; Enter confirms; d defer/restore; p priority; c context; o answer detail; Tab queues; q quits.");

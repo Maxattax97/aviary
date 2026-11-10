@@ -115,3 +115,8 @@ Decision queue previews use a conservative two-column-per-character estimate; a 
 ## Instruction review paging
 
 The instruction composer retains complete input while showing the end of long fields. Its confirmation view pages all fields using the same terminal-size estimate as other detail views; j/k navigates pages and Enter explicitly sends the unchanged draft from any page. A failure retains the draft and identity while the interface stays open. Resize can change page boundaries; full layout and usability across supported terminals remain to be verified.
+
+
+## Custom answer review
+
+A long custom answer shows its tail while being edited. Ctrl-R opens a paged review of the full draft; j/k navigates, and q or Esc returns to editing. Enter in the editor still submits the exact draft, preserving the established confirmation flow. The draft is not durable across interface exit. Page sizing and terminal limitations are the same as other detail views.

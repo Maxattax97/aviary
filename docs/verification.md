@@ -117,3 +117,8 @@ On Linux 7.2.11-200.nobara.fc44.x86_64 with tmux 3.7c and Python 3.14.7, `python
 ## Local long instruction evidence (2026-11-10)
 
 `python3 tests/tmux_smoke.py` passed on Linux with tmux 3.7c. In a 40×12 pane it composed a long direct instruction, observed the draft tail and review controls, verified the recipient inbox was empty before confirmation, paged to the instruction end, then confirmed and retrieved the exact text. The existing pseudo-terminal instruction cases passed as well. This does not validate every Unicode width, resizing during review, actual network failure, other terminals, or representative operators.
+
+
+## Local long custom answer evidence (2026-11-10)
+
+`python3 tests/tmux_smoke.py` passed on Linux with tmux 3.7c. In a 40×12 pane the test entered a long custom answer, opened its paged review with Ctrl-R, observed the end of the draft and verified no answer had been submitted, returned to editing, then submitted and retrieved the exact value. This does not establish draft recovery after exit, all Unicode widths, other terminals, or representative-operator acceptance.

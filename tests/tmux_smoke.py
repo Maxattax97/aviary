@@ -191,6 +191,40 @@ def main() -> None:
                 == [instruction],
                 "long instruction delivery",
             )
+            wait_for_screen("No active requests")
+            custom_id = service.call(
+                {
+                    "op": "submit",
+                    "request": {
+                        "identity": "tmux-long-custom",
+                        "agent": "agent",
+                        "question": "Long custom",
+                        "options": [],
+                    },
+                }
+            )["id"]
+            wait_for_screen("Long custom")
+            tmux("send-keys", "-t", "aviary:", "j", "Enter")
+            wait_for_screen("Custom answer:")
+            custom = "a" * 145 + " END-CUSTOM"
+            tmux("send-keys", "-t", "aviary:", "-l", custom)
+            wait_for_screen("END-CUSTOM")
+            tmux("send-keys", "-t", "aviary:", "C-r")
+            wait_for_screen("Custom answer review")
+            assert service.call({"op": "get", "id": custom_id})["answer"] is None
+            for _ in range(4):
+                tmux("send-keys", "-t", "aviary:", "j")
+            screen = wait_for_screen("END-CUST")
+            assert "END-CUSTOM" in screen.replace("\n", ""), screen
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("Ctrl-R reviews")
+            tmux("send-keys", "-t", "aviary:", "Enter")
+            service.wait_for(
+                lambda: service.call({"op": "get", "id": custom_id})["answer"]
+                == {"type": "custom", "value": custom},
+                "long custom answer",
+            )
+            wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
