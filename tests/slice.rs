@@ -992,3 +992,59 @@ fn inbox_and_history_pages_cross_frame_limit() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn recipient_retrieves_messages_accepted_while_disconnected() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-recipient-reconnect-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_channel","channel":{"name":"team","members":["a","b"]}}),
+    )?;
+    let context = zmq::Context::new();
+    let recipient = dealer(&context, &address)?;
+    send_request(
+        &recipient,
+        "before",
+        json!({"op":"inbox_page","participant":"b"}),
+    )?;
+    assert_eq!(
+        receive_reply(&recipient)?.pointer("/result/messages"),
+        Some(&json!([]))
+    );
+    recipient.disconnect(&format!("tcp://{address}"))?;
+    let message = json!({"identity":"while-disconnected","channel":"team","sender":"a","target":{"kind":"participant","name":"b"},"body":"accepted while away"});
+    let accepted = call(&address, json!({"op":"send_message","message":message}))?;
+    let id = accepted
+        .get("id")
+        .and_then(Value::as_i64)
+        .ok_or("message was not accepted")?;
+    recipient.connect(&format!("tcp://{address}"))?;
+    send_request(
+        &recipient,
+        "after",
+        json!({"op":"inbox_page","participant":"b"}),
+    )?;
+    let recovered = receive_reply(&recipient)?;
+    assert_eq!(recovered.get("correlation"), Some(&json!("after")));
+    assert_eq!(recovered.pointer("/result/messages/0/id"), Some(&json!(id)));
+    assert_eq!(
+        recovered.pointer("/result/messages/0/message/body"),
+        Some(&json!("accepted while away"))
+    );
+    assert_eq!(
+        call(&address, json!({"op":"inbox_page","participant":"a"}))?.get("messages"),
+        Some(&json!([]))
+    );
+    drop(recipient);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

@@ -77,3 +77,8 @@ The skill-creator `quick_validate.py` accepted `skills/aviary`. After building, 
 ## Local inbox and history paging evidence (2026-11-10)
 
 `cargo test --locked --test slice inbox_and_history_pages_cross_frame_limit` passed over loopback. Four large records in each inbox and history section exceeded the unpaged response limit; paging returned four distinct IDs in each section, and an unrelated inbox was empty. This exercises stable data only: pages do not share a snapshot, queries materialize full results, and this does not establish bounded memory, individual near-limit records, remote operation or OS-crash recovery.
+
+
+## Local recipient reconnect evidence (2026-11-10)
+
+`cargo test --locked --test slice recipient_retrieves_messages_accepted_while_disconnected` passed over loopback. A recipient read an empty inbox, disconnected its DEALER, and reconnected after another client received acceptance for a direct message; the recipient then retrieved the accepted ID and body, while the sender's inbox remained empty. This exercises an explicit socket disconnect on one host, not a network partition, another machine, or OS-crash recovery.
