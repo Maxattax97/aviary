@@ -49,7 +49,7 @@ In another terminal, submit a request. Choose a new deployment-wide `identity` f
 ./target/debug/aviary tui 127.0.0.1:7432
 ```
 
-The first command returns a JSON `id`. Replace `1` below with that ID to wait for the answer or retrieve it later:
+The first command returns a JSON `id`. Replace `1` below with that ID to wait for an answer or deferral, or retrieve the current answer later:
 
 ```sh
 ./target/debug/aviary wait 127.0.0.1:7432 1
@@ -67,16 +67,15 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
 | `c` / `o` | Open request context / selected answer detail |
 | `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
-| `R` | Clear the new-decision indicator in the decision queue |
-| `d`, `D`, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
+| `d`, `p` then `0`–`5` | Defer to the bottom of this priority; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
 
-The focused region is labeled and the selected item is marked with `>`. The list and details appear side by side in wider terminals and stack in narrower panes. The interface asks for at least 40 × 12; other size and terminal support remains under verification. Details scroll by visible lines, and the selected answer follows navigation. On resize, the interface maps the first visible text position into the newly wrapped details; a wider pane can show earlier text, and grapheme clusters are kept together, but terminal-specific widths need broader verification. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. The list abbreviates long questions; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
+The focused region is labeled and the selected item is marked with `>`. The list and details appear side by side in wider terminals and stack in narrower panes. The interface asks for at least 40 × 12; other size and terminal support remains under verification. Details scroll by visible lines, and the selected answer follows navigation. On resize, the interface maps the first visible text position into the newly wrapped details; a wider pane can show earlier text, and grapheme clusters are kept together, but terminal-specific widths need broader verification. Importance defaults to 0; higher values appear first and ties begin in submission order. Deferring keeps the decision pending, moves it to the bottom of its priority, and records a notice retrievable by the requesting agent. An agent can swap two decisions at equal importance using the documented queue operation. The list abbreviates long questions; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
 
 Click the list or detail pane to focus it, click a list row to select it, or click the inbox and notices labels to navigate. Mouse clicks do not submit actions.
 
-`NEW (R)` indicates that a decision was submitted since the interface last observed or cleared the indicator, even if it belongs on a different queue page. It does not move the current selection or draft. Press `R` in the decision queue to clear it. The indicator is local to the open interface; the decision may already have been answered elsewhere, and reads pause in some editing and history views.
+A brief `New decision received` notification can appear even if the decision belongs on another queue page; it does not move the current selection or draft. It is local to the open interface and can be delayed while reads pause or fail.
 
 ## Messages and notices
 

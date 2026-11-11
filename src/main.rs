@@ -54,7 +54,12 @@ enum Command {
     /// Send a JSON operation, or read it from standard input with -.
     Call { address: String, operation: String },
     /// Wait for a decision.
-    Wait { address: String, id: i64 },
+    Wait {
+        address: String,
+        id: i64,
+        #[arg(long, default_value_t = 0)]
+        after_event: i64,
+    },
     /// Wait for a message response.
     WaitMessage { address: String, id: i64 },
 }
@@ -69,7 +74,11 @@ impl Command {
                 println!("{response}");
                 Ok(())
             }
-            Self::Wait { address, id } => client::wait_for_answer(&address, id).await,
+            Self::Wait {
+                address,
+                id,
+                after_event,
+            } => client::wait_for_answer(&address, id, after_event).await,
             Self::WaitMessage { address, id } => {
                 client::wait_for_message_response(&address, id).await
             }

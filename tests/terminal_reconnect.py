@@ -87,10 +87,17 @@ def main() -> None:
             terminal.expect("draft survives", timeout=8)
             time.sleep(0.5)
             assert service.call({"op": "get", "id": request_id})["answer"] is None
-            service.call({"op": "set_deferred", "id": request_id, "deferred": True})
-            terminal.expect("Request not on this queue page; draft retained")
+            blockers = []
+            for number in range(8):
+                blockers.append(service.call({"op": "submit", "request": {
+                    "identity": f"reconnect-blocker-{number}", "agent": "other",
+                    "question": "Higher priority", "options": [], "importance": 5,
+                    "context": "x" * 120_000,
+                }})["id"])
+            terminal.expect("Request not on this queue page; draft retained", timeout=15)
             terminal.expect("draft survives")
-            service.call({"op": "set_deferred", "id": request_id, "deferred": False})
+            for blocker in blockers:
+                service.call({"op": "answer_custom", "id": blocker, "value": "done"})
             terminal.expect("draft survives")
             terminal.send("\r")
             service.wait_for(
@@ -98,7 +105,7 @@ def main() -> None:
                 == {"type": "custom", "value": "draft survives"},
                 "recovered draft answer",
             )
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             arriving = service.call(
                 {
                     "op": "submit",
@@ -112,10 +119,10 @@ def main() -> None:
             )["id"]
             terminal.expect("Arrived while open")
             service.call({"op": "answer", "id": arriving, "index": 0})
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.quit()
         with Terminal(service) as terminal:
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             stop(service)
             terminal.expect("Refresh incomplete", timeout=6)
             started = time.monotonic()

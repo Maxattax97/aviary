@@ -1,3 +1,5 @@
+mod queue;
+
 use std::time::Duration;
 
 use futures_util::TryStreamExt;
@@ -82,7 +84,9 @@ impl Storage {
         sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS request_attention (request_id INTEGER PRIMARY KEY, importance INTEGER, deferred INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (request_id) REFERENCES requests(id))").execute(&pool).await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS completion_notices (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0)").execute(&pool).await?;
-        Ok(Self { pool })
+        let storage = Self { pool };
+        storage.initialize_queue().await?;
+        Ok(storage)
     }
 
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
@@ -95,6 +99,20 @@ impl Storage {
                 offset,
                 include_newest,
             } => self.list_page(deferred, offset, include_newest).await,
+            Operation::DecisionQueue { offset } => self.decision_queue(offset).await,
+            Operation::DeferDecision { id, identity } => self.defer_decision(id, identity).await,
+            Operation::SwapDecisions {
+                first,
+                first_version,
+                second,
+                second_version,
+                identity,
+            } => {
+                self.swap_decisions(first, first_version, second, second_version, identity)
+                    .await
+            }
+            Operation::DecisionEvents { agent, after } => self.decision_events(agent, after).await,
+            Operation::DecisionStatus { id, after } => self.decision_status(id, after).await,
             Operation::NoticesPage {
                 include_dismissed,
                 offset,
@@ -144,6 +162,7 @@ impl Storage {
                 .execute(&mut *tx)
                 .await?;
             let id = result.last_insert_rowid();
+            Self::enqueue_decision(&mut tx, id).await?;
             sqlx::query("UPDATE submission_keys SET record_id = ? WHERE identity = ?")
                 .bind(id)
                 .bind(&request.identity)
@@ -663,20 +682,36 @@ impl Storage {
         if importance > 5 {
             return Err(AppError::InvalidRequest);
         }
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query("INSERT INTO request_attention (request_id, importance) SELECT id, ? FROM requests WHERE id = ? AND answer IS NULL ON CONFLICT(request_id) DO UPDATE SET importance = excluded.importance")
-            .bind(importance).bind(id).execute(&self.pool).await?;
+            .bind(importance).bind(id).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Err(AppError::RequestNotFound);
         }
+        sqlx::query(
+            "UPDATE decision_queue_positions SET version = version + 1 WHERE request_id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(json!({"id": id, "importance": importance}))
     }
 
     async fn set_deferred(&self, id: i64, deferred: bool) -> Result<Value> {
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query("INSERT INTO request_attention (request_id, deferred) SELECT id, ? FROM requests WHERE id = ? AND answer IS NULL ON CONFLICT(request_id) DO UPDATE SET deferred = excluded.deferred")
-            .bind(deferred).bind(id).execute(&self.pool).await?;
+            .bind(deferred).bind(id).execute(&mut *tx).await?;
         if result.rows_affected() == 0 {
             return Err(AppError::RequestNotFound);
         }
+        sqlx::query(
+            "UPDATE decision_queue_positions SET version = version + 1 WHERE request_id = ?",
+        )
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(json!({"id": id, "deferred": deferred}))
     }
 

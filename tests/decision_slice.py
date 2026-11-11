@@ -54,7 +54,7 @@ def main() -> None:
                 output, error = current.communicate(timeout=10)
                 assert current.returncode == 0, error
                 assert json.loads(output) == expected
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.quit()
             stop(service)
             restart(service)

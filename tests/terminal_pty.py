@@ -66,28 +66,19 @@ def exercise_deferral(service: Service) -> None:
     with Terminal(service) as terminal:
         terminal.expect("Defer this")
         terminal.send("d")
-        service.wait_for(
-            lambda: queue_ids(service, "list_deferred") == [request_id], "deferral"
-        )
+        service.wait_for(lambda: len(service.call({"op": "decision_events", "agent": "agent"})["events"]) == 1, "deferral event")
+        terminal.expect("Decision deferred; notice recorded")
+        assert service.call({"op": "get", "id": request_id})["answer"] is None
+        assert queue_ids(service, "decision_queue") == [request_id]
         terminal.quit()
     with Terminal(service) as terminal:
-        terminal.expect("No active requests")
-        terminal.send("D")
         terminal.expect("Defer this")
         terminal.send("p5")
-        service.wait_for(
-            lambda: service.call({"op": "list_deferred"})["requests"][0]["importance"]
-            == 5,
-            "priority override",
-        )
+        service.wait_for(lambda: service.call({"op": "decision_queue"})["requests"][0]["importance"] == 5, "priority override")
         terminal.expect("Importance: 5")
-        terminal.send("d")
-        service.wait_for(
-            lambda: queue_ids(service, "list") == [request_id], "restoration"
-        )
         terminal.quit()
     service.call({"op": "answer", "id": request_id, "index": 0})
-    print("Deferral, reopen, priority override and restoration passed")
+    print("Deferral remains pending, records notice, and survives reopening")
 
 
 def exercise_context_and_notices(service: Service) -> int:
@@ -418,7 +409,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Queue item 9")
         for earlier_id in request_ids[:7]:
             service.call({"op": "answer_custom", "id": earlier_id, "value": "done"})
-        terminal.expect("Active decisions")
+        terminal.expect("Decisions")
         terminal.send("i")
         terminal.expect("Ready for review")
         terminal.send("l" * 9)
@@ -448,7 +439,7 @@ def exercise_concurrent_answer() -> None:
             terminal.expect("Rejected: request already answered")
             assert service.call({"op": "get", "id": request_id})["answer"]["value"] == "other answer"
             terminal.send("\x1b")
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.quit()
     print("Concurrent answer is rejected without replacing the existing answer")
 
@@ -458,7 +449,7 @@ def exercise_unsuitable_channel() -> None:
         channel = {"name": "all", "members": ["operator"]}
         service.call({"op": "create_channel", "channel": channel})
         with Terminal(service) as terminal:
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.send("m")
             terminal.expect("Compose instruction")
             terminal.send("Cannot deliver\r")
@@ -471,7 +462,7 @@ def exercise_unsuitable_channel() -> None:
             terminal.send("\x1b")
             terminal.expect("Discard this")
             terminal.send("y")
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.quit()
     print("Unsuitable all channel is rejected without membership changes")
 

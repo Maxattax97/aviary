@@ -72,7 +72,7 @@ def main() -> None:
             with Terminal(SimpleNamespace(address=address)) as terminal:
                 if os.environ.get("AVIARY_TEST_NARROW"):
                     fcntl.ioctl(terminal.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 12, 40, 0, 0))
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.send("m")
                 terminal.expect("Compose instruction")
                 terminal.send("Commit once")
@@ -96,7 +96,7 @@ def main() -> None:
                 terminal.expect("Notice dismissed")
                 terminal.expect("Instruction draft suspended", timeout=7)
                 terminal.send("q")
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.send("q")
                 terminal.expect("Discard this")
                 terminal.expect(calls[0]["identity"])

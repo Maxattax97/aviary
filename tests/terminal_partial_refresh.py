@@ -44,7 +44,7 @@ def main() -> None:
                 )
             terminal.expect("notices 0", timeout=12)
             service.call({"op": "answer", "id": request_id, "index": 0})
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             service.call(
                 {
                     "op": "create_channel",

@@ -63,7 +63,7 @@
 | SYS-042 | US-037; stakeholder clarification | V1 | T-042 (test) | SL-01, V1-15 | Partial / full acceptance not run |
 | SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
-| SYS-069 | US-003, US-072, US-073 | V1 proposed | T-069 (test) | P-01 | Proposed / not implemented |
+| SYS-069 | US-003, US-072, US-073 | V1 proposed | T-069 (test) | P-01 | Implemented / local tests; concurrency acceptance open |
 | SYS-070 | US-030, US-080, US-081 | V1 proposed | T-070 (test) | P-06 | Proposed / not implemented |
 | SYS-071 | US-053, US-080, US-081 | V1 proposed | T-071 (test) | P-06 | Proposed / not implemented |
 
@@ -151,7 +151,7 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 
 ## Proposed workflow amendment traceability (review required)
 
-These mappings are candidate scope, not implemented or approved acceptance. SYS-005 and SYS-045 need revision if the proposed deferral and shared-queue semantics are approved; existing evidence still describes current behavior.
+Queue and deferral changes have local implementation and partial evidence; asynchronous updates and shared `all` semantics remain open. Existing evidence must be read against the behavior tested at the time.
 
 | Story | Candidate requirement / existing requirement | Planned verification | Proposed ticket |
 |---|---|---|---|

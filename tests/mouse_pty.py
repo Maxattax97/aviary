@@ -70,9 +70,9 @@ def main() -> None:
             assert service.call({"op": "get", "id": ids[1]})["answer"] is None
 
             # The header labels navigate directly to inbox and notices.
-            click(terminal, 28, 0)
+            click(terminal, 22, 0)
             terminal.expect("Mouse inbox message")
-            click(terminal, 40, 0)
+            click(terminal, 36, 0)
             terminal.expect("Mouse notice work")
             terminal.send("q")
             terminal.expect("mouse-second")

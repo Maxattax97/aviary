@@ -65,6 +65,31 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         include_newest: bool,
     },
+    DecisionQueue {
+        #[serde(default)]
+        offset: usize,
+    },
+    DeferDecision {
+        id: i64,
+        identity: String,
+    },
+    SwapDecisions {
+        first: i64,
+        first_version: i64,
+        second: i64,
+        second_version: i64,
+        identity: String,
+    },
+    DecisionStatus {
+        id: i64,
+        #[serde(default)]
+        after: i64,
+    },
+    DecisionEvents {
+        agent: String,
+        #[serde(default)]
+        after: i64,
+    },
     NoticesPage {
         #[serde(default)]
         include_dismissed: bool,

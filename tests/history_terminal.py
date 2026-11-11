@@ -120,14 +120,14 @@ def main() -> None:
             service.call(
                 {"op": "answer_custom", "id": decision_id, "value": "Resolved"}
             )
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.send("gd0\r")
             terminal.expect("Enter a positive numeric ID")
             terminal.send("\x7f" + str(decision_id) + "\r")
             screen = terminal.expect("history-ui-decision")
             assert b"Resolved" in screen, screen
             terminal.send("q")
-            terminal.expect("No active requests")
+            terminal.expect("No decisions")
             terminal.quit()
         page = service.call(
             {

@@ -73,7 +73,7 @@ def main() -> None:
                 == {"type": "suggested", "index": 1, "value": "Yes"},
                 "tmux decision",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             many_id = service.call(
                 {
                     "op": "submit",
@@ -99,7 +99,7 @@ def main() -> None:
                 == {"type": "custom", "value": "custom text"},
                 "tmux custom answer",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             detail_id = service.call(
                 {
                     "op": "submit",
@@ -126,7 +126,7 @@ def main() -> None:
             tmux("send-keys", "-t", "aviary:", "q")
             wait_for_screen("Narrow detail")
             service.call({"op": "answer", "id": detail_id, "index": 0})
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             narrow_id = service.call(
                 {
                     "op": "submit",
@@ -142,7 +142,7 @@ def main() -> None:
                 }
             )["id"]
             screen = wait_for_screen("> 1. Yes")
-            assert "Active decisions" in screen and "Proceed?" in screen, screen
+            assert "Decisions" in screen and "Proceed?" in screen, screen
             assert "Enter confirms" in screen, screen
             assert service.call({"op": "get", "id": narrow_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "Enter")
@@ -151,7 +151,7 @@ def main() -> None:
                 == {"type": "suggested", "index": 1, "value": "Yes"},
                 "narrow recommended answer",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
             resize_id = service.call(
                 {
@@ -178,7 +178,7 @@ def main() -> None:
             tmux("send-keys", "-t", "aviary:", "q")
             wait_for_screen("Resize context")
             service.call({"op": "answer", "id": resize_id, "index": 0})
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             oversized = {
                 "identity": "tmux-bad-notice",
                 "agent": "agent",
@@ -208,7 +208,7 @@ def main() -> None:
             )["id"]
             wait_for_screen("> 1. Yes")
             screen = wait_for_screen("Refresh: notices")
-            assert "Active decisions" in screen and "Proceed?" in screen, screen
+            assert "Decisions" in screen and "Proceed?" in screen, screen
             assert "> 1. Yes" in screen and "Enter confirms" in screen, screen
             assert service.call({"op": "get", "id": warning_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "Enter")
@@ -262,7 +262,7 @@ def main() -> None:
                 == notice_id
             )
             tmux("send-keys", "-t", "aviary:", "q")
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             long_answer = "z" * 280 + " END-OPTION"
             long_id = service.call(
                 {
@@ -292,7 +292,7 @@ def main() -> None:
                 == {"type": "suggested", "index": 0, "value": long_answer},
                 "long recommended answer",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             service.call(
                 {
                     "op": "create_channel",
@@ -308,7 +308,7 @@ def main() -> None:
                 tmux("send-keys", "-t", "aviary:", "j")
             wait_for_screen("Custom:")
             tmux("send-keys", "-t", "aviary:", "Escape")
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             tmux("send-keys", "-t", "aviary:", "m")
             wait_for_screen("Compose instruction")
             instruction = "x" * 145 + " END-INSTRUCTION"
@@ -330,7 +330,7 @@ def main() -> None:
                 == [instruction],
                 "long instruction delivery",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             custom_id = service.call(
                 {
                     "op": "submit",
@@ -356,7 +356,7 @@ def main() -> None:
                 == {"type": "custom", "value": custom},
                 "long custom answer",
             )
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             unicode_id = service.call({"op": "submit_notice", "notice": {
                 "identity": "unicode-notice", "agent": "agent", "work": "Unicode check",
                 "result": "e\u0301 鳥 END-UNICODE",
@@ -369,7 +369,7 @@ def main() -> None:
             tmux("send-keys", "-t", "aviary:", "d")
             service.wait_for(lambda: service.call({"op": "list_notices"})["notices"] == [], "unicode notice dismissal")
             tmux("send-keys", "-t", "aviary:", "q")
-            wait_for_screen("No active requests")
+            wait_for_screen("No decisions")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:

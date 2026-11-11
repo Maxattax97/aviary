@@ -12,6 +12,10 @@ pub enum AppError {
     RequestNotFound,
     #[error("request already answered")]
     AlreadyAnswered,
+    #[error("decision queue index is incomplete")]
+    QueueIndexIncomplete,
+    #[error("queue changed; refresh before retrying")]
+    StaleQueue,
     #[error("invalid option")]
     InvalidOption,
     #[error("message too large or incomplete")]

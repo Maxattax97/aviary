@@ -46,7 +46,7 @@ def main() -> None:
                     },
                 }
             )["id"]
-            terminal.expect("NEW (R)", timeout=12)
+            terminal.expect("New decision received", timeout=12)
             terminal.send("!")
             terminal.expect("Custom answer: draft!")
             assert service.call({"op": "get", "id": ids[7]})["answer"] is None
@@ -57,34 +57,11 @@ def main() -> None:
                 "retained draft answer",
             )
             terminal.expect("New urgent", timeout=12)
-            terminal.send("R")
-            terminal.expect("New urgent")
-            terminal.send("D")
-            terminal.expect("No deferred requests")
-            later_id = service.call(
-                {
-                    "op": "submit",
-                    "request": {
-                        "identity": "arrival-while-deferred",
-                        "agent": "agent",
-                        "question": "New while deferred",
-                        "options": [],
-                    },
-                }
-            )["id"]
-            terminal.expect("NEW (R)", timeout=12)
-            terminal.send("D")
-            terminal.expect("New urgent")
-            terminal.send("R")
             terminal.expect("New urgent")
             terminal.quit()
-        status = service.call({"op": "list_page", "include_newest": True})
-        assert status["newest_id"] == later_id
+        status = service.call({"op": "decision_queue"})
+        assert status["newest_id"] == new_id
         assert status["requests"][0]["id"] == new_id
-        deferred = service.call(
-            {"op": "list_page", "deferred": True, "include_newest": True}
-        )
-        assert deferred["requests"] == [] and deferred["newest_id"] == later_id
     print("Off-page arrival signaled while the original custom draft was preserved")
 
 

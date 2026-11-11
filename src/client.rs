@@ -60,15 +60,12 @@ async fn submit_checked(address: &str, operation: &Operation) -> Result<serde_js
         Operation::Answer { id: expected, .. } | Operation::AnswerCustom { id: expected, .. } => {
             id == Some(*expected)
         }
-        Operation::SetDeferred {
-            id: expected,
-            deferred,
-        } => {
+        Operation::DeferDecision { id: expected, .. } => {
             id == Some(*expected)
                 && response
-                    .get("deferred")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(*deferred)
+                    .get("event_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .is_some_and(|id| id > 0)
         }
         Operation::SetImportance {
             id: expected,
@@ -96,11 +93,21 @@ async fn submit_checked(address: &str, operation: &Operation) -> Result<serde_js
     }
 }
 
-pub async fn wait_for_answer(address: &str, id: i64) -> Result<()> {
+pub async fn wait_for_answer(address: &str, id: i64, after: i64) -> Result<()> {
     loop {
-        let response = network::call(address, &Operation::Get { id }).await?;
-        if !response["answer"].is_null() {
-            println!("{response}");
+        let response = network::call(address, &Operation::DecisionStatus { id, after }).await?;
+        if let Some(answer) = response.get("answer").filter(|answer| !answer.is_null()) {
+            println!("{}", serde_json::json!({"id": id, "answer": answer}));
+            return Ok(());
+        }
+        if let Some(event_id) = response
+            .get("deferred_event")
+            .and_then(serde_json::Value::as_i64)
+        {
+            println!(
+                "{}",
+                serde_json::json!({"id": id, "answer": null, "deferred_event": event_id})
+            );
             return Ok(());
         }
         time::sleep(POLL_INTERVAL).await;
@@ -121,15 +128,11 @@ pub async fn wait_for_message_response(address: &str, id: i64) -> Result<()> {
     }
 }
 
-async fn fetch_requests(address: &str, deferred: bool, offset: usize) -> Result<RequestPage> {
+async fn fetch_requests(address: &str, offset: usize) -> Result<RequestPage> {
     let page: RequestPage = serde_json::from_value(
         network::call_with_timeout(
             address,
-            &Operation::ListPage {
-                deferred,
-                offset,
-                include_newest: true,
-            },
+            &Operation::DecisionQueue { offset },
             POLL_TIMEOUT_MS,
         )
         .await?,
@@ -498,7 +501,7 @@ struct View {
     notice_current: usize,
     notice_page: usize,
     current: usize,
-    deferred_view: bool,
+    defer_retry: Option<(i64, String)>,
     priority_edit: bool,
     detail_page: Option<usize>,
     detail_option: Option<usize>,
@@ -609,10 +612,8 @@ impl View {
             "Operator inbox"
         } else if self.notice_view {
             "Completion notices"
-        } else if self.deferred_view {
-            "Deferred decisions"
         } else {
-            "Active decisions"
+            "Decisions"
         };
         title.len() as u16
     }
@@ -677,7 +678,7 @@ impl View {
             notice_current: 0,
             notice_page: 0,
             current: 0,
-            deferred_view: false,
+            defer_retry: None,
             priority_edit: false,
             detail_page: None,
             detail_option: None,
@@ -754,6 +755,13 @@ impl View {
     }
     fn update_request_page(&mut self, page: RequestPage) -> bool {
         let arrival_changed = self.arrivals.observe(page.newest_id);
+        if arrival_changed {
+            self.arrivals.pending = false;
+            if self.status.is_none() || self.status_expires.is_some() {
+                self.status = Some("New decision received".into());
+                self.status_expires = Some(Instant::now() + Duration::from_secs(4));
+            }
+        }
         if !self.editing && page.requests.is_empty() && self.request_offset > 0 {
             self.request_offset = self.request_previous.pop().unwrap_or(0);
             self.request_loaded = false;
@@ -1418,13 +1426,6 @@ impl View {
         if key.code == KeyCode::Char('n') {
             return Action::ToggleNotices;
         }
-        if key.code == KeyCode::Char('D') {
-            return Action::ToggleDeferred;
-        }
-        if key.code == KeyCode::Char('R') {
-            self.arrivals.pending = false;
-            return Action::Redraw;
-        }
         if !self.request_loaded {
             return if key.code == KeyCode::Char('q') {
                 Action::Quit
@@ -1482,10 +1483,27 @@ impl View {
                 Action::Redraw
             }
             KeyCode::Char('H') => Action::OpenHistory(HistoryKind::Decision, request.id),
-            KeyCode::Char('d') => Action::Submit(Operation::SetDeferred {
-                id: request.id,
-                deferred: !self.deferred_view,
-            }),
+            KeyCode::Char('d') => {
+                let id = request.id;
+                let identity = match &self.defer_retry {
+                    Some((pending, identity)) if *pending == id => identity.clone(),
+                    Some(_) => {
+                        self.status = Some(
+                            "Unconfirmed deferral: return to the same decision to retry".into(),
+                        );
+                        return Action::Redraw;
+                    }
+                    None => match Composer::instruction() {
+                        Ok(composer) => composer.fields[0].clone(),
+                        Err(error) => {
+                            self.status = Some(format!("Cannot create deferral identity: {error}"));
+                            return Action::Redraw;
+                        }
+                    },
+                };
+                self.defer_retry = Some((id, identity.clone()));
+                Action::Submit(Operation::DeferDecision { id, identity })
+            }
             KeyCode::Char('c') => {
                 self.detail_option = None;
                 self.detail_page = Some(0);
@@ -1550,7 +1568,6 @@ enum Action {
     None,
     Redraw,
     Quit,
-    ToggleDeferred,
     ReloadRequests,
     ToggleInbox,
     ReloadInbox,
@@ -1614,8 +1631,9 @@ pub async fn terminal(address: &str) -> Result<()> {
     screen.clear()?;
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
-    let mut submission: Option<tokio::task::JoinHandle<(bool, bool, Result<serde_json::Value>)>> =
-        None;
+    let mut submission: Option<
+        tokio::task::JoinHandle<(bool, bool, bool, Result<serde_json::Value>)>,
+    > = None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     display(&mut screen, &view)?;
     loop {
@@ -1638,7 +1656,6 @@ pub async fn terminal(address: &str) -> Result<()> {
                     history_task = Some(tokio::spawn(async move { (started, fetch_history(&address, kind, id, section, offset).await) }));
                 } else {
                     let address = address.to_owned();
-                    let deferred = view.deferred_view;
                     let request_offset = view.request_offset;
                     let inbox_view = view.inbox_view;
                     let inbox_offset = view.inbox_offset;
@@ -1646,11 +1663,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                     let current_generation = generation;
                     refresh = Some(tokio::spawn(async move {
                         let result = tokio::join!(
-                            fetch_requests(&address, deferred, request_offset),
+                            fetch_requests(&address, request_offset),
                             fetch_notices(&address, notice_offset),
                             async { if inbox_view { Some(fetch_operator_inbox(&address, inbox_offset).await) } else { None } },
                         );
-                        (current_generation, deferred, inbox_view, result)
+                        (current_generation, inbox_view, result)
                     }));
                 }
             }
@@ -1661,10 +1678,10 @@ pub async fn terminal(address: &str) -> Result<()> {
                 }
             }, if refresh.is_some() => {
                 refresh = None;
-                let (started, deferred, inbox_view, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                let (started, inbox_view, refreshed) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
-                if started != generation || deferred != view.deferred_view || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy || view.help {
+                if started != generation || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy || view.help {
                     continue;
                 }
                 let (requests, notices, messages) = refreshed;
@@ -1723,7 +1740,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 submission = None;
                 view.busy = false;
                 view.status_expires = None;
-                let (is_instruction, is_notice, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                let (is_instruction, is_notice, is_defer, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 if is_instruction {
                     match result {
                         Ok(_response) => {
@@ -1745,8 +1762,8 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(_response) => { view.status = Some(if is_notice { "Notice dismissed".into() } else { "Action accepted".into() }); view.status_expires = Some(Instant::now() + Duration::from_secs(4)); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
-                        Err(error) => { view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else { format!("Unconfirmed: {error}; check state before retry") }); }
+                        Ok(_response) => { if is_defer { view.defer_retry = None; } view.status = Some(if is_notice { "Notice dismissed".into() } else if is_defer { "Decision deferred; notice recorded".into() } else { "Action accepted".into() }); view.status_expires = Some(Instant::now() + Duration::from_secs(4)); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
+                        Err(error) => { if is_defer && rejection(&error) { view.defer_retry = None; } view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else { format!("Unconfirmed: {error}; check state before retry") }); }
                     }
                 }
                 display(&mut screen, &view)?;
@@ -1829,13 +1846,6 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         interval.reset_immediately();
                     },
-                    Action::ToggleDeferred => {
-                        generation = generation.wrapping_add(1);
-                        view.deferred_view = !view.deferred_view;
-                        view.reset_request_page();
-                        display(&mut screen, &view)?;
-                        interval.reset_immediately();
-                    },
                     Action::ReloadRequests => {
                         generation = generation.wrapping_add(1);
                         display(&mut screen, &view)?;
@@ -1848,7 +1858,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, false, submit_checked(&address, &Operation::SendMessage { message }).await)
+                            (true, false, false, submit_checked(&address, &Operation::SendMessage { message }).await)
                         }));
                     },
                     Action::SendReply(reply) => {
@@ -1858,7 +1868,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
-                            (true, false, submit_checked(&address, &Operation::ReplyMessage { reply }).await)
+                            (true, false, false, submit_checked(&address, &Operation::ReplyMessage { reply }).await)
                         }));
                     },
                     Action::Submit(operation) => {
@@ -1868,8 +1878,9 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                         let address = address.to_owned();
                         let is_notice = matches!(&operation, Operation::DismissNotice { .. });
+                        let is_defer = matches!(&operation, Operation::DeferDecision { .. });
                         submission = Some(tokio::spawn(async move {
-                            (false, is_notice, submit_checked(&address, &operation).await)
+                            (false, is_notice, is_defer, submit_checked(&address, &operation).await)
                         }));
                     }
                 }
@@ -2033,7 +2044,7 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
     if view.help {
         let help = "Decisions: h/l request; j/k or 1-9 choose; Enter confirms
 d defer/restore; p importance; c context; o answer detail
-Tab focus; D queues; R clear arrival
+Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
 Inbox: Tab focus; arrows move; r reply; H history
 Notices: Tab focus; arrows move; d dismiss
@@ -2078,14 +2089,6 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
     }
     if view.suspended_instruction.is_some() {
         println!("Instruction draft suspended; m resumes from decisions.\r");
-    }
-    let new_arrival = view.arrivals.pending;
-    if new_arrival
-        && (view.inbox_view || view.notice_view)
-        && view.composer.is_none()
-        && view.history.is_none()
-    {
-        println!("New decisions (R in queue)\r");
     }
     if let Some(composer) = &view.composer {
         if composer.reply_to.is_none() {
@@ -2307,9 +2310,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         view.notices.len().to_string()
     };
     let width = terminal::size().map(|(cols, _)| cols).unwrap_or(80);
-    if new_arrival {
-        println!("Open completion notices: {} | NEW (R)\r", notice_count);
-    } else if width > 0 && width < 60 {
+    if width > 0 && width < 60 {
         println!("Open completion notices: {} (n)\r", notice_count);
     } else {
         println!(
@@ -2344,11 +2345,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         }
         println!(
             "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r",
-            if view.deferred_view {
-                "Deferred"
-            } else {
-                "Active"
-            },
+            "Decisions",
             view.request_offset + view.current + 1,
             view.request_offset + view.requests.len(),
             if view.request_next.is_some() { "+" } else { "" },
@@ -2418,23 +2415,11 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         } else {
             println!(
                 "\r\nEnter confirms answer to {}; d {}; p importance; ? help.",
-                pending.id,
-                if view.deferred_view {
-                    "restores"
-                } else {
-                    "defers"
-                }
+                pending.id, "defers"
             );
         }
     } else {
-        println!(
-            "No {} requests. i inbox; ? help; q quits.",
-            if view.deferred_view {
-                "deferred"
-            } else {
-                "active"
-            }
-        );
+        println!("No {} requests. i inbox; ? help; q quits.", "pending");
     }
     render(screen, &output)
 }
@@ -2605,22 +2590,9 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
                 ));
                 text
             })
-            .unwrap_or_else(|| {
-                format!(
-                    "No {} requests",
-                    if view.deferred_view {
-                        "deferred"
-                    } else {
-                        "active"
-                    }
-                )
-            });
+            .unwrap_or_else(|| "No decisions".into());
         (
-            if view.deferred_view {
-                "Deferred decisions"
-            } else {
-                "Active decisions"
-            },
+            "Decisions",
             "Decisions",
             "Decision".into(),
             rows,
@@ -2695,11 +2667,7 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
         } else {
             view.notices.len().to_string()
         };
-        let arrival = if view.arrivals.pending {
-            " NEW (R)"
-        } else {
-            ""
-        };
+        let arrival = "";
         let heading = if area.width < 60 {
             format!("Aviary {title} I:i N:{notices}{arrival}")
         } else {
@@ -3146,7 +3114,7 @@ mod tests {
     }
 
     #[test]
-    fn arrival_indicator_tracks_new_ids_outside_the_current_page() {
+    fn arrivals_show_transient_notification_without_clearing_draft() {
         let mut view = View::new();
         let page = |newest_id| RequestPage {
             requests: vec![request(None, 0)],
@@ -3154,22 +3122,13 @@ mod tests {
             newest_id,
         };
         view.update_request_page(page(Some(42)));
-        assert!(!view.arrivals.pending);
-        view.update_request_page(page(Some(43)));
-        assert!(view.arrivals.pending);
-        assert_eq!(view.current().map(|item| item.id), Some(42));
         view.key(key(KeyCode::Char('j')));
         view.key(key(KeyCode::Enter));
         view.key(key(KeyCode::Char('R')));
-        assert_eq!(view.custom, "R");
-        assert!(view.arrivals.pending);
-        view.key(key(KeyCode::Esc));
-        view.key(key(KeyCode::Char('R')));
-        assert!(!view.arrivals.pending);
         view.update_request_page(page(Some(43)));
-        assert!(!view.arrivals.pending);
-        view.update_request_page(page(Some(44)));
-        assert!(view.arrivals.pending);
+        assert_eq!(view.custom, "R");
+        assert_eq!(view.status.as_deref(), Some("New decision received"));
+        assert!(view.status_expires.is_some());
     }
 
     #[test]
