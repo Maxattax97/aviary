@@ -396,6 +396,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         for notice_id in notice_ids[:7]:
             service.call({"op": "dismiss_notice", "id": notice_id})
         terminal.expect("notices 3")
+        terminal.expect(f"Notice #{notice_ids[-1]}")
         terminal.send("d")
         service.wait_for(
             lambda: notice_ids[-1]

@@ -64,8 +64,8 @@
 | SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-069 | US-003, US-072, US-073 | V1 proposed | T-069 (test) | P-01 | Implemented / local tests; concurrency acceptance open |
-| SYS-070 | US-030, US-080, US-081 | V1 proposed | T-070 (test) | P-06 | Proposed / not implemented |
-| SYS-071 | US-053, US-080, US-081 | V1 proposed | T-071 (test) | P-06 | Proposed / not implemented |
+| SYS-070 | US-030, US-080, US-081 | V1 proposed | T-070 (test) | P-06 | Partial local evidence; broader saturation and remote validation open |
+| SYS-071 | US-053, US-080, US-081 | V1 proposed | T-071 (test) | P-06 | Partial local restart and reconciliation evidence |
 
 ## Stories to requirements and disposition
 

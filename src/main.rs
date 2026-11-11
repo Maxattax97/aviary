@@ -60,6 +60,8 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         after_event: i64,
     },
+    /// Stream change hints and connection state for durable-state reconciliation.
+    Watch { address: String },
     /// Wait for a message response.
     WaitMessage { address: String, id: i64 },
 }
@@ -79,6 +81,7 @@ impl Command {
                 id,
                 after_event,
             } => client::wait_for_answer(&address, id, after_event).await,
+            Self::Watch { address } => client::watch(&address).await,
             Self::WaitMessage { address, id } => {
                 client::wait_for_message_response(&address, id).await
             }

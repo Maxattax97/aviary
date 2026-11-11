@@ -42,6 +42,9 @@ def main() -> None:
                     "DELETE FROM completion_notices WHERE identity = ?",
                     (notice["identity"],),
                 )
+            # Direct SQL is a fixture-only external mutation. A service action
+            # wakes subscribed clients so they reconcile durable state.
+            service.call({"op": "set_importance", "id": request_id, "importance": 0})
             terminal.expect("notices 0", timeout=12)
             service.call({"op": "answer", "id": request_id, "index": 0})
             terminal.expect("No decisions")
@@ -74,6 +77,7 @@ def main() -> None:
                     "INSERT INTO requests (identity, payload) VALUES (?, ?)",
                     (legacy["identity"], json.dumps(legacy)),
                 )
+            service.call({"op": "create_channel", "channel": {"name": "wake", "members": ["agent"]}})
             terminal.expect("Refresh incomplete: decisions:", timeout=12)
             terminal.send("i")
             terminal.expect("Independent inbox", timeout=12)

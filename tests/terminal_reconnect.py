@@ -37,7 +37,7 @@ def stop(service: Service) -> None:
     service.process.wait(timeout=5)
 
 
-def responsive_while_poll_is_waiting() -> None:
+def responsive_while_connection_is_waiting() -> None:
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen()
@@ -56,7 +56,7 @@ def responsive_while_poll_is_waiting() -> None:
 
 
 def main() -> None:
-    responsive_while_poll_is_waiting()
+    responsive_while_connection_is_waiting()
     with Service() as service:
         request_id = service.call(
             {
@@ -74,7 +74,7 @@ def main() -> None:
             terminal.send("j\rdraft survives")
             terminal.expect("draft survives")
             stop(service)
-            terminal.expect("Refresh incomplete", timeout=6)
+            terminal.expect("Live updates disconnected", timeout=6)
             assert terminal.process.poll() is None
             terminal.send("\r")
             terminal.expect("Action in progress", timeout=3)
@@ -124,12 +124,12 @@ def main() -> None:
         with Terminal(service) as terminal:
             terminal.expect("No decisions")
             stop(service)
-            terminal.expect("Refresh incomplete", timeout=6)
+            terminal.expect("Live updates disconnected", timeout=6)
             started = time.monotonic()
             terminal.quit()
             assert time.monotonic() - started < 5
         print(
-            "Terminal remained responsive during a stalled poll and recovered after restart"
+            "Terminal remained responsive during a stalled connection and recovered after restart"
         )
 
 

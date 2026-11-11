@@ -161,11 +161,18 @@ def main() -> None:
                         "agent": "tmux-agent",
                         "question": "Resize context",
                         "options": ["Yes"],
-                        "context": "x" * 540 + "ANCHOR-MARKER" + "x" * 400,
+                        "context": "x" * 560 + "ANCHOR-MARKER" + "x" * 400,
                     },
                 }
             )["id"]
-            wait_for_screen("Resize context")
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                screen = wait_for_screen("Resize context")
+                if any(len(line) >= 90 for line in screen.splitlines()):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError(f"Wide layout did not appear: {screen}")
             tmux("send-keys", "-t", "aviary:", "c")
             wait_for_screen("page 1/")
             tmux("send-keys", "-t", "aviary:", "j", "j", "j")
@@ -224,6 +231,7 @@ def main() -> None:
                     "DELETE FROM completion_notices WHERE identity = ?",
                     (oversized["identity"],),
                 )
+            tmux("send-keys", "-t", "aviary:", "R")
             wait_for_screen("N:0")
             notice_id = service.call(
                 {
@@ -278,7 +286,14 @@ def main() -> None:
                 }
             )["id"]
             tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
-            wait_for_screen("[rec]")
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                screen = wait_for_screen("[rec]")
+                if any(len(line) >= 90 for line in screen.splitlines()):
+                    break
+                time.sleep(0.05)
+            else:
+                raise AssertionError(f"Wide layout did not appear: {screen}")
             tmux("send-keys", "-t", "aviary:", "o")
             wait_for_screen("Answer:")
             tmux("send-keys", "-t", "aviary:", "j")

@@ -1,21 +1,18 @@
 use std::{
     cell::Cell,
     io::{self, Read, Write},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
     time::{Duration, Instant},
 };
 
 use crossterm::{
     cursor::Show,
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
+        KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     },
     execute, terminal,
 };
+use futures_util::StreamExt;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
@@ -24,7 +21,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
-use tokio::{sync::mpsc, time};
+use tokio::{
+    sync::{mpsc, Notify},
+    time,
+};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -37,8 +37,7 @@ use crate::{
     },
 };
 
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
-const POLL_TIMEOUT_MS: i32 = 1_000;
+const READ_TIMEOUT_MS: i32 = 1_000;
 
 fn rejection(error: &crate::error::AppError) -> bool {
     matches!(error, crate::error::AppError::Remote(message)
@@ -93,38 +92,83 @@ async fn submit_checked(address: &str, operation: &Operation) -> Result<serde_js
     }
 }
 
+pub async fn watch(address: &str) -> Result<()> {
+    let (_watch, mut changes) = network::watch_changes(address);
+    while changes.changed().await.is_ok() {
+        let state = *changes.borrow_and_update();
+        println!(
+            "{}",
+            serde_json::json!({"connected": state.connected, "revision": state.revision})
+        );
+        io::stdout().flush()?;
+    }
+    Err(crate::error::AppError::Task(
+        "change subscription closed".into(),
+    ))
+}
+
 pub async fn wait_for_answer(address: &str, id: i64, after: i64) -> Result<()> {
+    let (_watch, mut changes) = network::watch_changes(address);
     loop {
         let response = network::call(address, &Operation::DecisionStatus { id, after }).await?;
-        if let Some(answer) = response.get("answer").filter(|answer| !answer.is_null()) {
+        if response.get("id").and_then(serde_json::Value::as_i64) != Some(id) {
+            return Err(crate::error::AppError::InvalidFrame);
+        }
+        let answer = response
+            .get("answer")
+            .ok_or(crate::error::AppError::InvalidFrame)?;
+        let event = response
+            .get("deferred_event")
+            .ok_or(crate::error::AppError::InvalidFrame)?;
+        if !answer.is_null() {
             println!("{}", serde_json::json!({"id": id, "answer": answer}));
             return Ok(());
         }
-        if let Some(event_id) = response
-            .get("deferred_event")
-            .and_then(serde_json::Value::as_i64)
-        {
+        if let Some(event_id) = event.as_i64().filter(|event_id| *event_id > 0) {
             println!(
                 "{}",
                 serde_json::json!({"id": id, "answer": null, "deferred_event": event_id})
             );
             return Ok(());
         }
-        time::sleep(POLL_INTERVAL).await;
+        if !event.is_null() {
+            return Err(crate::error::AppError::InvalidFrame);
+        }
+        changes
+            .changed()
+            .await
+            .map_err(|_| crate::error::AppError::Task("change subscription closed".into()))?;
+        if !changes.borrow_and_update().connected {
+            return Err(crate::error::AppError::Task(
+                "live updates disconnected".into(),
+            ));
+        }
     }
 }
 
 pub async fn wait_for_message_response(address: &str, id: i64) -> Result<()> {
+    let (_watch, mut changes) = network::watch_changes(address);
     loop {
         let response = network::call(address, &Operation::GetMessageResponse { id }).await?;
-        if response
+        if response.get("id").and_then(serde_json::Value::as_i64) != Some(id) {
+            return Err(crate::error::AppError::InvalidFrame);
+        }
+        let value = response
             .get("response")
-            .is_some_and(|value| !value.is_null())
-        {
+            .ok_or(crate::error::AppError::InvalidFrame)?;
+        if !value.is_null() {
             println!("{response}");
             return Ok(());
         }
-        time::sleep(POLL_INTERVAL).await;
+        changes
+            .changed()
+            .await
+            .map_err(|_| crate::error::AppError::Task("change subscription closed".into()))?;
+        if !changes.borrow_and_update().connected {
+            return Err(crate::error::AppError::Task(
+                "live updates disconnected".into(),
+            ));
+        }
     }
 }
 
@@ -133,7 +177,7 @@ async fn fetch_requests(address: &str, offset: usize) -> Result<RequestPage> {
         network::call_with_timeout(
             address,
             &Operation::DecisionQueue { offset },
-            POLL_TIMEOUT_MS,
+            READ_TIMEOUT_MS,
         )
         .await?,
     )?;
@@ -154,7 +198,7 @@ async fn fetch_notices(address: &str, offset: usize) -> Result<NoticePage> {
                 include_dismissed: false,
                 offset,
             },
-            POLL_TIMEOUT_MS,
+            READ_TIMEOUT_MS,
         )
         .await?,
     )?;
@@ -172,7 +216,7 @@ async fn fetch_operator_inbox(address: &str, offset: usize) -> Result<InboxPage>
                 participant: "operator".into(),
                 offset,
             },
-            POLL_TIMEOUT_MS,
+            READ_TIMEOUT_MS,
         )
         .await?,
     )?;
@@ -211,7 +255,7 @@ async fn fetch_history(
             section,
             offset,
         },
-        POLL_TIMEOUT_MS,
+        READ_TIMEOUT_MS,
     )
     .await?;
     if response.get("id").and_then(serde_json::Value::as_i64) != Some(id)
@@ -333,15 +377,11 @@ type Screen = Terminal<CrosstermBackend<BasicColorWriter<io::Stdout>>>;
 
 // Restore the terminal and stop the input thread on every ordinary exit path.
 struct TerminalGuard {
-    stop: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    input: tokio::task::JoinHandle<()>,
 }
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
+        self.input.abort();
         let _ = execute!(
             io::stdout(),
             DisableMouseCapture,
@@ -467,6 +507,7 @@ struct View {
     suspended_instruction: Option<Composer>,
     status: Option<String>,
     status_expires: Option<Instant>,
+    connection_unavailable: bool,
     poll_error: Option<String>,
     poll_summary: Option<String>,
     busy: bool,
@@ -553,11 +594,12 @@ impl View {
             }
             return Action::None;
         }
-        let has_refresh = if width < 60 {
-            self.poll_summary.is_some()
-        } else {
-            self.poll_error.is_some()
-        };
+        let has_refresh = self.connection_unavailable
+            || if width < 60 {
+                self.poll_summary.is_some()
+            } else {
+                self.poll_error.is_some()
+            };
         let has_status = self.busy || self.status.is_some() || self.suspended_instruction.is_some();
         let footer_height = 2
             + u16::from(has_refresh && (has_status || self.draft_request_missing))
@@ -644,6 +686,7 @@ impl View {
             suspended_instruction: None,
             status: None,
             status_expires: None,
+            connection_unavailable: false,
             poll_error: None,
             poll_summary: None,
             busy: false,
@@ -1129,6 +1172,14 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('R')
+            && self.poll_error.is_some()
+            && !self.editing
+            && !self.priority_edit
+            && self.detail_page.is_none()
+        {
+            return Action::ReloadRequests;
+        }
         let mut key = key;
         let queue_view = self.inbox_view
             || self.notice_view
@@ -1362,7 +1413,12 @@ impl View {
         }
         if self.editing {
             match key.code {
-                KeyCode::Esc => self.editing = false,
+                KeyCode::Esc => {
+                    self.editing = false;
+                    if self.draft_request_missing {
+                        return Action::ReloadRequests;
+                    }
+                }
                 KeyCode::Backspace => {
                     self.custom.pop();
                 }
@@ -1426,6 +1482,14 @@ impl View {
         if key.code == KeyCode::Char('n') {
             return Action::ToggleNotices;
         }
+        if key.code == KeyCode::Char('U') {
+            if let Some((id, identity)) = &self.defer_retry {
+                return Action::Submit(Operation::DeferDecision {
+                    id: *id,
+                    identity: identity.clone(),
+                });
+            }
+        }
         if !self.request_loaded {
             return if key.code == KeyCode::Char('q') {
                 Action::Quit
@@ -1488,9 +1552,8 @@ impl View {
                 let identity = match &self.defer_retry {
                     Some((pending, identity)) if *pending == id => identity.clone(),
                     Some(_) => {
-                        self.status = Some(
-                            "Unconfirmed deferral: return to the same decision to retry".into(),
-                        );
+                        self.status =
+                            Some("Unconfirmed deferral: U retries the previous action".into());
                         return Action::Redraw;
                     }
                     None => match Composer::instruction() {
@@ -1587,42 +1650,24 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     terminal::enable_raw_mode()?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let thread_stop = stop.clone();
-    let (sender, mut receiver) = mpsc::unbounded_channel();
-    let thread = std::thread::spawn(move || {
-        while !thread_stop.load(Ordering::Relaxed) {
-            match event::poll(Duration::from_millis(100)) {
-                Ok(true) => match event::read() {
-                    Ok(event @ (Event::Key(_) | Event::Resize(_, _) | Event::Mouse(_))) => {
-                        if sender.send(Ok(event)).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        break;
-                    }
-                },
-                Ok(false) => {}
-                Err(error) => {
-                    let _ = sender.send(Err(error));
-                    break;
-                }
+    let mut events = EventStream::new();
+    let (sender, mut receiver) = mpsc::channel(256);
+    let input = tokio::spawn(async move {
+        while let Some(event) = events.next().await {
+            if sender.send(event).await.is_err() {
+                break;
             }
         }
     });
-    let _guard = TerminalGuard {
-        stop,
-        thread: Some(thread),
-    };
+    let _guard = TerminalGuard { input };
+    let (_watch, mut changes) = network::watch_changes(address);
+    let refresh_trigger = Notify::new();
+    refresh_trigger.notify_one();
     execute!(
         io::stdout(),
         terminal::EnterAlternateScreen,
         EnableMouseCapture
     )?;
-    let mut interval = time::interval(POLL_INTERVAL);
     let mut view = View::new();
     let mut screen = Terminal::new(CrosstermBackend::new(BasicColorWriter {
         inner: io::stdout(),
@@ -1637,8 +1682,9 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     display(&mut screen, &view)?;
     loop {
+        let status_deadline = view.status_expires;
         tokio::select! {
-            _ = time::sleep(Duration::from_millis(100)), if view.status_expires.is_some() => {
+            _ = async { if let Some(deadline) = status_deadline { time::sleep_until(deadline.into()).await } else { std::future::pending().await } }, if status_deadline.is_some() => {
                 if view.status_expires.is_some_and(|deadline| Instant::now() >= deadline) {
                     view.status = None;
                     view.status_expires = None;
@@ -1647,7 +1693,15 @@ pub async fn terminal(address: &str) -> Result<()> {
             }
             _ = interrupt.recv() => return Ok(()),
             _ = terminate.recv() => return Ok(()),
-            _ = interval.tick(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
+            changed = changes.changed() => {
+                if changed.is_err() { return Err(crate::error::AppError::Task("change subscription closed".into())); }
+                let state = *changes.borrow_and_update();
+                let was_unavailable = view.connection_unavailable;
+                view.connection_unavailable = !state.connected;
+                if state.connected { refresh_trigger.notify_one(); }
+                if was_unavailable != view.connection_unavailable { display(&mut screen, &view)?; }
+            }
+            _ = refresh_trigger.notified(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
                 if let Some(history) = &mut view.history {
                     history.needs_load = false;
                     let (kind, id, section, offset) = (history.kind, history.id, history.section, history.offset);
@@ -1682,9 +1736,13 @@ pub async fn terminal(address: &str) -> Result<()> {
                 // A refresh started before a queue switch or action must never
                 // replace newer UI state with an obsolete snapshot.
                 if started != generation || inbox_view != view.inbox_view || view.composer.is_some() || view.history.is_some() || view.busy || view.help {
+                    refresh_trigger.notify_one();
                     continue;
                 }
                 let (requests, notices, messages) = refreshed;
+                let requests_ok = requests.is_ok();
+                let notices_ok = notices.is_ok();
+                let messages_ok = messages.as_ref().is_some_and(|result| result.is_ok());
                 let mut errors = Vec::new();
                 let mut changed = false;
                 match requests {
@@ -1702,10 +1760,17 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 }
                 let summary = if errors.is_empty() { None } else { Some(format!("Refresh: {}", errors.iter().map(|(name, _)| *name).collect::<Vec<_>>().join(", "))) };
-                let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; retrying", errors.iter().map(|(name, error)| format!("{name}: {error}")).collect::<Vec<_>>().join("; "))) };
+                let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; press R to retry", errors.iter().map(|(name, error)| format!("{name}: {error}")).collect::<Vec<_>>().join("; "))) };
                 if view.poll_summary != summary { view.poll_summary = summary; changed = true; }
                 if view.poll_error != error { view.poll_error = error; changed = true; }
                 if changed { display(&mut screen, &view)?; }
+                // A successful page can reveal that an offset has moved beyond
+                // the end. Load the selected fallback page without a timer.
+                if (requests_ok && !view.request_loaded)
+                    || (notices_ok && !view.notice_loaded)
+                    || (messages_ok && !view.inbox_loaded) {
+                    refresh_trigger.notify_one();
+                }
             }
             result = async {
                 match history_task.as_mut() {
@@ -1729,7 +1794,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         display(&mut screen, &view)?;
                     }
                 }
-                if view.history.as_ref().is_some_and(|history| history.needs_load) { interval.reset_immediately(); }
+                if view.history.as_ref().is_some_and(|history| history.needs_load) { refresh_trigger.notify_one(); }
             }
             result = async {
                 match submission.as_mut() {
@@ -1763,14 +1828,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                 } else {
                     match result {
                         Ok(_response) => { if is_defer { view.defer_retry = None; } view.status = Some(if is_notice { "Notice dismissed".into() } else if is_defer { "Decision deferred; notice recorded".into() } else { "Action accepted".into() }); view.status_expires = Some(Instant::now() + Duration::from_secs(4)); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
-                        Err(error) => { if is_defer && rejection(&error) { view.defer_retry = None; } view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else { format!("Unconfirmed: {error}; check state before retry") }); }
+                        Err(error) => { if is_defer && rejection(&error) { view.defer_retry = None; } view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else if is_defer { format!("Unconfirmed deferral: {error}; U retries the same action") } else { format!("Unconfirmed: {error}; check state before retry") }); }
                     }
                 }
                 display(&mut screen, &view)?;
-                interval.reset_immediately();
+                refresh_trigger.notify_one();
             }
-            key = receiver.recv() => {
-                let Some(event) = key else { return Ok(()); };
+            event = receiver.recv() => {
+                let Some(event) = event else { return Ok(()); };
                 let action = match event? {
                     Event::Key(key) => {
                         let too_small = terminal::size().is_ok_and(|(w, h)| w < 40 || h < 12);
@@ -1802,16 +1867,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         view.history_lookup = None;
                         view.history = Some(HistoryView::new(kind, id));
-                        display(&mut screen, &view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::CloseHistory => {
                         generation = generation.wrapping_add(1);
                         view.history = None;
-                        display(&mut screen, &view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::LoadHistory => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::ToggleNotices => {
                         generation = generation.wrapping_add(1);
@@ -1822,11 +1887,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                             view.notice_view = !view.notice_view;
                         }
                         view.reset_notice_page();
-                        display(&mut screen, &view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::ReloadNotices => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?; interval.reset_immediately();
+                        display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::ToggleInbox => {
                         generation = generation.wrapping_add(1);
@@ -1839,17 +1904,17 @@ pub async fn terminal(address: &str) -> Result<()> {
                         view.inbox_loaded = false;
                         view.inbox_page = 0;
                         display(&mut screen, &view)?;
-                        interval.reset_immediately();
+                        refresh_trigger.notify_one();
                     },
                     Action::ReloadInbox => {
                         generation = generation.wrapping_add(1);
                         display(&mut screen, &view)?;
-                        interval.reset_immediately();
+                        refresh_trigger.notify_one();
                     },
                     Action::ReloadRequests => {
                         generation = generation.wrapping_add(1);
                         display(&mut screen, &view)?;
-                        interval.reset_immediately();
+                        refresh_trigger.notify_one();
                     },
                     Action::SendInstruction(message) => {
                         generation = generation.wrapping_add(1);
@@ -2043,7 +2108,7 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
     }
     if view.help {
         let help = "Decisions: h/l request; j/k or 1-9 choose; Enter confirms
-d defer/restore; p importance; c context; o answer detail
+d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
 Inbox: Tab focus; arrows move; r reply; H history
@@ -2630,7 +2695,9 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
             action_status = Some(warning.to_string());
         }
     }
-    let refresh_status = if terminal::size().is_ok_and(|(w, _)| w < 60) {
+    let refresh_status = if view.connection_unavailable {
+        Some("Live updates disconnected; reconnecting")
+    } else if terminal::size().is_ok_and(|(w, _)| w < 60) {
         view.poll_summary.as_deref()
     } else {
         view.poll_error.as_deref()
@@ -2898,6 +2965,19 @@ mod tests {
     }
     fn key(c: KeyCode) -> KeyEvent {
         KeyEvent::new(c, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn uncertain_deferral_retry_retains_target_without_a_current_item() {
+        let mut view = View::new();
+        view.defer_retry = Some((42, "original-identity".into()));
+        match view.key(key(KeyCode::Char('U'))) {
+            Action::Submit(Operation::DeferDecision { id, identity }) => {
+                assert_eq!(id, 42);
+                assert_eq!(identity, "original-identity");
+            }
+            _ => panic!("expected the original deferral to be retried"),
+        }
     }
 
     #[test]

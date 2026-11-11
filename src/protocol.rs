@@ -52,6 +52,7 @@ impl DecisionRequest {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
+    SubscribeChanges,
     Submit {
         request: DecisionRequest,
     },

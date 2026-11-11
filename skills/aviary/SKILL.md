@@ -23,7 +23,9 @@ id=$(printf '%s' "$accepted" | python3 -c 'import json,sys; print(json.load(sys.
 aviary call "$AVIARY_ADDR" "{\"op\":\"get\",\"id\":$id}"
 ```
 
-`get` returns `answer: null` while pending; a response has `type` (`suggested` or `custom`) and `value`, with an original zero-based `index` for suggested answers. Use `aviary wait ADDRESS ID` to wait for an answer or a deferral event. If the output has `deferred_event`, retain that event ID and continue with `aviary wait ADDRESS ID --after-event EVENT_ID` when appropriate. A deferral is not an answer; move on if possible. The waiter currently polls and exits on a service error. Do not submit an answer on the operator's behalf unless authorized.
+`get` returns `answer: null` while pending; a response has `type` (`suggested` or `custom`) and `value`, with an original zero-based `index` for suggested answers. Use `aviary wait ADDRESS ID` to wait for an answer or a deferral event. If the output has `deferred_event`, retain that event ID and continue with `aviary wait ADDRESS ID --after-event EVENT_ID` when appropriate. A deferral is not an answer; move on if possible. The waiter subscribes to change hints and exits on a service error. Do not submit an answer on the operator's behalf unless authorized.
+
+Run `aviary watch ADDRESS` to receive JSON change hints and connection state. Hints can coalesce and are not durable records; read `decision_queue`, `decision_events`, or the relevant inbox after connecting and after each hint. On reconnect, reread durable state.
 
 To inspect and reorder pending decisions, read `decision_queue` pages and use `swap_decisions` with the two IDs and their listed `version` values. A swap only succeeds at equal importance; on a stale-queue error refresh the listing. Supply a new deployment-unique action identity and reuse the exact operation and identity after an unknown outcome.
 

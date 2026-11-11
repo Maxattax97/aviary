@@ -3,17 +3,19 @@ use crate::{
     protocol::{Operation, MAX_MESSAGE_BYTES, MAX_RESPONSE_BYTES},
     storage::Storage,
 };
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{collections::HashSet, time::Duration};
+use tokio::sync::watch;
 use zeromq::{
-    DealerSocket, RouterSocket, Socket, SocketOptions, SocketRecv, SocketSend, ZmqMessage,
+    DealerSocket, RouterSocket, Socket, SocketEvent, SocketOptions, SocketRecv, SocketSend,
+    ZmqError, ZmqMessage,
 };
 
 const VERSION: u32 = 2;
 const TIMEOUT_MS: i32 = 10_000;
-// Bound reply queue waits so one slow peer cannot stall other clients.
-const REPLY_ENQUEUE_TIMEOUT: Duration = Duration::from_millis(1);
+const MAX_SUBSCRIBERS: usize = 256;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RequestEnvelope {
@@ -80,6 +82,95 @@ pub async fn call_with_timeout(
     Ok(response.result)
 }
 
+/// A change subscription is a hint; reconnect requires a durable-state read.
+#[derive(Clone, Copy, Default)]
+pub struct ChangeState {
+    pub connected: bool,
+    pub revision: u64,
+}
+pub struct ChangeWatch(tokio::task::JoinHandle<()>);
+impl Drop for ChangeWatch {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+pub fn watch_changes(address: &str) -> (ChangeWatch, watch::Receiver<ChangeState>) {
+    let address = address.to_owned();
+    let (sender, receiver) = watch::channel(ChangeState::default());
+    let task = tokio::spawn(async move {
+        let mut reported_disconnected = false;
+        loop {
+            if let Err(error) = watch_connection(&address, &sender).await {
+                tracing::debug!(%error, "change subscription disconnected");
+            }
+            if sender.borrow().connected || !reported_disconnected {
+                sender.send_modify(|state| state.connected = false);
+                reported_disconnected = true;
+            }
+            // Reconnect after a failed connection; no state reads are polled.
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
+    (ChangeWatch(task), receiver)
+}
+
+async fn watch_connection(address: &str, changes: &watch::Sender<ChangeState>) -> Result<()> {
+    let mut options = SocketOptions::default();
+    options.message_limits(
+        MAX_RESPONSE_BYTES as usize,
+        MAX_RESPONSE_BYTES as usize + 4096,
+        2,
+    );
+    let mut socket = DealerSocket::with_options(options);
+    let mut monitor = socket.monitor();
+    let timeout = Duration::from_millis(TIMEOUT_MS as u64);
+    tokio::time::timeout(timeout, socket.connect(&format!("tcp://{address}")))
+        .await
+        .map_err(|_| AppError::Timeout)??;
+    let request = serde_json::to_vec(&RequestEnvelope {
+        version: VERSION,
+        correlation: "subscribe".into(),
+        operation: Operation::SubscribeChanges,
+    })?;
+    tokio::time::timeout(timeout, socket.send(ZmqMessage::from(request)))
+        .await
+        .map_err(|_| AppError::Timeout)??;
+    let response = tokio::time::timeout(timeout, socket.recv())
+        .await
+        .map_err(|_| AppError::Timeout)??;
+    let frames = response.into_vec();
+    if frames.len() != 1 {
+        return Err(AppError::InvalidFrame);
+    }
+    let response: ResponseEnvelope =
+        serde_json::from_slice(frames.first().ok_or(AppError::InvalidFrame)?)?;
+    if response.version != VERSION
+        || response.correlation != "subscribe"
+        || response.result.get("watching").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(AppError::InvalidFrame);
+    }
+    changes.send_modify(|state| {
+        state.connected = true;
+        state.revision = state.revision.wrapping_add(1);
+    });
+    loop {
+        tokio::select! {
+            message = socket.recv() => {
+                let frames = message?.into_vec();
+                if frames.len() != 1 { return Err(AppError::InvalidFrame); }
+                let response: ResponseEnvelope = serde_json::from_slice(frames.first().ok_or(AppError::InvalidFrame)?)?;
+                if response.version != VERSION || response.correlation != "event" || response.result.get("changed").and_then(Value::as_bool) != Some(true) { return Err(AppError::InvalidFrame); }
+                changes.send_modify(|state| state.revision = state.revision.wrapping_add(1));
+            }
+            event = monitor.next() => {
+                if matches!(event, None | Some(SocketEvent::Disconnected(_))) { return Err(AppError::Task("change subscription disconnected".into())); }
+            }
+        }
+    }
+}
+
 pub async fn serve(database_path: &str, address: &str) -> Result<()> {
     let storage = Storage::open(database_path).await?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -91,11 +182,23 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
         2,
     );
     let mut socket = RouterSocket::with_options(options);
+    let mut monitor = socket.monitor();
+    let mut subscribers: HashSet<bytes::Bytes> = HashSet::new();
     socket.bind(&format!("tcp://{address}")).await?;
     tracing::info!(%address, "service listening");
     let mut stopping = false;
     loop {
-        let message = tokio::select! { _ = interrupt.recv() => break, _ = terminate.recv() => break, result = socket.recv() => result? };
+        let message = tokio::select! {
+            _ = interrupt.recv() => break,
+            _ = terminate.recv() => break,
+            event = monitor.next() => {
+                if let Some(SocketEvent::Disconnected(peer)) = event {
+                    subscribers.retain(|identity| identity.as_ref() != peer.as_ref());
+                }
+                continue;
+            }
+            result = socket.recv() => result?,
+        };
         let frames = message.into_vec();
         if frames.len() != 2 {
             continue;
@@ -112,12 +215,39 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
         let Ok(request) = serde_json::from_slice::<RequestEnvelope>(frame) else {
             continue;
         };
+        let subscribing = matches!(&request.operation, Operation::SubscribeChanges);
+        let mutation = matches!(
+            &request.operation,
+            Operation::Submit { .. }
+                | Operation::SetImportance { .. }
+                | Operation::SetDeferred { .. }
+                | Operation::DeferDecision { .. }
+                | Operation::SwapDecisions { .. }
+                | Operation::Answer { .. }
+                | Operation::AnswerCustom { .. }
+                | Operation::CreateChannel { .. }
+                | Operation::SendMessage { .. }
+                | Operation::ReplyMessage { .. }
+                | Operation::SubmitNotice { .. }
+                | Operation::DismissNotice { .. }
+        );
         tracing::debug!("processing request");
         let result = if !matches!(request.version, 1 | VERSION)
             || request.correlation.is_empty()
             || request.correlation.len() > 128
         {
             Err(AppError::InvalidFrame)
+        } else if subscribing {
+            if subscribers.len() >= MAX_SUBSCRIBERS {
+                subscribers.retain(|identity| socket.has_peer(identity.as_ref()));
+            }
+            if request.version != VERSION
+                || (subscribers.len() >= MAX_SUBSCRIBERS && !subscribers.contains(identity))
+            {
+                Err(AppError::InvalidRequest)
+            } else {
+                Ok(json!({"watching": true}))
+            }
         } else {
             let work = storage.handle(request.operation);
             tokio::pin!(work);
@@ -127,6 +257,7 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
                 _ = terminate.recv() => { tracing::info!("shutdown requested"); stopping = true; work.await }
             }
         };
+        let accepted = result.is_ok();
         let result = match result {
             Ok(value) => value,
             Err(error) => {
@@ -160,11 +291,34 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
         }
         let mut reply = ZmqMessage::from(identity.clone());
         reply.push_back(bytes::Bytes::from(response));
-        if tokio::time::timeout(REPLY_ENQUEUE_TIMEOUT, socket.send(reply))
-            .await
-            .is_err()
-        {
+        let sent = socket.try_send(reply).await;
+        if sent.is_err() {
             tracing::debug!("reply dropped: peer queue full");
+        }
+        if subscribing && accepted && sent.is_ok() {
+            subscribers.insert(identity.clone());
+        }
+        if mutation && accepted {
+            let payload = serde_json::to_vec(&ResponseEnvelope {
+                version: VERSION,
+                correlation: "event".into(),
+                result: json!({"changed": true}),
+            })?;
+            let mut disconnected = Vec::new();
+            for subscriber in &subscribers {
+                let mut notification = ZmqMessage::from(subscriber.clone());
+                notification.push_back(bytes::Bytes::copy_from_slice(&payload));
+                match socket.try_send(notification).await {
+                    Ok(()) | Err(ZmqError::BufferFull(_)) => {
+                        // A full queue already contains change hints, which
+                        // cause a durable-state read after the subscriber catches up.
+                    }
+                    Err(_) => disconnected.push(subscriber.clone()),
+                }
+            }
+            for subscriber in disconnected {
+                subscribers.remove(&subscriber);
+            }
         }
         if stopping {
             break;

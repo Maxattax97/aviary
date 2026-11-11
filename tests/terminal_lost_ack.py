@@ -48,6 +48,13 @@ def main() -> None:
                     length = dealer.check(lib.zmq_recv(router, payload, len(payload), 0))
                     request = json.loads(payload.raw[:length])
                     operation = request["operation"]
+                    if operation["op"] == "subscribe_changes":
+                        # This focused proxy exercises lost acknowledgments, not
+                        # subscription forwarding; view actions trigger reads.
+                        raw = json.dumps({"version": 2, "correlation": request["correlation"], "result": {"watching": True}}).encode()
+                        dealer.check(lib.zmq_send(router, route, size, 2))
+                        dealer.check(lib.zmq_send(router, raw, len(raw), 0))
+                        continue
                     dealer.send(request["correlation"], operation, version=2)
                     response = dealer.receive(version=2)
                     if operation["op"] == "send_message":

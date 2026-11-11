@@ -112,6 +112,32 @@ impl SocketSend for RouterSocket {
 }
 
 impl RouterSocket {
+    /// Return whether a routing identity currently has a connected peer.
+    pub fn has_peer(&self, identity: &[u8]) -> bool {
+        PeerIdentity::try_from(identity).is_ok_and(|peer| self.backend.peers.contains_sync(&peer))
+    }
+
+    /// Queue a ROUTER reply without waiting for a slow peer.
+    pub async fn try_send(&mut self, mut message: ZmqMessage) -> ZmqResult<()> {
+        if message.len() <= 1 {
+            return Err(ZmqError::Socket(
+                "ROUTER send requires an identity and a payload",
+            ));
+        }
+        let identity: PeerIdentity = message
+            .pop_front()
+            .ok_or(ZmqError::PeerIdentity)?
+            .try_into()?;
+        let Some(mut peer) = self.backend.peers.get_async(&identity).await else {
+            return Err(ZmqError::Other("Destination client not found by identity"));
+        };
+        match peer.send_queue.try_send(Message::Message(message)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.is_full() => Err(ZmqError::BufferFull("peer send queue full")),
+            Err(_) => Err(ZmqError::Other("peer send queue disconnected")),
+        }
+    }
+
     /// Splits the socket into separate send and recv halves, allowing concurrent
     /// sending and receiving from independent async tasks.
     ///

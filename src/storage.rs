@@ -91,6 +91,7 @@ impl Storage {
 
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
         match operation {
+            Operation::SubscribeChanges => Err(AppError::InvalidRequest),
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,

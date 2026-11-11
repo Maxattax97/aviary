@@ -8,8 +8,9 @@ aggregate-message, multipart-frame-count, or peer-send-queue limits.
   frame. An oversized frame closes its peer connection. An overlong multipart
   message is discarded one frame at a time, after which the connection can
   receive the next message.
-- The peer send queue is limited to 64 messages. Aviary bounds a reply enqueue
-  with a timeout and treats a lost reply as an unknown outcome.
+- The peer send queue is limited to 64 messages. The ROUTER exposes a nonblocking
+  `try_send` and peer-liveness query. Aviary drops a reply if its queue is full
+  and treats a lost reply as an unknown outcome; change hints can coalesce.
 - Unit tests cover oversized frame headers and multipart recovery.
 
 These are Aviary-specific changes, not claims about upstream support. Review
