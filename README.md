@@ -60,17 +60,19 @@ The interface presents a recommendation first and preselects it, but Enter is an
 
 | Key | Action |
 | --- | --- |
-| `h` / `l`, left / right | Navigate requests or notices |
-| `j` / `k`, up / down | Select an answer or move through detail pages |
+| Tab | Switch focus between the item list and details |
+| `h` / `l`, left / right | Navigate requests, messages or notices |
+| `j` / `k`, up / down | Move through the focused list, select an answer, or scroll message and notice details |
+| Page Up / Page Down | Scroll the focused details |
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
 | `c` / `o` | Open request context / selected answer detail |
 | `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
 | `R` | Clear the new-decision indicator in the decision queue |
-| `d`, Tab, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
+| `d`, `D`, `p` then `0`–`5` | Defer or restore; switch queues; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
 
-The answer list follows the selection when there are more choices than fit in the estimated available rows; resize triggers a redraw. Long wrapped text and very small panes can still displace content. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. The queue abbreviates long question, explanation and answer text; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
+The focused region is labeled and the selected item is marked with `>`. The list and details appear side by side in wider terminals and stack in narrower panes. The interface asks for at least 40 × 12; other size and terminal support remains under verification. Details scroll by visible lines, and the selected answer follows navigation. Reading position across resize is not yet guaranteed. Importance defaults to 0; higher values appear first, with submission order for ties. Deferral is durable and does not answer or automatically resurface a request. The list abbreviates long questions; `c` pages through the full question and context, and `o` pages through the selected answer and recommendation reason. Terminal control characters are rendered as spaces.
 
 `NEW (R)` indicates that a decision was submitted since the interface last observed or cleared the indicator, even if it belongs on a different queue page. It does not move the current selection or draft. Press `R` in the decision queue to clear it. The indicator is local to the open interface; the decision may already have been answered elsewhere, and reads pause in some editing and history views.
 
@@ -86,7 +88,7 @@ Create a channel with its participant labels, then send a direct message:
 
 Channel membership is immutable. A group target, `{"kind":"group"}`, addresses every member except the sender; recipient membership is captured at acceptance. Inbox reads are non-destructive. For large inboxes use `{"op":"inbox_page","participant":"agent-b","offset":0}` and follow `next_offset` until it is null. For history, call `history_page` with the root `kind` (`decision` or `message`), `id`, `section` (`decisions`, `messages`, or `outcomes`) and an initial `offset` of 0; follow `next_offset` separately for each section. A direct message can set `"expects_reply":true`; its recipient uses `reply_message`, and the requester can retrieve the response with `get_message_response` or `aviary wait-message ADDRESS ID`.
 
-Press `i` in the terminal to open the non-destructive `operator` inbox. Use `h`/`l` to move between messages and `j`/`k` to read their pages, including sender, work context, message and activity; `i` or `q` returns. For a direct message requesting a response, press `r`, enter a deployment-unique reply identity and text, then review and confirm. After a failed or uncertain send, retry the unchanged draft with the same identity; the draft lasts only while the interface remains open. A request may already have been answered even if the reply control is shown. The inbox has no unread marker and loads one response page at a time; moving across a page boundary may briefly show a loading state. The total count is shown as `?` until the last page.
+Press `i` in the terminal to open the non-destructive `operator` inbox. Use `h`/`l` to move between messages and `j`/`k` to scroll their details, including sender, work context, message and activity; `i` or `q` returns. For a direct message requesting a response, press `r`, enter a deployment-unique reply identity and text, then review and confirm. After a failed or uncertain send, retry the unchanged draft with the same identity; the draft lasts only while the interface remains open. A request may already have been answered even if the reply control is shown. The inbox has no unread marker and loads one response page at a time; moving across a page boundary may briefly show a loading state. The list indicates when more records are available without claiming a total.
 
 Press `m` to compose an instruction; the destination is shown as group channel `all`. Press Ctrl-S to send; Enter does not send. Left and right arrows, Home and End move through the single-line draft. Provision `all` explicitly with `operator` and at least one intended recipient using the CLI; Aviary does not change its membership. Group delivery addresses the other members at acceptance and does not establish that any agent is monitoring its inbox. If the send is rejected or unconfirmed, the open draft is locked with its exact content and identity for an explicit Ctrl-S retry; Esc asks before discarding it. Ctrl-O suspends the draft while navigating, and `m` on the decision screen resumes it. It does not survive terminal exit. Direct and group messages remain available through the CLI.
 

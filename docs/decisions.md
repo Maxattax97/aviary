@@ -277,3 +277,15 @@ decision screen. Its content, identity and failure state remain in memory, and
 a reply composer cannot replace it. The interface displays the identity when
 confirming discard after an unsuccessful send. Exiting still loses the draft;
 suspension is not durable recovery.
+
+The first P-04 layout increment renders decision, inbox and notice pages in
+separate framed list and detail regions, side by side or stacked in a 40 × 12
+pane. Tab switches focus; list Up/Down moves records and detail Up/Down selects
+answers or scrolls message and notice text. Page Up/Down scrolls details; D
+switches active/deferred decision queues. Existing h/l record navigation is
+retained. Background page loads show loading rather than an actionable stale
+record, and a continuation marker does not claim a complete snapshot. ANSI
+basic cyan follows the terminal theme; NO_COLOR or TERM=dumb suppresses that
+accent, with focus labels and selection markers retained. This is an increment:
+exact reading-position preservation on resize and broader terminal/color
+validation remain open, as do the rest of P-04/P-05 acceptance.

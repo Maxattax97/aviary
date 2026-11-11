@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     io::{self, Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -14,12 +15,14 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Terminal,
 };
 use tokio::{sync::mpsc, time};
+use unicode_width::UnicodeWidthChar;
 
 use crate::{
     error::Result,
@@ -411,6 +414,13 @@ struct View {
     poll_error: Option<String>,
     poll_summary: Option<String>,
     busy: bool,
+    list_focus: bool,
+    detail_scroll: usize,
+    inbox_scroll: usize,
+    notice_scroll: usize,
+    detail_max: Cell<usize>,
+    detail_actual: Cell<usize>,
+    follow_answer: bool,
     history: Option<HistoryView>,
     history_lookup: Option<HistoryLookup>,
     notices: Vec<NoticeItem>,
@@ -462,6 +472,13 @@ impl View {
             poll_error: None,
             poll_summary: None,
             busy: false,
+            list_focus: false,
+            detail_scroll: 0,
+            inbox_scroll: 0,
+            notice_scroll: 0,
+            detail_max: Cell::new(0),
+            detail_actual: Cell::new(0),
+            follow_answer: true,
             history: None,
             history_lookup: None,
             notices: Vec::new(),
@@ -517,6 +534,8 @@ impl View {
         self.page_size = new_size;
     }
     fn reset_selection(&mut self) {
+        self.detail_scroll = 0;
+        self.follow_answer = true;
         self.selected = self
             .current()
             .and_then(|r| r.request.recommendation.map(|_| 0));
@@ -903,6 +922,70 @@ impl View {
             }
             return Action::Redraw;
         }
+        let mut key = key;
+        let queue_view = self.inbox_view
+            || self.notice_view
+            || (self.detail_page.is_none()
+                && !self.editing
+                && !self.priority_edit
+                && self.custom_review.is_none());
+        if queue_view && key.code == KeyCode::Tab {
+            self.list_focus = !self.list_focus;
+            return Action::Redraw;
+        }
+        if queue_view && self.list_focus {
+            key.code = match key.code {
+                KeyCode::Char('j') | KeyCode::Down => KeyCode::Right,
+                KeyCode::Char('k') | KeyCode::Up => KeyCode::Left,
+                other => other,
+            };
+            if !self.inbox_view
+                && !self.notice_view
+                && matches!(key.code, KeyCode::Enter | KeyCode::Char('1'..='9'))
+            {
+                return Action::None;
+            }
+        }
+        if queue_view
+            && matches!(
+                key.code,
+                KeyCode::Left | KeyCode::Right | KeyCode::Char('h' | 'l')
+            )
+        {
+            if self.inbox_view {
+                self.inbox_scroll = 0;
+            } else if self.notice_view {
+                self.notice_scroll = 0;
+            } else {
+                self.detail_scroll = 0;
+                self.follow_answer = true;
+            }
+        }
+        if queue_view && !self.list_focus && matches!(key.code, KeyCode::PageUp | KeyCode::PageDown)
+        {
+            let step = usize::from(
+                terminal::size()
+                    .map(|(_, h)| h)
+                    .unwrap_or(24)
+                    .saturating_sub(6),
+            )
+            .max(1);
+            let current = self.detail_actual.get();
+            let next = if key.code == KeyCode::PageUp {
+                current.saturating_sub(step)
+            } else {
+                current.saturating_add(step).min(self.detail_max.get())
+            };
+            if self.inbox_view {
+                self.inbox_scroll = next;
+            } else if self.notice_view {
+                self.notice_scroll = next;
+            } else {
+                self.detail_scroll = next;
+                self.follow_answer = false;
+            }
+            return Action::Redraw;
+        }
         if self.inbox_view {
             match key.code {
                 KeyCode::Char('i') | KeyCode::Char('q') | KeyCode::Esc => {
@@ -961,15 +1044,14 @@ impl View {
                     }
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
-                    let last = self
-                        .inbox
-                        .get(self.inbox_current)
-                        .map(|item| inbox_pages(item).len().saturating_sub(1))
-                        .unwrap_or(0);
-                    self.inbox_page = (self.inbox_page + 1).min(last);
+                    self.inbox_scroll = self
+                        .detail_actual
+                        .get()
+                        .saturating_add(1)
+                        .min(self.detail_max.get())
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    self.inbox_page = self.inbox_page.saturating_sub(1)
+                    self.inbox_scroll = self.detail_actual.get().saturating_sub(1)
                 }
                 _ => return Action::None,
             }
@@ -1008,15 +1090,14 @@ impl View {
                     }
                 }
                 KeyCode::Char('j') | KeyCode::Down if self.notice_loaded => {
-                    let last = self
-                        .notices
-                        .get(self.notice_current)
-                        .map(|item| notice_pages(item).len().saturating_sub(1))
-                        .unwrap_or(0);
-                    self.notice_page = (self.notice_page + 1).min(last);
+                    self.notice_scroll = self
+                        .detail_actual
+                        .get()
+                        .saturating_add(1)
+                        .min(self.detail_max.get())
                 }
                 KeyCode::Char('k') | KeyCode::Up if self.notice_loaded => {
-                    self.notice_page = self.notice_page.saturating_sub(1)
+                    self.notice_scroll = self.detail_actual.get().saturating_sub(1)
                 }
                 KeyCode::Char('d') if self.notice_loaded => {
                     if let Some(notice) = self.notices.get(self.notice_current) {
@@ -1139,7 +1220,7 @@ impl View {
         if key.code == KeyCode::Char('n') {
             return Action::ToggleNotices;
         }
-        if key.code == KeyCode::Tab {
+        if key.code == KeyCode::Char('D') {
             return Action::ToggleDeferred;
         }
         if key.code == KeyCode::Char('R') {
@@ -1152,6 +1233,10 @@ impl View {
             } else {
                 Action::None
             };
+        }
+        if key.code == KeyCode::Enter && !self.list_focus && !self.follow_answer {
+            self.follow_answer = true;
+            return Action::Redraw;
         }
         let choices = self.choices();
         let Some(request) = self.current() else {
@@ -1226,16 +1311,19 @@ impl View {
                 Action::Redraw
             }
             KeyCode::Char('j') | KeyCode::Down => {
+                self.follow_answer = true;
                 self.selected = Some(self.selected.map_or(0, |i| (i + 1).min(choices.len())));
                 Action::Redraw
             }
             KeyCode::Char('k') | KeyCode::Up => {
+                self.follow_answer = true;
                 self.selected = Some(self.selected.map_or(0, |i| i.saturating_sub(1)));
                 Action::Redraw
             }
             KeyCode::Char(c @ '1'..='9') => {
                 let position = c as usize - '1' as usize;
                 if position <= choices.len() {
+                    self.follow_answer = true;
                     self.selected = Some(position);
                     Action::Redraw
                 } else {
@@ -1462,6 +1550,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Event::Resize(width, height) => { view.resize_pages(page_size_for(width, height)); display(&mut screen, &view)?; continue; },
                     _ => continue,
                 };
+                let too_small = terminal::size().is_ok_and(|(w, h)| w < 40 || h < 12);
+                if too_small
+                    && !(key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)) {
+                    continue;
+                }
                 if view.busy {
                     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                         return Ok(());
@@ -1717,8 +1810,8 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
             view.help_page + 1
         );
         match view.help_page {
-            0 => println!("Decisions: h/l request; j/k or 1-9 choose; Enter confirms\r\nd defer/restore; p importance\r\nc context; o answer detail\r\nTab queues; R clear arrival\r\ni inbox; n notices; m instruction"),
-            1 => println!("Inbox: h/l message; j/k text\r\nr reply; H history\r\nNotices: h/l notice; j/k text; d dismiss\r\nHistory: H selected; g lookup\r\n1-3 section; h/l record; j/k text\r\n[ ] page; R refresh; q returns"),
+            0 => println!("Decisions: h/l request; j/k or 1-9 choose; Enter confirms\r\nd defer/restore; p importance\r\nc context; o answer detail\r\nTab focus; D queues; R clear arrival\r\ni inbox; n notices; m instruction"),
+            1 => println!("Inbox: Tab focus; arrows move\r\nr reply; H history\r\nNotices: Tab focus; arrows move; d dismiss\r\nHistory: H selected; g lookup\r\n1-3 section; h/l record; j/k text\r\n[ ] page; R refresh; q returns"),
             _ => println!("Instruction: Ctrl-S sends; arrows move\r\nReply: Enter continues/confirms; Esc cancels\r\nCustom: Ctrl-R review; Enter confirms\r\n? opens help outside text entry\r\nCtrl-G opens help anywhere; Ctrl-C quits"),
         }
         return render(screen, &output);
@@ -1873,6 +1966,12 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         }
         println!("\r\n? help; q returns.");
         return render(screen, &output);
+    }
+    if view.inbox_view
+        || view.notice_view
+        || (view.detail_page.is_none() && !view.priority_edit && !view.editing)
+    {
+        return display_queue(screen, view);
     }
     if view.inbox_view {
         if let Some(status) = &view.status {
@@ -2081,17 +2180,368 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
     render(screen, &output)
 }
 
+// Preserve every printable scalar while wrapping to the available terminal cells.
+fn wrap_visible(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    for input in text.split('\n') {
+        let mut line = String::new();
+        let mut used = 0;
+        for c in input.chars() {
+            let cells = UnicodeWidthChar::width(c).unwrap_or(0);
+            if used + cells > width && !line.is_empty() {
+                lines.push(std::mem::take(&mut line));
+                used = 0;
+            }
+            line.push(c);
+            used += cells;
+        }
+        lines.push(line);
+    }
+    lines
+}
+
+// Queue contents remain bounded to the current backend page. Page transitions
+// still fetch asynchronously; the list never claims an exact total if more exist.
+fn display_queue(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> Result<()> {
+    let (title, list_title, detail_title, rows, selected, more, loaded, detail) = if view.inbox_view
+    {
+        let rows = view
+            .inbox
+            .iter()
+            .map(|item| format!("#{} {}", item.id, safe(&item.message.sender)))
+            .collect::<Vec<_>>();
+        let item = view.inbox.get(view.inbox_current);
+        let detail = item
+            .map(|item| {
+                format!(
+                    "From: {}\nWork: {}\nMessage: {}\nActivity: {}\n\nr reply · H history",
+                    safe(&item.message.sender),
+                    safe(item.message.context.as_deref().unwrap_or("(none supplied)")),
+                    safe(&item.message.body),
+                    safe(
+                        item.message
+                            .activity
+                            .as_deref()
+                            .unwrap_or("(none supplied)")
+                    )
+                )
+            })
+            .unwrap_or_else(|| "No messages".into());
+        (
+            "Operator inbox",
+            "Messages",
+            item.map(|i| format!("Message #{}", i.id))
+                .unwrap_or_else(|| "Message".into()),
+            rows,
+            view.inbox_current,
+            view.inbox_next.is_some(),
+            view.inbox_loaded,
+            detail,
+        )
+    } else if view.notice_view {
+        let rows = view
+            .notices
+            .iter()
+            .map(|item| format!("#{} {}", item.id, safe(&item.notice.work)))
+            .collect::<Vec<_>>();
+        let item = view.notices.get(view.notice_current);
+        let detail = item
+            .map(|item| {
+                format!(
+                    "From: {}\nWork: {}\nResult: {}\nActivity: {}\n\nd dismiss notice #{}",
+                    safe(&item.notice.agent),
+                    safe(&item.notice.work),
+                    safe(&item.notice.result),
+                    safe(item.notice.activity.as_deref().unwrap_or("(none supplied)")),
+                    item.id
+                )
+            })
+            .unwrap_or_else(|| "No open completion notices".into());
+        (
+            "Completion notices",
+            "Notices",
+            item.map(|i| format!("Notice #{}", i.id))
+                .unwrap_or_else(|| "Notice".into()),
+            rows,
+            view.notice_current,
+            view.notice_next.is_some(),
+            view.notice_loaded,
+            detail,
+        )
+    } else {
+        let rows = view
+            .requests
+            .iter()
+            .map(|item| format!("#{} {}", item.id, safe(&item.request.question)))
+            .collect::<Vec<_>>();
+        let item = view.current();
+        let detail = item
+            .map(|item| {
+                let r = &item.request;
+                let mut text = format!(
+                    "From: {}\nQuestion: {}\nimportance {}\n",
+                    safe(&r.agent),
+                    safe(&r.question),
+                    item.importance
+                );
+                if let Some(explanation) = &r.explanation {
+                    text.push_str(&format!("Explanation: {}\n", safe(explanation)));
+                }
+                if let Some(context) = &r.context {
+                    text.push_str(&format!("Context: {}\n", safe(context)));
+                }
+                text.push_str("Answers:\n");
+                for (position, index) in view.choices().iter().enumerate() {
+                    let option = r.options.get(*index).map(String::as_str).unwrap_or("");
+                    let mark = if view.selected == Some(position) {
+                        ">"
+                    } else {
+                        " "
+                    };
+                    let rec = if Some(*index) == r.recommendation {
+                        format!(
+                            " (recommended: {})",
+                            safe(r.reason.as_deref().unwrap_or(""))
+                        )
+                    } else {
+                        String::new()
+                    };
+                    let prefix = if Some(*index) == r.recommendation && option.chars().count() > 30
+                    {
+                        "[rec] "
+                    } else {
+                        ""
+                    };
+                    text.push_str(&format!(
+                        "{mark} {}. {prefix}{}{}\n",
+                        position + 1,
+                        safe(option),
+                        rec
+                    ));
+                }
+                let mark = if view.selected == Some(view.choices().len()) {
+                    ">"
+                } else {
+                    " "
+                };
+                text.push_str(&format!(
+                    "{mark} {}. Custom answer\nEnter confirms answer to {}",
+                    view.choices().len() + 1,
+                    item.id
+                ));
+                text
+            })
+            .unwrap_or_else(|| {
+                format!(
+                    "No {} requests",
+                    if view.deferred_view {
+                        "deferred"
+                    } else {
+                        "active"
+                    }
+                )
+            });
+        (
+            if view.deferred_view {
+                "Deferred decisions"
+            } else {
+                "Active decisions"
+            },
+            "Decisions",
+            item.map(|i| format!("Decision #{}", i.id))
+                .unwrap_or_else(|| "Decision".into()),
+            rows,
+            view.current,
+            view.request_next.is_some(),
+            view.request_loaded,
+            detail,
+        )
+    };
+    let (rows, detail_title, detail) = if loaded {
+        (rows, detail_title, detail)
+    } else {
+        (Vec::new(), list_title.to_string(), "Loading...".to_string())
+    };
+    let action_status = if view.busy {
+        Some("Action in progress; outcome unconfirmed")
+    } else if view.suspended_instruction.is_some() {
+        Some("Instruction draft suspended; m resumes")
+    } else {
+        view.status.as_deref()
+    };
+    let refresh_status = if terminal::size().is_ok_and(|(w, _)| w < 60) {
+        view.poll_summary.as_deref()
+    } else {
+        view.poll_error.as_deref()
+    };
+    let use_color = std::env::var_os("NO_COLOR").is_none()
+        && std::env::var("TERM").ok().as_deref() != Some("dumb");
+    let accent = if use_color { Color::Cyan } else { Color::Reset };
+    screen.draw(|frame| {
+        let area = frame.area();
+        if area.width < 40 || area.height < 12 {
+            frame.render_widget(Paragraph::new("Resize terminal to at least 40 x 12"), area);
+            return;
+        }
+        let footer_height = if refresh_status.is_some() && action_status.is_some() {
+            3
+        } else {
+            2
+        };
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(1),
+                Constraint::Length(footer_height),
+            ])
+            .split(area);
+        let notices = if !view.notice_loaded {
+            "loading".to_string()
+        } else if view.notice_next.is_some() {
+            format!("{}+", view.notices.len())
+        } else {
+            view.notices.len().to_string()
+        };
+        let arrival = if view.arrivals.pending {
+            " | NEW (R)"
+        } else {
+            ""
+        };
+        let heading = if area.width < 60 {
+            format!("Aviary {title}{arrival} N:{notices}")
+        } else {
+            format!("Aviary  {title} | notices {notices}{arrival} | ? help")
+        };
+        frame.render_widget(
+            Paragraph::new(heading).style(Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+            sections[0],
+        );
+        let horizontal = area.width >= 70;
+        let panes = if horizontal {
+            Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+                .split(sections[1])
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(4), Constraint::Min(3)])
+                .split(sections[1])
+        };
+        let focus_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
+        let list_label = format!(
+            "{list_title}{}",
+            if view.list_focus { " [FOCUS]" } else { "" }
+        );
+        let detail_label = format!(
+            "{detail_title}{}",
+            if !view.list_focus { " [FOCUS]" } else { "" }
+        );
+        let height = usize::from(panes[0].height.saturating_sub(2));
+        let capacity = height.saturating_sub(usize::from(!loaded || more)).max(1);
+        let start = selected.saturating_sub(capacity.saturating_sub(1));
+        let mut list = rows
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(capacity)
+            .map(|(idx, row)| format!("{} {}", if idx == selected { ">" } else { " " }, row))
+            .collect::<Vec<_>>();
+        if !loaded {
+            list.push("Loading...".into());
+        } else if more {
+            list.push("More available ↓".into());
+        }
+        let list_block = Block::default()
+            .borders(Borders::ALL)
+            .title(list_label)
+            .border_style(if view.list_focus {
+                focus_style
+            } else {
+                Style::default()
+            });
+        frame.render_widget(Paragraph::new(list.join("\n")).block(list_block), panes[0]);
+        let inner_width = usize::from(panes[1].width.saturating_sub(2)).max(1);
+        let inner_height = usize::from(panes[1].height.saturating_sub(2)).max(1);
+        let lines = wrap_visible(&detail, inner_width);
+        let max_scroll = lines.len().saturating_sub(inner_height);
+        let saved_scroll = if view.inbox_view {
+            view.inbox_scroll
+        } else if view.notice_view {
+            view.notice_scroll
+        } else {
+            view.detail_scroll
+        };
+        let mut scroll = saved_scroll.min(max_scroll);
+        if !view.inbox_view && !view.notice_view && view.follow_answer {
+            if let Some(answer_line) = lines.iter().position(|line| line.starts_with("> ")) {
+                scroll = answer_line
+                    .saturating_sub(inner_height.saturating_sub(2))
+                    .min(max_scroll);
+            }
+        }
+        view.detail_max.set(max_scroll);
+        view.detail_actual.set(scroll);
+        let continuation = match (scroll > 0, scroll < max_scroll) {
+            (true, true) => " ↑↓",
+            (true, false) => " ↑",
+            (false, true) => " ↓",
+            _ => "",
+        };
+        let detail_block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!("{detail_label}{continuation}"))
+            .border_style(if !view.list_focus {
+                focus_style
+            } else {
+                Style::default()
+            });
+        let content = lines
+            .iter()
+            .skip(scroll)
+            .take(inner_height)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        frame.render_widget(Paragraph::new(content).block(detail_block), panes[1]);
+        let hint = if view.inbox_view {
+            "Tab focus · ↑↓ move · PgUp/PgDn · ?"
+        } else if view.notice_view {
+            "Tab focus · ↑↓ move · d dismiss · ?"
+        } else {
+            "Tab focus · ↑↓ · Enter confirms · ?"
+        };
+        let footer = match (refresh_status, action_status) {
+            (Some(refresh), Some(action)) => {
+                format!("{}\n{}\n{}", safe(refresh), safe(action), hint)
+            }
+            (Some(refresh), None) => format!("{}\n{}", safe(refresh), hint),
+            (None, Some(action)) => format!("{}\n{}", safe(action), hint),
+            (None, None) => format!("\n{hint}"),
+        };
+        frame.render_widget(Paragraph::new(footer), sections[2]);
+    })?;
+    Ok(())
+}
+
 fn render(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, output: &str) -> Result<()> {
     let lines: Vec<Line<'_>> = output
         .lines()
         .map(|line| {
             let line = line.trim_end_matches('\r');
+            let use_color = std::env::var_os("NO_COLOR").is_none()
+                && std::env::var("TERM").ok().as_deref() != Some("dumb");
             let style = if line.starts_with('>') {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(if use_color { Color::Cyan } else { Color::Reset })
                     .add_modifier(Modifier::BOLD)
             } else if line.contains("outcome unknown") || line.contains("unavailable") {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(if use_color {
+                    Color::Yellow
+                } else {
+                    Color::Reset
+                })
             } else {
                 Style::default()
             };
@@ -2224,6 +2674,26 @@ mod tests {
             matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
             Action::SendInstruction(message) if message.identity == identity && message.body == "keep this")
         );
+    }
+
+    #[test]
+    fn list_focus_moves_decisions_without_confirming() {
+        let mut view = View::new();
+        let first = request(Some(0), 2);
+        let mut second = request(Some(0), 2);
+        second.id = 43;
+        view.update(vec![first, second]);
+        view.request_loaded = true;
+        view.key(key(KeyCode::Tab));
+        assert!(view.list_focus);
+        assert!(matches!(view.key(key(KeyCode::Enter)), Action::None));
+        assert!(matches!(view.key(key(KeyCode::Down)), Action::Redraw));
+        assert_eq!(view.current().map(|item| item.id), Some(43));
+        view.key(key(KeyCode::Tab));
+        assert!(matches!(
+            view.key(key(KeyCode::Enter)),
+            Action::Submit(Operation::Answer { id: 43, .. })
+        ));
     }
 
     #[test]

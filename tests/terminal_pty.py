@@ -72,7 +72,7 @@ def exercise_deferral(service: Service) -> None:
         terminal.quit()
     with Terminal(service) as terminal:
         terminal.expect("No active requests")
-        terminal.send("\t")
+        terminal.send("D")
         terminal.expect("Defer this")
         terminal.send("p5")
         service.wait_for(
@@ -127,16 +127,16 @@ def exercise_context_and_notices(service: Service) -> int:
                 },
             }
         )["id"]
-        terminal.expect("Open completion notices: 1")
+        terminal.expect("notices 1")
         terminal.send("n")
         screen = terminal.expect("Build package")
-        assert b"Tests passed" in screen and f"notice {notice_id}".encode() in screen
+        assert b"Tests passed" in screen and f"Notice #{notice_id}".encode() in screen
         terminal.send("?")
         terminal.expect("Keyboard help 1/3")
         terminal.send("j")
-        terminal.expect("Notices: h/l notice")
+        terminal.expect("Notices: Tab focus")
         terminal.send("\x1b")
-        terminal.expect(f"notice {notice_id}")
+        terminal.expect(f"Notice #{notice_id}")
         terminal.send("d")
         service.wait_for(
             lambda: not service.call({"op": "list_notices"})["notices"],
@@ -229,9 +229,9 @@ def exercise_operator_inbox(service: Service) -> None:
         terminal.expect("Detail check")
         terminal.send("i")
         screen = terminal.expect("Ready for review")
-        assert b"From: worker" in screen and b"Work context: Build release" in screen
+        assert b"From: worker" in screen and b"Work: Build release" in screen
         assert b"Activity: release-work" in screen
-        service.call(
+        live = service.call(
             {
                 "op": "send_message",
                 "message": {
@@ -244,11 +244,11 @@ def exercise_operator_inbox(service: Service) -> None:
                     "activity": "release-work",
                 },
             }
-        )
-        terminal.expect("Operator inbox 1/2")
+        )["id"]
+        terminal.expect(f"#{live}")
         terminal.send("l")
         screen = terminal.expect("Live operator update")
-        assert b"From: worker" in screen and b"Work context: Workstream" in screen
+        assert b"From: worker" in screen and b"Work: Workstream" in screen
         incoming = service.call(
             {
                 "op": "send_message",
@@ -264,16 +264,16 @@ def exercise_operator_inbox(service: Service) -> None:
                 },
             }
         )["id"]
-        terminal.expect("Operator inbox 2/3")
+        terminal.expect(f"#{incoming}")
         terminal.send("l")
         screen = terminal.expect("Need operator response")
-        assert f"message {incoming}".encode() in screen
+        assert f"Message #{incoming}".encode() in screen
         terminal.send("?")
         terminal.expect("Keyboard help 1/3")
         terminal.send("j")
-        terminal.expect("Inbox: h/l message")
+        terminal.expect("Inbox: Tab focus")
         terminal.send("\x1b")
-        terminal.expect(f"message {incoming}")
+        terminal.expect(f"Message #{incoming}")
         original_reply_id = None
         for attempt, identity in enumerate(
             ["operator-reply", "operator-reply", "different-reply"]
@@ -398,7 +398,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Notice 9")
         for notice_id in notice_ids[:7]:
             service.call({"op": "dismiss_notice", "id": notice_id})
-        terminal.expect("Completion notice 3/3")
+        terminal.expect("notices 3")
         terminal.send("d")
         service.wait_for(
             lambda: notice_ids[-1]
@@ -412,7 +412,7 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Queue item 9")
         for earlier_id in request_ids[:7]:
             service.call({"op": "answer_custom", "id": earlier_id, "value": "done"})
-        terminal.expect("Active queue: 3/3")
+        terminal.expect("Active decisions")
         terminal.send("i")
         terminal.expect("Ready for review")
         terminal.send("l" * 9)

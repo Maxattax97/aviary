@@ -376,3 +376,16 @@ unconfirmed draft, return to the decision view, and resume it before an explicit
 identical retry; it passed with one stored message. Fourteen unit tests passed,
 including suspension and identity preservation. This does not establish draft
 recovery after exit or the remaining P-04 layout.
+
+## P-04 queue-layout increment (2026-11-10)
+
+Local `cargo test --locked -- --test-threads=1` passed 15 unit and 23
+integration tests with loopback access. The terminal PTY regression traversed
+multi-page decisions, notices and inbox messages, and the tmux smoke exercised
+40 × 12 and wider panes, long notice scrolling and selection. A separate PTY
+check with NO_COLOR verified focus and that list navigation and Enter in list
+focus do not submit a decision; explicit confirmation in detail focus did.
+Arrival, signal restoration, partial-refresh, reconnect, and lost-acknowledgment
+regressions also passed locally. These checks do not establish the full color or
+platform matrix, exact reading-position retention on resize, all Unicode
+rendering, concurrent offset traversal, remote operation or operator acceptance.

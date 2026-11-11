@@ -48,10 +48,10 @@ def responsive_while_poll_is_waiting() -> None:
             with connection:
                 started = time.monotonic()
                 terminal.send("m")
-                terminal.expect("Instruction text", timeout=0.75)
+                terminal.expect("Compose instruction", timeout=0.75)
                 assert time.monotonic() - started < 0.75
                 terminal.send("\x1b")
-                terminal.expect("Loading requests")
+                terminal.expect("Loading...")
                 terminal.quit()
 
 

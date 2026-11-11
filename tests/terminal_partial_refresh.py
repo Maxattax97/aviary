@@ -42,7 +42,7 @@ def main() -> None:
                     "DELETE FROM completion_notices WHERE identity = ?",
                     (notice["identity"],),
                 )
-            terminal.expect("Open completion notices: 0", timeout=12)
+            terminal.expect("notices 0", timeout=12)
             service.call({"op": "answer", "id": request_id, "index": 0})
             terminal.expect("No active requests")
             service.call(

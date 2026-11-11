@@ -59,7 +59,7 @@ def main() -> None:
             terminal.expect("New urgent", timeout=12)
             terminal.send("R")
             terminal.expect("New urgent")
-            terminal.send("\t")
+            terminal.send("D")
             terminal.expect("No deferred requests")
             later_id = service.call(
                 {
@@ -73,7 +73,7 @@ def main() -> None:
                 }
             )["id"]
             terminal.expect("NEW (R)", timeout=12)
-            terminal.send("\t")
+            terminal.send("D")
             terminal.expect("New urgent")
             terminal.send("R")
             terminal.expect("New urgent")

@@ -87,10 +87,10 @@ def main() -> None:
             )["id"]
             wait_for_screen("Choose from many")
             tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
-            wait_for_screen("Choices 1-5 of 13")
+            wait_for_screen("Option 0")
             tmux("send-keys", "-t", "aviary:", *(["j"] * 13))
             screen = wait_for_screen("> 13. Custom answer")
-            assert "Choices" in screen, screen
+            assert "Decision #" in screen, screen
             tmux("send-keys", "-t", "aviary:", "Enter")
             wait_for_screen("Custom answer:")
             tmux("send-keys", "-t", "aviary:", "custom text", "Enter")
@@ -141,8 +141,8 @@ def main() -> None:
                     },
                 }
             )["id"]
-            screen = wait_for_screen("> 1. [rec] Yes")
-            assert "Active queue:" in screen and "Proceed?" in screen, screen
+            screen = wait_for_screen("> 1. Yes")
+            assert "Active decisions" in screen and "Proceed?" in screen, screen
             assert "Enter confirms" in screen, screen
             assert service.call({"op": "get", "id": narrow_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "Enter")
@@ -206,10 +206,10 @@ def main() -> None:
                     },
                 }
             )["id"]
-            screen = wait_for_screen("> 1. [rec] Yes")
-            assert "Refresh: notices" in screen, screen
-            assert "Active queue:" in screen and "Proceed?" in screen, screen
-            assert "> 1. [rec] Yes" in screen and "Enter confirms" in screen, screen
+            wait_for_screen("> 1. Yes")
+            screen = wait_for_screen("Refresh: notices")
+            assert "Active decisions" in screen and "Proceed?" in screen, screen
+            assert "> 1. Yes" in screen and "Enter confirms" in screen, screen
             assert service.call({"op": "get", "id": warning_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "Enter")
             service.wait_for(
@@ -224,7 +224,7 @@ def main() -> None:
                     "DELETE FROM completion_notices WHERE identity = ?",
                     (oversized["identity"],),
                 )
-            wait_for_screen("Open completion notices: 0")
+            wait_for_screen("N:0")
             notice_id = service.call(
                 {
                     "op": "submit_notice",
@@ -236,16 +236,16 @@ def main() -> None:
                     },
                 }
             )["id"]
-            wait_for_screen("Open completion notices: 1")
+            wait_for_screen("N:1")
             tmux("send-keys", "-t", "aviary:", "n")
-            screen = wait_for_screen("Completion notice 1/1")
-            assert "j/k pages" in screen and "d dismiss" in screen, screen
-            tmux("send-keys", "-t", "aviary:", "j")
-            screen = wait_for_screen("AGENT-END")
-            assert "j/k pages" in screen, screen
-            tmux("send-keys", "-t", "aviary:", "j")
-            screen = wait_for_screen("RESULT-END")
-            assert "j/k pages" in screen, screen
+            screen = wait_for_screen(f"Notice #{notice_id}")
+            assert "d dismiss" in screen, screen
+            for _ in range(3):
+                tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("AGENT-END")
+            for _ in range(3):
+                tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("RESULT-END")
             tmux("send-keys", "-t", "aviary:", "d")
             service.wait_for(
                 lambda: service.call({"op": "list_notices"})["notices"] == [],
