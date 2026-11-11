@@ -371,6 +371,7 @@ struct HistoryView {
     items: Vec<serde_json::Value>,
     next_offset: Option<usize>,
     scroll: Cell<usize>,
+    anchor: Cell<(usize, usize, usize)>,
     max_scroll: Cell<usize>,
     loading: bool,
     needs_load: bool,
@@ -388,6 +389,7 @@ impl HistoryView {
             items: Vec::new(),
             next_offset: None,
             scroll: Cell::new(0),
+            anchor: Cell::new((0, 0, 0)),
             max_scroll: Cell::new(0),
             loading: true,
             needs_load: true,
@@ -399,6 +401,7 @@ impl HistoryView {
         self.items.clear();
         self.next_offset = None;
         self.scroll.set(0);
+        self.anchor.set((0, 0, 0));
         self.max_scroll.set(0);
         self.loading = true;
         self.needs_load = true;
@@ -1204,6 +1207,7 @@ impl View {
                         history.offset = history.next_offset.unwrap_or(history.offset);
                         history.items.clear();
                         history.scroll.set(0);
+                        history.anchor.set((0, 0, 0));
                         history.loading = true;
                         history.needs_load = true;
                         history.error = None;
@@ -1231,6 +1235,7 @@ impl View {
                         history.offset = history.previous.pop().unwrap_or(0);
                         history.items.clear();
                         history.scroll.set(usize::MAX);
+                        history.anchor.set((0, 0, 0));
                         history.loading = true;
                         history.needs_load = true;
                         history.error = None;
@@ -2553,10 +2558,27 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             } else if history.items.is_empty() {
                 frame.render_widget(Paragraph::new("No records in this section."), regions[1]);
             } else {
-                let lines = wrap_visible(&content, usize::from(regions[1].width).max(1));
+                let width = usize::from(regions[1].width).max(1);
+                let lines = wrap_visible(&content, width);
                 let max = lines.len().saturating_sub(usize::from(regions[1].height));
-                let scroll = history.scroll.get().min(max);
+                let (old_width, anchor, old_scroll) = history.anchor.get();
+                let moved = history.scroll.get() != old_scroll;
+                let scroll = if old_width != 0 && old_width != width && !moved {
+                    lines
+                        .iter()
+                        .rposition(|(_, start)| *start <= anchor)
+                        .unwrap_or(0)
+                } else {
+                    history.scroll.get()
+                }
+                .min(max);
                 history.scroll.set(scroll);
+                let next_anchor = if old_width == 0 || moved {
+                    lines.get(scroll).map_or(0, |(_, start)| *start)
+                } else {
+                    anchor
+                };
+                history.anchor.set((width, next_anchor, scroll));
                 history.max_scroll.set(max);
                 let visible = lines
                     .iter()

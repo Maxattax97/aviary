@@ -369,3 +369,7 @@ The `v` overview displays counts of unanswered decisions, all retained messages 
 ## Managed service terminal separation (2026-11-11)
 
 The automatic startup child creates its own POSIX session before executing the service, with terminal input detached and output directed to the readiness pipe and service log. This keeps a controlling-terminal hangup from terminating it along with the TUI. Failure to create a session fails startup; this is process-lifecycle isolation, not a security boundary.
+
+## History reading position on resize (2026-11-11)
+
+History now keeps a scalar text anchor for its current bounded page, remapping it to the corresponding wrapped line when the terminal width changes. Explicit scrolling updates the anchor; page or section transitions reset it. As with other history navigation, pages are separate snapshots and concurrent changes can shift their contents. Terminal-specific Unicode widths and all resize combinations are not guaranteed by the local test.

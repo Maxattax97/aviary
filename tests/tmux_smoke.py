@@ -319,8 +319,11 @@ def main() -> None:
             wait_for_screen("Keyboard help")
             tmux("send-keys", "-t", "aviary:", "j")
             wait_for_screen("Inbox:")
-            for _ in range(8):
+            for _ in range(30):
+                if "Custom:" in tmux("capture-pane", "-p", "-t", "aviary:").stdout:
+                    break
                 tmux("send-keys", "-t", "aviary:", "j")
+                time.sleep(0.03)
             wait_for_screen("Custom:")
             tmux("send-keys", "-t", "aviary:", "Escape")
             wait_for_screen("No decisions")
