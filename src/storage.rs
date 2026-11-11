@@ -146,7 +146,11 @@ impl Storage {
                 id,
                 section,
                 offset,
-            } => self.history_page(kind, id, section, offset).await,
+                root_first,
+            } => {
+                self.history_page(kind, id, section, offset, root_first)
+                    .await
+            }
         }
     }
 
@@ -474,6 +478,7 @@ impl Storage {
         id: i64,
         section: HistorySection,
         offset: usize,
+        root_first: bool,
     ) -> Result<Value> {
         // Resolve the root and the selected section in the same read snapshot.
         let mut tx = self.pool.begin().await?;
@@ -518,8 +523,8 @@ impl Storage {
                     }
                 }
                 HistorySection::Messages => {
-                    let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>)>("SELECT m.id, m.payload, r.request_id FROM messages m LEFT JOIN message_responses r ON r.response_id = m.id WHERE (m.id = ? AND ? = 'message') OR (r.request_id = ? AND ? = 'message') OR (m.id = (SELECT request_id FROM message_responses WHERE response_id = ?) AND ? = 'message') OR (? IS NOT NULL AND json_extract(m.payload, '$.activity') = ?) ORDER BY m.id LIMIT -1 OFFSET ?")
-                        .bind(id).bind(root_kind).bind(id).bind(root_kind).bind(id).bind(root_kind).bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>)>("SELECT m.id, m.payload, r.request_id FROM messages m LEFT JOIN message_responses r ON r.response_id = m.id WHERE (m.id = ? AND ? = 'message') OR (r.request_id = ? AND ? = 'message') OR (m.id = (SELECT request_id FROM message_responses WHERE response_id = ?) AND ? = 'message') OR (? IS NOT NULL AND json_extract(m.payload, '$.activity') = ?) ORDER BY CASE WHEN ? AND ? = 'message' AND m.id = ? THEN 0 ELSE 1 END, m.id LIMIT -1 OFFSET ?")
+                        .bind(id).bind(root_kind).bind(id).bind(root_kind).bind(id).bind(root_kind).bind(activity).bind(activity).bind(root_first).bind(root_kind).bind(id).bind(sql_offset).fetch(&mut *tx);
                     loop {
                         match rows.try_next().await? {
                             Some((id, payload, reply_to)) => {

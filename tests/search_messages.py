@@ -29,6 +29,8 @@ def main() -> None:
             assert service.run({"op": "search_messages", "query": query, "after": after}).returncode != 0
         history = service.call({"op": "history_page", "kind": "message", "id": ids[0], "section": "messages"})
         assert history["messages"][0]["id"] == ids[0]
+        root_first = service.call({"op": "history_page", "kind": "message", "id": ids[-1], "section": "messages", "root_first": True})
+        assert root_first["messages"][0]["id"] == ids[-1]
     print("Retained message search, literal matching, bounded previews and cursor paging passed")
 
 

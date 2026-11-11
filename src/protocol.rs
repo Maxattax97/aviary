@@ -161,6 +161,8 @@ pub enum Operation {
         section: HistorySection,
         #[serde(default)]
         offset: usize,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        root_first: bool,
     },
 }
 

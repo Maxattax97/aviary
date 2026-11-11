@@ -353,3 +353,7 @@ The terminal input uses Crossterm's asynchronous event stream. The previous 100 
 ## Retained-message search API (2026-11-11)
 
 The first V1-25 increment searches retained messages, including replies, by literal substring in body, sender, context or activity. SQLite lowercasing supplies ASCII-only case folding; other characters match literally. A query is nonblank and limited to 256 Unicode scalar values. Results are ordered by message ID and use an exclusive ID cursor, with at most 25 results and 160-character sender, body and context previews. A result can be opened through existing message history. Pages are separate snapshots: new later messages can appear while browsing. The search scans retained records and has no latency bound; it inherits the trusted-network, no-authentication boundary. Terminal search and operator navigation remain unimplemented.
+
+## Terminal message search (2026-11-11)
+
+`/` opens retained-message search without leaving the terminal. The operator enters a query, selects a bounded result, pages with `n`/`p`, and opens its message history with Enter. `e` edits the query; errors remain visible and `R` retries. The selected message is ordered first in the messages section of history using an optional `root_first` operation field; without that field history retains its existing ID order. Returning from history retains the search results and selection. Matching, cursor, privacy and snapshot limits are as stated in the API decision above. Search covers messages and replies, not decisions or completion notices.

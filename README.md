@@ -67,6 +67,7 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `1`–`9`, Enter | Select one of the first nine choices; confirm the selection |
 | `c` / `o` | Open request context / selected answer detail |
 | `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
+| `/` | Search retained messages; Enter opens the selected result |
 | `d`, `p` then `0`–`5` | Defer to the bottom of this priority; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
@@ -95,7 +96,7 @@ Press `m` to compose an instruction; the destination is shown as group channel `
 
 Agents can submit a `submit_notice` with an identity, agent, work and result. The interface shows open notices and retains dismissed ones. It loads one notice response page at a time; a `+` after the count means additional notices exist, and h/l loads adjacent pages.
 
-In the terminal, `H` opens history for the current decision or inbox message. `g` looks up a decision or message by ID, including completed records. In history, `1`/`2`/`3` select decisions, messages or outcomes; arrow keys and Page Up/Down scroll through records, `R` retries a read, and `q` returns. Records are displayed together as JSON and grouped by section, not a global timeline. Additional bounded pages load when scrolling past a boundary; each is a separate snapshot, so concurrent changes can shift offsets.
+In the terminal, `/` searches retained message bodies, senders, context and activity using a literal substring (ASCII case-insensitive). Enter opens the selected result; `n`/`p` change result pages, `e` edits the query, and Esc closes search. Search results and history pages are separate snapshots. `H` opens history for the current decision or inbox message. `g` looks up a decision or message by ID, including completed records. In history, `1`/`2`/`3` select decisions, messages or outcomes; arrow keys and Page Up/Down scroll through records, `R` retries a read, and `q` returns. Records are displayed together as JSON and grouped by section, not a global timeline. Additional bounded pages load when scrolling past a boundary; each is a separate snapshot, so concurrent changes can shift offsets.
 
 Run `aviary watch ADDRESS` to stream agent-facing connection and change hints; reconcile against the durable queue or inbox on connection and after a hint. Hints can coalesce and the local revision is not a durable cursor.
 

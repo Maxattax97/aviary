@@ -245,6 +245,7 @@ async fn fetch_history(
     id: i64,
     section: usize,
     offset: usize,
+    root_first: bool,
 ) -> Result<HistoryResult> {
     let (section, field) = history_section(section);
     let mut response = network::call_with_timeout(
@@ -254,6 +255,7 @@ async fn fetch_history(
             id,
             section,
             offset,
+            root_first,
         },
         READ_TIMEOUT_MS,
     )
@@ -289,9 +291,60 @@ struct HistoryLookup {
     invalid: bool,
 }
 
+#[derive(serde::Deserialize)]
+struct SearchItem {
+    id: i64,
+    sender: String,
+    body: String,
+    context: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SearchPage {
+    messages: Vec<SearchItem>,
+    next_after: Option<i64>,
+}
+
+#[derive(Default)]
+struct SearchView {
+    query: String,
+    editing: bool,
+    loading: bool,
+    after: i64,
+    previous: Vec<i64>,
+    page: Option<SearchPage>,
+    selected: usize,
+    error: Option<String>,
+}
+
+async fn fetch_search(address: &str, query: String, after: i64) -> Result<SearchPage> {
+    let value = network::call_with_timeout(
+        address,
+        &Operation::SearchMessages { query, after },
+        READ_TIMEOUT_MS,
+    )
+    .await?;
+    let page: SearchPage = serde_json::from_value(value)?;
+    if page.messages.len() > 25
+        || page.messages.iter().any(|item| item.id <= after)
+        || page.messages.windows(2).any(|pair| {
+            pair.first()
+                .zip(pair.last())
+                .is_some_and(|(a, b)| a.id >= b.id)
+        })
+        || page
+            .next_after
+            .is_some_and(|next| page.messages.last().is_none_or(|item| item.id != next))
+    {
+        return Err(crate::error::AppError::InvalidFrame);
+    }
+    Ok(page)
+}
+
 struct HistoryView {
     kind: HistoryKind,
     id: i64,
+    root_first: bool,
     section: usize,
     offset: usize,
     previous: Vec<usize>,
@@ -308,6 +361,7 @@ impl HistoryView {
         Self {
             kind,
             id,
+            root_first: false,
             section: 0,
             offset: 0,
             previous: Vec::new(),
@@ -523,6 +577,7 @@ struct View {
     follow_answer: bool,
     history: Option<HistoryView>,
     history_lookup: Option<HistoryLookup>,
+    search: Option<SearchView>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     notice_loaded: bool,
@@ -561,6 +616,7 @@ impl View {
             || self.priority_edit
             || self.history.is_some()
             || self.history_lookup.is_some()
+            || self.search.is_some()
             || self.help
             || self.detail_page.is_some()
             || width < 40
@@ -702,6 +758,7 @@ impl View {
             follow_answer: true,
             history: None,
             history_lookup: None,
+            search: None,
             notices: Vec::new(),
             notice_view: false,
             notice_loaded: false,
@@ -938,7 +995,8 @@ impl View {
             || (key.code == KeyCode::Char('?')
                 && self.composer.is_none()
                 && !self.editing
-                && self.history_lookup.is_none())
+                && self.history_lookup.is_none()
+                && !self.search.as_ref().is_some_and(|search| search.editing))
         {
             self.help = true;
             self.help_page = 0;
@@ -1170,6 +1228,97 @@ impl View {
                 }
                 _ => return Action::None,
             }
+            return Action::Redraw;
+        }
+        if let Some(search) = &mut self.search {
+            if key.code == KeyCode::Esc {
+                self.search = None;
+                return Action::CloseSearch;
+            }
+            if search.loading {
+                return Action::None;
+            }
+            if search.editing {
+                match key.code {
+                    KeyCode::Enter if !search.query.trim().is_empty() => {
+                        search.after = 0;
+                        search.previous.clear();
+                        search.editing = false;
+                        search.loading = true;
+                        search.error = None;
+                        return Action::LoadSearch(search.query.clone(), 0);
+                    }
+                    KeyCode::Backspace => {
+                        search.query.pop();
+                    }
+                    KeyCode::Char(c)
+                        if !c.is_control()
+                            && !key
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                            && search.query.chars().count() < 256 =>
+                    {
+                        search.query.push(c)
+                    }
+                    _ => return Action::None,
+                }
+            } else {
+                match key.code {
+                    KeyCode::Char('e') => {
+                        search.editing = true;
+                    }
+                    KeyCode::Char('R') if search.error.is_some() => {
+                        search.loading = true;
+                        return Action::LoadSearch(search.query.clone(), search.after);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        let len = search.page.as_ref().map_or(0, |page| page.messages.len());
+                        search.selected =
+                            search.selected.saturating_add(1).min(len.saturating_sub(1));
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        search.selected = search.selected.saturating_sub(1)
+                    }
+                    KeyCode::Char('n') if search.error.is_none() => {
+                        if let Some(next) = search.page.as_ref().and_then(|page| page.next_after) {
+                            search.previous.push(search.after);
+                            search.after = next;
+                            search.selected = 0;
+                            search.loading = true;
+                            return Action::LoadSearch(search.query.clone(), next);
+                        }
+                    }
+                    KeyCode::Char('p') => {
+                        if let Some(previous) = search.previous.pop() {
+                            search.after = previous;
+                            search.selected = 0;
+                            search.loading = true;
+                            return Action::LoadSearch(search.query.clone(), previous);
+                        }
+                    }
+                    KeyCode::Enter if search.error.is_none() => {
+                        if let Some(item) = search
+                            .page
+                            .as_ref()
+                            .and_then(|page| page.messages.get(search.selected))
+                        {
+                            return Action::OpenHistory(HistoryKind::Message, item.id);
+                        }
+                    }
+                    _ => return Action::None,
+                }
+            }
+            return Action::Redraw;
+        }
+        if key.code == KeyCode::Char('/')
+            && !self.editing
+            && !self.priority_edit
+            && self.detail_page.is_none()
+        {
+            self.search = Some(SearchView {
+                editing: true,
+                ..SearchView::default()
+            });
             return Action::Redraw;
         }
         if key.code == KeyCode::Char('R')
@@ -1639,6 +1788,8 @@ enum Action {
     OpenHistory(HistoryKind, i64),
     CloseHistory,
     LoadHistory,
+    LoadSearch(String, i64),
+    CloseSearch,
     SendInstruction(Message),
     SendReply(MessageReply),
     Submit(Operation),
@@ -1680,6 +1831,7 @@ pub async fn terminal(address: &str) -> Result<()> {
         tokio::task::JoinHandle<(bool, bool, bool, Result<serde_json::Value>)>,
     > = None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
+    let mut search_task: Option<tokio::task::JoinHandle<Result<SearchPage>>> = None;
     display(&mut screen, &view)?;
     loop {
         let status_deadline = view.status_expires;
@@ -1704,10 +1856,10 @@ pub async fn terminal(address: &str) -> Result<()> {
             _ = refresh_trigger.notified(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
                 if let Some(history) = &mut view.history {
                     history.needs_load = false;
-                    let (kind, id, section, offset) = (history.kind, history.id, history.section, history.offset);
+                    let (kind, id, section, offset, root_first) = (history.kind, history.id, history.section, history.offset, history.root_first);
                     let address = address.to_owned();
                     let started = generation;
-                    history_task = Some(tokio::spawn(async move { (started, fetch_history(&address, kind, id, section, offset).await) }));
+                    history_task = Some(tokio::spawn(async move { (started, fetch_history(&address, kind, id, section, offset, root_first).await) }));
                 } else {
                     let address = address.to_owned();
                     let request_offset = view.request_offset;
@@ -1770,6 +1922,23 @@ pub async fn terminal(address: &str) -> Result<()> {
                     || (notices_ok && !view.notice_loaded)
                     || (messages_ok && !view.inbox_loaded) {
                     refresh_trigger.notify_one();
+                }
+            }
+            result = async {
+                match search_task.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }
+            }, if search_task.is_some() => {
+                search_task = None;
+                let result = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                if let Some(search) = &mut view.search {
+                    search.loading = false;
+                    match result {
+                        Ok(page) => { search.page = Some(page); search.error = None; }
+                        Err(error) => { search.page = None; search.error = Some(error.to_string()); }
+                    }
+                    display(&mut screen, &view)?;
                 }
             }
             result = async {
@@ -1866,7 +2035,9 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::OpenHistory(kind, id) => {
                         generation = generation.wrapping_add(1);
                         view.history_lookup = None;
-                        view.history = Some(HistoryView::new(kind, id));
+                        let mut history = HistoryView::new(kind, id);
+                        if view.search.is_some() { history.section = 1; history.root_first = true; }
+                        view.history = Some(history);
                         display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
                     Action::CloseHistory => {
@@ -1877,6 +2048,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::LoadHistory => {
                         generation = generation.wrapping_add(1);
                         display(&mut screen, &view)?; refresh_trigger.notify_one();
+                    },
+                    Action::LoadSearch(query, after) => {
+                        let address = address.to_owned();
+                        search_task = Some(tokio::spawn(async move { fetch_search(&address, query, after).await }));
+                        display(&mut screen, &view)?;
+                    },
+                    Action::CloseSearch => {
+                        if let Some(task) = search_task.take() { task.abort(); }
+                        display(&mut screen, &view)?;
+                        refresh_trigger.notify_one();
                     },
                     Action::ToggleNotices => {
                         generation = generation.wrapping_add(1);
@@ -2111,6 +2292,7 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
 d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
+/ search retained messages
 Inbox: Tab focus; arrows move; r reply; H history
 Notices: Tab focus; arrows move; d dismiss
 History: H selected; g lookup; 1-3 section
@@ -2293,6 +2475,95 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             }
             frame.render_widget(
                 Paragraph::new("↑↓ scroll · PgUp/PgDn · 1-3 sections · q"),
+                regions[2],
+            );
+        })?;
+        return Ok(());
+    }
+    if let Some(search) = &view.search {
+        screen.draw(|frame| {
+            let area = frame.area();
+            let regions = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(2),
+                    Constraint::Min(1),
+                    Constraint::Length(2),
+                ])
+                .split(area);
+            let title = format!(
+                "Search messages: {}{}",
+                safe(&search.query),
+                if search.editing { "_" } else { "" }
+            );
+            frame.render_widget(Paragraph::new(title).wrap(Wrap { trim: false }), regions[0]);
+            if search.editing {
+                frame.render_widget(
+                    Paragraph::new("Enter searches text, sender, context or activity."),
+                    regions[1],
+                );
+            } else if search.loading {
+                frame.render_widget(Paragraph::new("Searching..."), regions[1]);
+            } else if let Some(error) = &search.error {
+                frame.render_widget(
+                    Paragraph::new(format!("Search unavailable: {}. R retries.", safe(error)))
+                        .wrap(Wrap { trim: false }),
+                    regions[1],
+                );
+            } else if let Some(page) = &search.page {
+                if page.messages.is_empty() {
+                    frame.render_widget(
+                        Paragraph::new("No matching messages on this page."),
+                        regions[1],
+                    );
+                } else {
+                    let height = usize::from(regions[1].height).max(1);
+                    let start = search.selected.saturating_add(1).saturating_sub(height);
+                    let rows = page
+                        .messages
+                        .iter()
+                        .enumerate()
+                        .skip(start)
+                        .take(height)
+                        .map(|(index, item)| {
+                            let selected = index == search.selected;
+                            let line = format!(
+                                "{} {}: {} {}",
+                                if selected { ">" } else { " " },
+                                safe(&item.sender),
+                                safe(&item.body),
+                                safe(&item.context)
+                            );
+                            Line::from(Span::styled(
+                                line,
+                                if selected {
+                                    Style::default()
+                                        .fg(
+                                            if std::env::var_os("NO_COLOR").is_none()
+                                                && std::env::var("TERM").ok().as_deref()
+                                                    != Some("dumb")
+                                            {
+                                                Color::Cyan
+                                            } else {
+                                                Color::Reset
+                                            },
+                                        )
+                                        .add_modifier(Modifier::BOLD)
+                                } else {
+                                    Style::default()
+                                },
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+                    frame.render_widget(Paragraph::new(rows), regions[1]);
+                }
+            }
+            frame.render_widget(
+                Paragraph::new(if search.editing {
+                    "Enter search · Esc cancel"
+                } else {
+                    "↑↓ select · Enter open · n/p pages\ne edit · Esc close"
+                }),
                 regions[2],
             );
         })?;

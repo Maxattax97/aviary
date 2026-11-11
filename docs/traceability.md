@@ -19,7 +19,7 @@
 | SYS-011 | US-016 | V1 | T-011 (test) | SL-02, SL-04, V1-06 | Partial / full acceptance not run |
 | SYS-012 | US-019, US-020 | V1 | T-012 (test) | V1-09 | Default group workflow locally exercised; direct/group CLI retained |
 | SYS-050 | US-062 | V1 | T-050 (test) | V1-24 | Planned / not implemented |
-| SYS-051 | US-063 | V1 | T-051 (test) | V1-25 | Planned / not implemented |
+| SYS-051 | US-063 | V1 | T-051 (test) | V1-25 | Local message-search and terminal evidence; broader acceptance open |
 | SYS-052 | US-064 | V1 | T-052 (test) | V1-26 | Planned / not implemented |
 | SYS-053 | US-065, US-058 | V1 | T-053 (test) | V1-27 | Local view and selection checks; broader validation open |
 | SYS-054 | US-066 | V1 | T-054 (test) | V1-28 | Local outcome and lost-ack checks; broader validation open |
