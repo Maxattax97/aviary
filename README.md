@@ -8,7 +8,7 @@ Aviary is a communication service and terminal attention interface for a human o
 
 **Status:** Aviary is an evolving prototype, not a V1 release. The core workflows below work locally; two-machine, OS-crash, supported-platform and representative-operator acceptance are still open. The protocol and CLI are provisional. See [verification](docs/verification.md) for actual evidence and [tickets](docs/tickets.md) for remaining work.
 
-**Terminal:** The interface uses terminal-scheme-aware colors with basic-color and monochrome fallbacks; broader terminal and theme validation remains open. Press `?` for keyboard help, or Ctrl-G during text entry; Esc closes help without discarding the view or draft.
+**Terminal:** The interface uses terminal-scheme-aware colors with basic-color and monochrome fallbacks; broader terminal and theme validation remains open; see the [terminal verification matrix](docs/terminal-support.md). Press `?` for keyboard help, or Ctrl-G during text entry; Esc closes help without discarding the view or draft.
 
 **Trust boundary:** The service has no authentication, authorization or encryption. Any process that can connect can read communications, impersonate a participant and submit answers. It listens on `127.0.0.1:7432` by default; expose it only to an explicitly trusted network. Participant and channel names are routing labels, not security identities.
 

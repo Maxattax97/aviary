@@ -439,6 +439,7 @@ impl<W: Write> Write for BasicColorWriter<W> {
             let mut replaced = false;
             for (indexed, basic) in [
                 (b"\x1b[38;5;6".as_slice(), b"\x1b[36".as_slice()),
+                (b"\x1b[38;5;3".as_slice(), b"\x1b[33".as_slice()),
                 (b"\x1b[38;5;11".as_slice(), b"\x1b[33".as_slice()),
             ] {
                 if rest.starts_with(indexed) && matches!(rest.get(indexed.len()), Some(b'm' | b';'))
@@ -3572,12 +3573,12 @@ mod tests {
             .write_all(b"before\x1b[38;5;")
             .expect("buffer first part");
         writer
-            .write_all(b"6;49mcyan\x1b[38;5;11myellow\x1b[38;5;60m")
+            .write_all(b"6;49mcyan\x1b[38;5;3;49mwarning\x1b[38;5;11myellow\x1b[38;5;60m")
             .expect("buffer second part");
         writer.flush().expect("flush terminal output");
         assert_eq!(
             writer.inner,
-            b"before\x1b[36;49mcyan\x1b[33myellow\x1b[38;5;60m"
+            b"before\x1b[36;49mcyan\x1b[33;49mwarning\x1b[33myellow\x1b[38;5;60m"
         );
     }
 

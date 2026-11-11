@@ -393,3 +393,7 @@ The [P-03 proposal](shared-work-queue-proposal.md) makes one-claim/manual-recove
 ## Saturated change-hint queues (2026-11-11)
 
 When a dedicated subscriber's outbound queue fills, the service coalesces further hints while queued hints remain. It emits one debug diagnostic per saturation episode, without logging participant identities or payloads; a later successful enqueue clears the diagnostic state. Durable state remains authoritative and other peers retain independent queues. This is not a guarantee of prompt partition detection, a latency target or a total process-memory bound.
+
+## Terminal capability evidence (2026-11-11)
+
+The current scheme uses terminal-controlled basic ANSI cyan for focus and selection and basic yellow for warnings, with bracketed focus and `>` selection cues independent of color. `NO_COLOR` and `TERM=dumb` suppress color emphasis. A documented [verification matrix](terminal-support.md) records the local configurations and explicitly untested platforms. During complete-workflow testing the rejection screen exposed an indexed yellow sequence; the output adapter now maps that sequence to basic yellow as well. This does not claim contrast or accessibility on every terminal.

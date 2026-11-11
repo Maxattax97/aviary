@@ -51,7 +51,7 @@ ZeroMQ provides asynchronous messaging, routing and reconnection mechanisms, not
 
 The planned operator interface presents an overview of decisions, messages and completions, searchable retained communications, selected-item previews and clear view and selection context. It distinguishes action outcomes and preserves drafts and reading position through temporary navigation and polling interruptions. These are target behaviors, not claims about the current prototype. Search scope, overview aggregation and pagination, responsive layout, reconciliation and action-specific confirmation remain to be designed. A preview can use a different layout on narrow panes.
 
-The planned terminal uses a documented standardized color system that respects the terminal scheme; color is enabled by default where supported. It must also work with basic-color or monochrome supported terminal configurations, without relying on 256-color support or color alone to distinguish actionable state. The color mechanism, capability handling and minimum terminal controls remain design and verification work.
+The terminal uses scheme-controlled basic ANSI palette colors with non-color selection and focus cues. Basic-color and monochrome workflows have local PTY and tmux evidence; minimum exercised size and platform limitations are recorded in the [terminal verification matrix](terminal-support.md). Broader terminal, color and accessibility acceptance remains open.
 
 The planned terminal offers keyboard-accessible on-demand help, with concise contextual hints allowed in normal views; exact trigger and presentation remain to be designed.
 
