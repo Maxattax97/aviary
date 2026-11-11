@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none" role="img" aria-labelledby="title desc">
   <title id="title">Aviary</title>
-  <desc id="desc">A bird in flight formed from two overlapping message shapes.</desc>
-  <rect width="160" height="160" rx="36" fill="#102f35"/>
-  <path d="M27 47h58c25 0 41 13 45 34-10-8-20-11-33-10L69 99 27 47Z" fill="#8bd5c7"/>
-  <path d="M35 110 69 99l28-28c-2 19-11 35-27 44l-19 10 3-17-19 2Z" fill="#f4c96b"/>
-  <circle cx="113" cy="57" r="4" fill="#f4c96b"/>
-  <path d="M123 60h16l-13 8" fill="#f4c96b"/>
+  <desc id="desc">A minimal teal birdhouse with a round entrance and a warm gold perch.</desc>
+  <path d="M48 105 128 37 208 105" stroke="#245B57" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+  <path fill="#438B80" fill-rule="evenodd" d="m65 116 63-54 63 54v78a18 18 0 0 1-18 18H83a18 18 0 0 1-18-18v-78Zm86 17a23 23 0 1 0-46 0 23 23 0 0 0 46 0Z"/>
+  <path d="M112 177h32" stroke="#D9A454" stroke-width="10" stroke-linecap="round"/>
 </svg>

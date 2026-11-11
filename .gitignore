@@ -1,5 +1,6 @@
 /target/
 /GOAL.md
+/NOTES.md
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
