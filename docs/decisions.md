@@ -289,3 +289,12 @@ basic cyan follows the terminal theme; NO_COLOR or TERM=dumb suppresses that
 accent, with focus labels and selection markers retained. This is an increment:
 exact reading-position preservation on resize and broader terminal/color
 validation remain open, as do the rest of P-04/P-05 acceptance.
+
+
+Queue detail scrolling records a character-position anchor and maps it into the
+new wrapping on resize, retaining the anchor even when a wider pane shows the
+whole item. The mapping can reveal earlier text; complex grapheme and terminal
+width behavior remains to be validated. The current Crossterm backend encodes
+the cyan accent using an indexed-color SGR sequence (`38;5;6`), so basic ANSI
+color compatibility is not established. NO_COLOR suppresses the accent and
+retains the non-color cues.

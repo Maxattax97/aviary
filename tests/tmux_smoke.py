@@ -243,6 +243,10 @@ def main() -> None:
             for _ in range(3):
                 tmux("send-keys", "-t", "aviary:", "j")
             wait_for_screen("AGENT-END")
+            tmux("resize-window", "-t", "aviary:", "-x", "100", "-y", "15")
+            wait_for_screen("AGENT-END")
+            tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
+            wait_for_screen("AGENT-END")
             for _ in range(3):
                 tmux("send-keys", "-t", "aviary:", "j")
             wait_for_screen("RESULT-END")

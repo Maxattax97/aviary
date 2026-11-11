@@ -415,9 +415,12 @@ struct View {
     poll_summary: Option<String>,
     busy: bool,
     list_focus: bool,
-    detail_scroll: usize,
-    inbox_scroll: usize,
-    notice_scroll: usize,
+    detail_scroll: Cell<usize>,
+    inbox_scroll: Cell<usize>,
+    notice_scroll: Cell<usize>,
+    detail_anchor: Cell<(usize, usize, usize)>,
+    inbox_anchor: Cell<(usize, usize, usize)>,
+    notice_anchor: Cell<(usize, usize, usize)>,
     detail_max: Cell<usize>,
     detail_actual: Cell<usize>,
     follow_answer: bool,
@@ -473,9 +476,12 @@ impl View {
             poll_summary: None,
             busy: false,
             list_focus: false,
-            detail_scroll: 0,
-            inbox_scroll: 0,
-            notice_scroll: 0,
+            detail_scroll: Cell::new(0),
+            inbox_scroll: Cell::new(0),
+            notice_scroll: Cell::new(0),
+            detail_anchor: Cell::new((0, 0, 0)),
+            inbox_anchor: Cell::new((0, 0, 0)),
+            notice_anchor: Cell::new((0, 0, 0)),
             detail_max: Cell::new(0),
             detail_actual: Cell::new(0),
             follow_answer: true,
@@ -534,7 +540,8 @@ impl View {
         self.page_size = new_size;
     }
     fn reset_selection(&mut self) {
-        self.detail_scroll = 0;
+        self.detail_scroll.set(0);
+        self.detail_anchor.set((0, 0, 0));
         self.follow_answer = true;
         self.selected = self
             .current()
@@ -633,6 +640,8 @@ impl View {
         };
         if previous != page.notices.get(current).map(|item| item.id) {
             self.notice_page = 0;
+            self.notice_scroll.set(0);
+            self.notice_anchor.set((0, 0, 0));
         }
         self.notice_current = current;
         self.notices = page.notices;
@@ -662,6 +671,8 @@ impl View {
         };
         if previous != page.messages.get(current).map(|item| item.id) {
             self.inbox_page = 0;
+            self.inbox_scroll.set(0);
+            self.inbox_anchor.set((0, 0, 0));
         }
         self.inbox_current = current;
         self.inbox = page.messages;
@@ -953,11 +964,14 @@ impl View {
             )
         {
             if self.inbox_view {
-                self.inbox_scroll = 0;
+                self.inbox_scroll.set(0);
+                self.inbox_anchor.set((0, 0, 0));
             } else if self.notice_view {
-                self.notice_scroll = 0;
+                self.notice_scroll.set(0);
+                self.notice_anchor.set((0, 0, 0));
             } else {
-                self.detail_scroll = 0;
+                self.detail_scroll.set(0);
+                self.detail_anchor.set((0, 0, 0));
                 self.follow_answer = true;
             }
         }
@@ -977,11 +991,11 @@ impl View {
                 current.saturating_add(step).min(self.detail_max.get())
             };
             if self.inbox_view {
-                self.inbox_scroll = next;
+                self.inbox_scroll.set(next);
             } else if self.notice_view {
-                self.notice_scroll = next;
+                self.notice_scroll.set(next);
             } else {
-                self.detail_scroll = next;
+                self.detail_scroll.set(next);
                 self.follow_answer = false;
             }
             return Action::Redraw;
@@ -1044,14 +1058,16 @@ impl View {
                     }
                 }
                 KeyCode::Char('j') | KeyCode::Down => {
-                    self.inbox_scroll = self
-                        .detail_actual
-                        .get()
-                        .saturating_add(1)
-                        .min(self.detail_max.get())
+                    self.inbox_scroll.set(
+                        self.detail_actual
+                            .get()
+                            .saturating_add(1)
+                            .min(self.detail_max.get()),
+                    );
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    self.inbox_scroll = self.detail_actual.get().saturating_sub(1)
+                    self.inbox_scroll
+                        .set(self.detail_actual.get().saturating_sub(1));
                 }
                 _ => return Action::None,
             }
@@ -1090,14 +1106,16 @@ impl View {
                     }
                 }
                 KeyCode::Char('j') | KeyCode::Down if self.notice_loaded => {
-                    self.notice_scroll = self
-                        .detail_actual
-                        .get()
-                        .saturating_add(1)
-                        .min(self.detail_max.get())
+                    self.notice_scroll.set(
+                        self.detail_actual
+                            .get()
+                            .saturating_add(1)
+                            .min(self.detail_max.get()),
+                    );
                 }
                 KeyCode::Char('k') | KeyCode::Up if self.notice_loaded => {
-                    self.notice_scroll = self.detail_actual.get().saturating_sub(1)
+                    self.notice_scroll
+                        .set(self.detail_actual.get().saturating_sub(1));
                 }
                 KeyCode::Char('d') if self.notice_loaded => {
                     if let Some(notice) = self.notices.get(self.notice_current) {
@@ -2181,22 +2199,30 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
 }
 
 // Preserve every printable scalar while wrapping to the available terminal cells.
-fn wrap_visible(text: &str, width: usize) -> Vec<String> {
+fn wrap_visible(text: &str, width: usize) -> Vec<(String, usize)> {
     let mut lines = Vec::new();
-    for input in text.split('\n') {
-        let mut line = String::new();
-        let mut used = 0;
-        for c in input.chars() {
-            let cells = UnicodeWidthChar::width(c).unwrap_or(0);
-            if used + cells > width && !line.is_empty() {
-                lines.push(std::mem::take(&mut line));
-                used = 0;
-            }
-            line.push(c);
-            used += cells;
+    let mut line = String::new();
+    let mut used = 0;
+    let mut start = 0;
+    let mut length = 0;
+    for (offset, c) in text.chars().enumerate() {
+        length = offset + 1;
+        if c == '\n' {
+            lines.push((std::mem::take(&mut line), start));
+            used = 0;
+            start = offset + 1;
+            continue;
         }
-        lines.push(line);
+        let cells = UnicodeWidthChar::width(c).unwrap_or(0);
+        if used + cells > width && !line.is_empty() {
+            lines.push((std::mem::take(&mut line), start));
+            used = 0;
+            start = offset;
+        }
+        line.push(c);
+        used += cells;
     }
+    lines.push((line, start.min(length)));
     lines
 }
 
@@ -2466,21 +2492,41 @@ fn display_queue(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &Vie
         let inner_height = usize::from(panes[1].height.saturating_sub(2)).max(1);
         let lines = wrap_visible(&detail, inner_width);
         let max_scroll = lines.len().saturating_sub(inner_height);
-        let saved_scroll = if view.inbox_view {
-            view.inbox_scroll
+        let (saved_scroll, saved_anchor) = if view.inbox_view {
+            (&view.inbox_scroll, &view.inbox_anchor)
         } else if view.notice_view {
-            view.notice_scroll
+            (&view.notice_scroll, &view.notice_anchor)
         } else {
-            view.detail_scroll
+            (&view.detail_scroll, &view.detail_anchor)
         };
-        let mut scroll = saved_scroll.min(max_scroll);
+        let (old_width, anchor, old_scroll) = saved_anchor.get();
+        let moved = saved_scroll.get() != old_scroll;
+        let mut scroll = if old_width != 0 && old_width != inner_width {
+            lines
+                .iter()
+                .rposition(|(_, start)| *start <= anchor)
+                .unwrap_or(0)
+        } else {
+            saved_scroll.get()
+        }
+        .min(max_scroll);
         if !view.inbox_view && !view.notice_view && view.follow_answer {
-            if let Some(answer_line) = lines.iter().position(|line| line.starts_with("> ")) {
+            if let Some(answer_line) = lines.iter().position(|(line, _)| line.starts_with("> ")) {
                 scroll = answer_line
                     .saturating_sub(inner_height.saturating_sub(2))
                     .min(max_scroll);
             }
         }
+        saved_scroll.set(scroll);
+        let next_anchor = if old_width == 0
+            || moved
+            || (!view.inbox_view && !view.notice_view && view.follow_answer)
+        {
+            lines.get(scroll).map_or(0, |(_, start)| *start)
+        } else {
+            anchor
+        };
+        saved_anchor.set((inner_width, next_anchor, scroll));
         view.detail_max.set(max_scroll);
         view.detail_actual.set(scroll);
         let continuation = match (scroll > 0, scroll < max_scroll) {
@@ -2501,7 +2547,7 @@ fn display_queue(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &Vie
             .iter()
             .skip(scroll)
             .take(inner_height)
-            .cloned()
+            .map(|(line, _)| line.as_str())
             .collect::<Vec<_>>()
             .join("\n");
         frame.render_widget(Paragraph::new(content).block(detail_block), panes[1]);

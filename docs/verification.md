@@ -389,3 +389,15 @@ Arrival, signal restoration, partial-refresh, reconnect, and lost-acknowledgment
 regressions also passed locally. These checks do not establish the full color or
 platform matrix, exact reading-position retention on resize, all Unicode
 rendering, concurrent offset traversal, remote operation or operator acceptance.
+
+
+## Queue resize and color observation (2026-11-10)
+
+The tmux smoke passed after scrolling a long notice and resizing 40 × 12 to
+100 × 15 and back while keeping its marker visible. The serial locked Rust
+suite passed 15 unit and 23 integration tests; the CLI reference workflow and
+NO_COLOR focus/confirmation PTY test also passed. A local PTY capture showed
+Crossterm emitting `38;5;6` for the cyan accent and no such color sequence
+with NO_COLOR. This does not prove operation on a basic-color-only terminal;
+additional resize cases, Unicode clusters, schemes and terminal environments
+remain unverified.
