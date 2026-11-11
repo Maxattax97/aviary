@@ -130,6 +130,11 @@ pub enum Operation {
         #[serde(default)]
         offset: usize,
     },
+    SearchMessages {
+        query: String,
+        #[serde(default)]
+        after: i64,
+    },
     ReplyMessage {
         reply: MessageReply,
     },

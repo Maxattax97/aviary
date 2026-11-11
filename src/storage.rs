@@ -132,6 +132,7 @@ impl Storage {
                 participant,
                 offset,
             } => self.inbox_page(participant, offset).await,
+            Operation::SearchMessages { query, after } => self.search_messages(query, after).await,
             Operation::ReplyMessage { reply } => self.reply_message(reply).await,
             Operation::GetMessageResponse { id } => self.get_message_response(id).await,
             Operation::SubmitNotice { notice } => self.submit_notice(notice).await,
@@ -575,6 +576,45 @@ impl Storage {
             }
         }
         Ok(page.finish("messages", false))
+    }
+
+    async fn search_messages(&self, query: String, after: i64) -> Result<Value> {
+        if query.trim().is_empty() || query.chars().count() > 256 || after < 0 {
+            return Err(AppError::InvalidRequest);
+        }
+        // Keyset pagination avoids duplicate earlier records when new messages arrive.
+        // Return short previews, never the potentially near-limit message payloads.
+        let mut rows: Vec<(i64, String, String, String)> = sqlx::query_as(
+            "SELECT id, substr(json_extract(payload, '$.sender'), 1, 160), \
+             substr(json_extract(payload, '$.body'), 1, 160), \
+             substr(coalesce(json_extract(payload, '$.context'), ''), 1, 160) \
+             FROM messages WHERE id > ? AND (\
+             instr(lower(json_extract(payload, '$.body')), lower(?)) > 0 OR \
+             instr(lower(json_extract(payload, '$.sender')), lower(?)) > 0 OR \
+             instr(lower(coalesce(json_extract(payload, '$.context'), '')), lower(?)) > 0 OR \
+             instr(lower(coalesce(json_extract(payload, '$.activity'), '')), lower(?)) > 0) \
+             ORDER BY id LIMIT 26",
+        )
+        .bind(after)
+        .bind(&query)
+        .bind(&query)
+        .bind(&query)
+        .bind(&query)
+        .fetch_all(&self.pool)
+        .await?;
+        let more = rows.len() > 25;
+        if more {
+            rows.pop();
+        }
+        let next_after = if more {
+            rows.last().map(|row| row.0)
+        } else {
+            None
+        };
+        let items: Vec<Value> = rows.into_iter().map(|(id, sender, body, context)| {
+            json!({"id": id, "sender": sender, "body": body, "context": context})
+        }).collect();
+        Ok(json!({"messages": items, "next_after": next_after}))
     }
 
     async fn notices_page(&self, include_dismissed: bool, offset: usize) -> Result<Value> {
