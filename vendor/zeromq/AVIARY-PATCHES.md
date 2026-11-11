@@ -11,7 +11,7 @@ aggregate-message, multipart-frame-count, or peer-send-queue limits.
 - The peer send queue is limited to 64 messages. The ROUTER exposes a nonblocking
   `try_send` and peer-liveness query. Aviary drops a reply if its queue is full
   and treats a lost reply as an unknown outcome; change hints can coalesce.
-- Unit tests cover oversized frame headers and multipart recovery.
+- Unit tests cover oversized frame headers, multipart recovery, and a full peer queue retaining hints while another peer progresses.
 
 These are Aviary-specific changes, not claims about upstream support. Review
 them against upstream changes when updating this copy. The license is in

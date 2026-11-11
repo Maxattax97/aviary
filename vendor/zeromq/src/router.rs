@@ -168,6 +168,83 @@ impl RouterSocket {
     }
 }
 
+#[cfg(test)]
+mod aviary_backpressure_tests {
+    use super::*;
+    use crate::backend::{Peer, PEER_SEND_QUEUE_CAPACITY};
+    use bytes::Bytes;
+    use futures::StreamExt;
+
+    fn routed(peer: &str, payload: &'static [u8]) -> ZmqMessage {
+        let mut message = ZmqMessage::from(Bytes::copy_from_slice(peer.as_bytes()));
+        message.push_back(Bytes::from_static(payload));
+        message
+    }
+
+    #[crate::async_rt::test]
+    async fn full_subscriber_queue_keeps_hints_and_does_not_block_another_peer() {
+        let mut router = RouterSocket::with_options(SocketOptions::default());
+        let (slow_sender, mut slow_receiver) = mpsc::channel(PEER_SEND_QUEUE_CAPACITY);
+        let (fast_sender, mut fast_receiver) = mpsc::channel(PEER_SEND_QUEUE_CAPACITY);
+        let slow: PeerIdentity = "slow-subscriber".parse().expect("slow peer identity");
+        let fast: PeerIdentity = "fast-subscriber".parse().expect("fast peer identity");
+        router
+            .backend
+            .peers
+            .upsert_async(
+                slow,
+                Peer {
+                    send_queue: slow_sender,
+                },
+            )
+            .await;
+        router
+            .backend
+            .peers
+            .upsert_async(
+                fast,
+                Peer {
+                    send_queue: fast_sender,
+                },
+            )
+            .await;
+
+        let mut queued = 0;
+        loop {
+            match router.try_send(routed("slow-subscriber", b"hint")).await {
+                Ok(()) => queued += 1,
+                Err(ZmqError::BufferFull(_)) => break,
+                Err(error) => panic!("unexpected queue error: {error}"),
+            }
+            assert!(
+                queued <= PEER_SEND_QUEUE_CAPACITY + 2,
+                "peer queue was not bounded"
+            );
+        }
+        assert!(queued > 0);
+        router
+            .try_send(routed("fast-subscriber", b"hint"))
+            .await
+            .expect("other peer remains writable");
+        assert!(matches!(
+            fast_receiver.next().await,
+            Some(Message::Message(_))
+        ));
+        for _ in 0..queued {
+            let Some(Message::Message(message)) = slow_receiver.next().await else {
+                panic!("queued hint missing");
+            };
+            let frames = message.into_vec();
+            assert_eq!(frames.len(), 1);
+            assert_eq!(frames.first().map(Bytes::as_ref), Some(&b"hint"[..]));
+        }
+        router
+            .try_send(routed("slow-subscriber", b"later"))
+            .await
+            .expect("drained queue accepts a later hint");
+    }
+}
+
 struct RouterSocketInner {
     backend: Arc<GenericSocketBackend>,
     _binds: HashMap<Endpoint, AcceptStopHandle>,

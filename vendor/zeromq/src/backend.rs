@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 /// Sender for notifying reconnection tasks when a peer disconnects.
 pub(crate) type DisconnectNotifier = mpsc::Sender<PeerIdentity>;
-const PEER_SEND_QUEUE_CAPACITY: usize = 64;
+pub(crate) const PEER_SEND_QUEUE_CAPACITY: usize = 64;
 
 pub(crate) struct Peer {
     pub(crate) send_queue: mpsc::Sender<Message>,
