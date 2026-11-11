@@ -183,6 +183,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
     let mut socket = RouterSocket::with_options(options);
     let mut monitor = socket.monitor();
     let mut subscribers: HashSet<bytes::Bytes> = HashSet::new();
+    let mut used_peers: HashSet<bytes::Bytes> = HashSet::new();
     socket.bind(&format!("tcp://{address}")).await?;
     // Acquire the listener before opening the database: a competing service
     // must not initialize a different database after losing the bind race.
@@ -204,6 +205,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
             event = monitor.next() => {
                 if let Some(SocketEvent::Disconnected(peer)) = event {
                     subscribers.retain(|identity| identity.as_ref() != peer.as_ref());
+                    used_peers.retain(|identity| identity.as_ref() != peer.as_ref());
                 }
                 continue;
             }
@@ -216,6 +218,17 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
         let Some(identity) = frames.first() else {
             continue;
         };
+        // Subscribers are receive-only after their initial acknowledgment.
+        // This keeps ordinary replies out of their bounded outbound queue.
+        if subscribers.contains(identity) {
+            continue;
+        }
+        if used_peers.len() >= 1024 {
+            used_peers.retain(|peer| socket.has_peer(peer.as_ref()));
+        }
+        // A subscription is accepted only as the first message on its peer;
+        // otherwise old replies could occupy the queue when hints coalesce.
+        let fresh = used_peers.insert(identity.clone());
         let Some(frame) = frames.get(1) else {
             continue;
         };
@@ -256,6 +269,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
                 subscribers.retain(|identity| socket.has_peer(identity.as_ref()));
             }
             if request.version != VERSION
+                || !fresh
                 || (subscribers.len() >= MAX_SUBSCRIBERS && !subscribers.contains(identity))
             {
                 Err(AppError::InvalidRequest)

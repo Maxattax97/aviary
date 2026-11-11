@@ -114,7 +114,8 @@ def main():
             if pid is not None:
                 stop_service(pid, port)
         with socket.socket() as unrelated:
-            unrelated.bind(("127.0.0.1", port))
+            unrelated.bind(("127.0.0.1", 0))
+            ADDRESS = f"127.0.0.1:{unrelated.getsockname()[1]}"
             unrelated.listen()
             conflict = subprocess.run([str(BINARY), "tui", "--local-address", ADDRESS], cwd=other, capture_output=True, text=True, timeout=12)
             assert conflict.returncode != 0 and "Cannot identify service" in conflict.stderr
@@ -129,6 +130,9 @@ def main():
                 process.kill()
                 process.wait()
                 os.close(fd)
+        with socket.socket() as available:
+            available.bind(("127.0.0.1", 0))
+            ADDRESS = f"127.0.0.1:{available.getsockname()[1]}"
         Path(other, "aviary.sqlite").mkdir()
         failure = subprocess.run([str(BINARY), "tui", "--local-address", ADDRESS], cwd=other, capture_output=True, text=True, timeout=12)
         assert failure.returncode != 0 and "failed to start" in failure.stderr
