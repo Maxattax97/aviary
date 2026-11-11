@@ -81,6 +81,11 @@ def main() -> None:
                 assert len(calls) == 1
                 terminal.send("\x0f")  # suspend without resubmitting
                 terminal.expect("Instruction draft suspended")
+                terminal.send("q")
+                terminal.expect("Discard this")
+                terminal.send("n")
+                terminal.send("\x0f")
+                terminal.expect("Instruction draft suspended")
                 terminal.send("m")
                 terminal.expect("Unconfirmed:")
                 assert len(calls) == 1

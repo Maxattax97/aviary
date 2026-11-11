@@ -13,6 +13,25 @@ def main() -> None:
                 "identity": f"layout-{number}", "agent": "agent", "question": f"Layout item {number}",
                 "options": ["Yes"], "recommendation": 0, "reason": "Ready",
             }})["id"])
+        for monochrome in (False, True):
+            env = os.environ.copy()
+            env["TERM"] = "xterm"
+            if monochrome:
+                env["NO_COLOR"] = "1"
+            else:
+                env.pop("NO_COLOR", None)
+            with Terminal(service, env=env) as terminal:
+                chunks = []
+                feed = terminal._feed_screen
+                def capture(chunk):
+                    chunks.append(chunk)
+                    feed(chunk)
+                terminal._feed_screen = capture
+                terminal.expect("Decision #1 [FOCUS]")
+                output = b"".join(chunks)
+                assert b"\x1b[38;5;" not in output
+                assert (b"\x1b[36" in output) != monochrome
+                terminal.quit()
         env = os.environ.copy()
         env["NO_COLOR"] = "1"
         with Terminal(service, env=env) as terminal:
@@ -29,7 +48,7 @@ def main() -> None:
             service.wait_for(lambda: service.call({"op": "get", "id": ids[1]})["answer"] is not None, "explicit answer")
             assert service.call({"op": "get", "id": ids[0]})["answer"] is None
             terminal.quit()
-    print("Rendered monochrome focus, selection and explicit confirmation passed")
+    print("Rendered ANSI/monochrome color, focus and explicit confirmation passed")
 
 
 if __name__ == "__main__":

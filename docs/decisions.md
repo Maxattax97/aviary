@@ -298,3 +298,11 @@ width behavior remains to be validated. The current Crossterm backend encodes
 the cyan accent using an indexed-color SGR sequence (`38;5;6`), so basic ANSI
 color compatibility is not established. NO_COLOR suppresses the accent and
 retains the non-color cues.
+
+The output adapter now converts the interface's two Crossterm indexed accents
+to eight-color ANSI cyan and yellow SGR sequences, buffering through each flush
+to handle split writes. It leaves other output untouched. This avoids requiring
+indexed-color support for these accents; terminal scheme contrast and wider
+terminal compatibility remain to be verified. Ordinary quit with a suspended
+unconfirmed instruction reopens its discard confirmation, including identity.
+Ctrl-C, termination signals and abnormal exits still discard in-memory drafts.

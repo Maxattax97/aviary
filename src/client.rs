@@ -280,6 +280,49 @@ impl HistoryView {
     }
 }
 
+// Crossterm emits indexed-color SGR even for its named basic colors. Convert
+// only the two accents used by this interface to their eight-color equivalents.
+// Buffer through flush so a sequence split across Write calls is still intact.
+struct BasicColorWriter<W> {
+    inner: W,
+    pending: Vec<u8>,
+}
+impl<W: Write> Write for BasicColorWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.pending.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut result = Vec::with_capacity(self.pending.len());
+        let mut pos = 0;
+        while pos < self.pending.len() {
+            let rest = &self.pending[pos..];
+            let mut replaced = false;
+            for (indexed, basic) in [
+                (b"\x1b[38;5;6".as_slice(), b"\x1b[36".as_slice()),
+                (b"\x1b[38;5;11".as_slice(), b"\x1b[33".as_slice()),
+            ] {
+                if rest.starts_with(indexed) && matches!(rest.get(indexed.len()), Some(b'm' | b';'))
+                {
+                    result.extend_from_slice(basic);
+                    pos += indexed.len();
+                    replaced = true;
+                    break;
+                }
+            }
+            if !replaced {
+                result.push(self.pending[pos]);
+                pos += 1;
+            }
+        }
+        self.inner.write_all(&result)?;
+        self.pending.clear();
+        self.inner.flush()
+    }
+}
+
+type Screen = Terminal<CrosstermBackend<BasicColorWriter<io::Stdout>>>;
+
 // Restore the terminal and stop the input thread on every ordinary exit path.
 struct TerminalGuard {
     stop: Arc<AtomicBool>,
@@ -1210,6 +1253,18 @@ impl View {
             }
             return Action::Redraw;
         }
+        if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+            && self
+                .suspended_instruction
+                .as_ref()
+                .is_some_and(|draft| draft.error.is_some())
+        {
+            self.composer = self.suspended_instruction.take();
+            if let Some(composer) = &mut self.composer {
+                composer.confirm_discard = true;
+            }
+            return Action::Redraw;
+        }
         if key.code == KeyCode::Char('g') {
             self.history_lookup = Some(HistoryLookup::default());
             return Action::Redraw;
@@ -1423,7 +1478,10 @@ pub async fn terminal(address: &str) -> Result<()> {
     execute!(io::stdout(), terminal::EnterAlternateScreen)?;
     let mut interval = time::interval(POLL_INTERVAL);
     let mut view = View::new();
-    let mut screen = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    let mut screen = Terminal::new(CrosstermBackend::new(BasicColorWriter {
+        inner: io::stdout(),
+        pending: Vec::new(),
+    }))?;
     screen.clear()?;
     let mut generation = 0u64;
     let mut refresh: Option<tokio::task::JoinHandle<_>> = None;
@@ -1816,7 +1874,7 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
         .map(|part| part.iter().collect())
         .collect()
 }
-fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> Result<()> {
+fn display(screen: &mut Screen, view: &View) -> Result<()> {
     use std::fmt::Write as _;
     let mut output = String::new();
     macro_rules! println {
@@ -2228,7 +2286,7 @@ fn wrap_visible(text: &str, width: usize) -> Vec<(String, usize)> {
 
 // Queue contents remain bounded to the current backend page. Page transitions
 // still fetch asynchronously; the list never claims an exact total if more exist.
-fn display_queue(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> Result<()> {
+fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
     let (title, list_title, detail_title, rows, selected, more, loaded, detail) = if view.inbox_view
     {
         let rows = view
@@ -2571,7 +2629,7 @@ fn display_queue(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &Vie
     Ok(())
 }
 
-fn render(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, output: &str) -> Result<()> {
+fn render(screen: &mut Screen, output: &str) -> Result<()> {
     let lines: Vec<Line<'_>> = output
         .lines()
         .map(|line| {
@@ -2719,6 +2777,25 @@ mod tests {
         assert!(
             matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
             Action::SendInstruction(message) if message.identity == identity && message.body == "keep this")
+        );
+    }
+
+    #[test]
+    fn basic_color_writer_handles_split_sequences_and_preserves_other_colors() {
+        let mut writer = BasicColorWriter {
+            inner: Vec::new(),
+            pending: Vec::new(),
+        };
+        writer
+            .write_all(b"before\x1b[38;5;")
+            .expect("buffer first part");
+        writer
+            .write_all(b"6;49mcyan\x1b[38;5;11myellow\x1b[38;5;60m")
+            .expect("buffer second part");
+        writer.flush().expect("flush terminal output");
+        assert_eq!(
+            writer.inner,
+            b"before\x1b[36;49mcyan\x1b[33myellow\x1b[38;5;60m"
         );
     }
 

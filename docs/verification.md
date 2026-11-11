@@ -401,3 +401,15 @@ Crossterm emitting `38;5;6` for the cyan accent and no such color sequence
 with NO_COLOR. This does not prove operation on a basic-color-only terminal;
 additional resize cases, Unicode clusters, schemes and terminal environments
 remain unverified.
+
+## Basic-color output and suspended-draft quit (2026-11-10)
+
+A PTY capture with TERM=xterm observed the basic cyan SGR and no indexed-color
+SGR; with NO_COLOR it observed no cyan SGR and retained focus and selection
+cues. A unit test covers a split color sequence and preservation of an
+unrelated indexed sequence. The isolated tmux smoke and terminal signal
+restoration tests passed. The lost-acknowledgment PTY exercise also verified
+that ordinary quit prompts before discarding a suspended unconfirmed draft,
+then retained and retried the identical request with one stored message. The
+serial locked Rust suite passed 16 unit and 23 integration tests. These tests do
+not establish contrast across terminal themes or behavior on every terminal.
