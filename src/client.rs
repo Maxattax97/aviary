@@ -22,7 +22,8 @@ use ratatui::{
     Terminal,
 };
 use tokio::{sync::mpsc, time};
-use unicode_width::UnicodeWidthChar;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     error::Result,
@@ -1917,6 +1918,10 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
     }
     if let Some(composer) = &view.composer {
         if composer.reply_to.is_none() {
+            if composer.confirm_discard {
+                println!("Discard this uncertain instruction?\r\nDestination: all · group\r\nID: {}\r\ny discards; any other key keeps it.", safe(&composer.fields[0]));
+                return render(screen, &output);
+            }
             let body = &composer.fields[3];
             let (width, _) = terminal::size().unwrap_or((80, 24));
             let capacity = usize::from(width.saturating_sub(4)).max(1) / 2;
@@ -1934,10 +1939,6 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
                     "{}\r\nDraft locked. Ctrl-S retries unchanged; Esc discards.",
                     safe(error)
                 );
-            }
-            if composer.confirm_discard {
-                println!("Identity: {}", safe(&composer.fields[0]));
-                println!("Discard this possibly accepted draft and identity? y confirms; any other key keeps it.");
             }
             return render(screen, &output);
         }
@@ -2262,25 +2263,26 @@ fn wrap_visible(text: &str, width: usize) -> Vec<(String, usize)> {
     let mut line = String::new();
     let mut used = 0;
     let mut start = 0;
-    let mut length = 0;
-    for (offset, c) in text.chars().enumerate() {
-        length = offset + 1;
-        if c == '\n' {
+    let mut offset = 0;
+    for grapheme in text.graphemes(true) {
+        if grapheme == "\n" {
             lines.push((std::mem::take(&mut line), start));
             used = 0;
-            start = offset + 1;
+            offset += 1;
+            start = offset;
             continue;
         }
-        let cells = UnicodeWidthChar::width(c).unwrap_or(0);
+        let cells = UnicodeWidthStr::width(grapheme);
         if used + cells > width && !line.is_empty() {
             lines.push((std::mem::take(&mut line), start));
             used = 0;
             start = offset;
         }
-        line.push(c);
+        line.push_str(grapheme);
         used += cells;
+        offset += grapheme.chars().count();
     }
-    lines.push((line, start.min(length)));
+    lines.push((line, start));
     lines
 }
 
@@ -2636,11 +2638,27 @@ fn render(screen: &mut Screen, output: &str) -> Result<()> {
             let line = line.trim_end_matches('\r');
             let use_color = std::env::var_os("NO_COLOR").is_none()
                 && std::env::var("TERM").ok().as_deref() != Some("dumb");
-            let style = if line.starts_with('>') {
+            let style = if line.starts_with('>')
+                || [
+                    "Compose ",
+                    "Review ",
+                    "Keyboard help",
+                    "History",
+                    "Custom answer review",
+                    "Request ",
+                ]
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+            {
                 Style::default()
                     .fg(if use_color { Color::Cyan } else { Color::Reset })
                     .add_modifier(Modifier::BOLD)
-            } else if line.contains("outcome unknown") || line.contains("unavailable") {
+            } else if line.contains("outcome unknown")
+                || line.contains("outcome unconfirmed")
+                || line.contains("unavailable")
+                || line.starts_with("Unconfirmed:")
+                || line.starts_with("Rejected:")
+            {
                 Style::default().fg(if use_color {
                     Color::Yellow
                 } else {
@@ -2777,6 +2795,22 @@ mod tests {
         assert!(
             matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
             Action::SendInstruction(message) if message.identity == identity && message.body == "keep this")
+        );
+    }
+
+    #[test]
+    fn wrapping_keeps_unicode_graphemes_intact_and_anchors_scalars() {
+        let lines = wrap_visible("a👩‍💻e\u{301}鳥z", 3);
+        assert_eq!(
+            lines,
+            vec![("a👩‍💻".into(), 0), ("e\u{301}鳥".into(), 4), ("z".into(), 7)]
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .map(|(line, _)| line.as_str())
+                .collect::<String>(),
+            "a👩‍💻e\u{301}鳥z"
         );
     }
 

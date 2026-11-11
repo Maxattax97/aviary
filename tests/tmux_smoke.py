@@ -364,6 +364,19 @@ def main() -> None:
                 "long custom answer",
             )
             wait_for_screen("No active requests")
+            unicode_id = service.call({"op": "submit_notice", "notice": {
+                "identity": "unicode-notice", "agent": "agent", "work": "Unicode check",
+                "result": "e\u0301 鳥 END-UNICODE",
+            }})["id"]
+            wait_for_screen("N:1")
+            tmux("send-keys", "-t", "aviary:", "n")
+            wait_for_screen(f"Notice #{unicode_id}")
+            screen = wait_for_screen("END-UNICODE")
+            assert "e\u0301" in screen and "鳥" in screen, screen
+            tmux("send-keys", "-t", "aviary:", "d")
+            service.wait_for(lambda: service.call({"op": "list_notices"})["notices"] == [], "unicode notice dismissal")
+            tmux("send-keys", "-t", "aviary:", "q")
+            wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "q")
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:

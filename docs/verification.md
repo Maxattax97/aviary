@@ -413,3 +413,17 @@ that ordinary quit prompts before discarding a suspended unconfirmed draft,
 then retained and retried the identical request with one stored message. The
 serial locked Rust suite passed 16 unit and 23 integration tests. These tests do
 not establish contrast across terminal themes or behavior on every terminal.
+
+
+## Unicode wrapping and narrow uncertain-draft confirmation (2026-11-10)
+
+A unit test checked wrap boundaries and scalar anchors for a combining mark, a
+joined emoji and a wide CJK character. A 40 × 12 tmux exercise rendered a
+combining sequence and CJK character in a notice. A local 40 × 12 lost-response
+proxy test confirmed that the full submission identity and discard/keep choice
+are visible, that no automatic resend occurs, and that an explicit identical
+retry retains one stored message. The locked serial Rust suite passed 17 unit
+and 23 integration tests; CLI reference and portable-skill examples passed.
+The grapheme unit test is not proof that every terminal renders joined emoji
+with the same width; representative operator and broader scheme validation
+remain open.

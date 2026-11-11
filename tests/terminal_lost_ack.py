@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Drop one committed instruction response and exercise the terminal retry."""
 import ctypes
+import fcntl
+import struct
+import termios
 import json
 import os
 import select
@@ -67,6 +70,8 @@ def main() -> None:
         assert ready.wait(5) and not errors, errors
         try:
             with Terminal(SimpleNamespace(address=address)) as terminal:
+                if os.environ.get("AVIARY_TEST_NARROW"):
+                    fcntl.ioctl(terminal.slave, termios.TIOCSWINSZ, struct.pack("HHHH", 12, 40, 0, 0))
                 terminal.expect("No active requests")
                 terminal.send("m")
                 terminal.expect("Compose instruction")
@@ -83,6 +88,8 @@ def main() -> None:
                 terminal.expect("Instruction draft suspended")
                 terminal.send("q")
                 terminal.expect("Discard this")
+                terminal.expect(calls[0]["identity"])
+                terminal.expect("y discards")
                 terminal.send("n")
                 terminal.send("\x0f")
                 terminal.expect("Instruction draft suspended")

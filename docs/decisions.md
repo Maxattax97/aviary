@@ -306,3 +306,11 @@ indexed-color support for these accents; terminal scheme contrast and wider
 terminal compatibility remain to be verified. Ordinary quit with a suspended
 unconfirmed instruction reopens its discard confirmation, including identity.
 Ctrl-C, termination signals and abnormal exits still discard in-memory drafts.
+
+
+Queue detail wrapping uses Unicode grapheme clusters and terminal-cell widths,
+while resize anchors remain scalar offsets into the underlying text. The
+instruction discard confirmation is a dedicated compact screen so that an
+uncertain identity and the keep/discard choice are visible at 40 × 12.
+Terminal-specific grapheme widths and behavior outside the exercised cases
+remain subject to validation.
