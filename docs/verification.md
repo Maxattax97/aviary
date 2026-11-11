@@ -449,3 +449,13 @@ accent appeared in its corresponding screen. [Both captures](mockups/p04-p05-ren
 and selection markers as non-color cues. This is evidence for these two xterm
 configurations, not a contrast guarantee for arbitrary themes or terminals;
 interactive basic-color and monochrome behavior has separate PTY coverage.
+
+## Outcome feedback with a suspended draft (2026-11-10)
+
+A 40 × 12 lost-acknowledgment proxy exercise suspended an uncertain instruction,
+dismissed an unrelated notice, observed `Notice dismissed`, waited for it to
+expire, and resumed and retried the exact original submission. The service
+retained one message. A separate monochrome PTY check selected a decision,
+dismissed a notice, returned and verified the same decision and list focus
+before explicitly answering it. Both local checks passed. This is not evidence
+for every possible concurrent queue mutation or terminal.

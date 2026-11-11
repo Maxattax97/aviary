@@ -314,3 +314,8 @@ instruction discard confirmation is a dedicated compact screen so that an
 uncertain identity and the keep/discard choice are visible at 40 × 12.
 Terminal-specific grapheme widths and behavior outside the exercised cases
 remain subject to validation.
+
+When an instruction draft is suspended, an accepted or failed action's status
+remains visible alongside a short draft-held cue. Once a transient success
+expires, the longer resume cue returns. This prevents the draft indicator from
+masking an action outcome; the draft and identity remain unchanged.

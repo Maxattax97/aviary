@@ -86,6 +86,17 @@ def main() -> None:
                 assert len(calls) == 1
                 terminal.send("\x0f")  # suspend without resubmitting
                 terminal.expect("Instruction draft suspended")
+                notice_id = service.call({"op": "submit_notice", "notice": {
+                    "identity": "notice-while-suspended", "agent": "worker",
+                    "work": "Other work", "result": "Done",
+                }})["id"]
+                terminal.send("n")
+                terminal.expect(f"Notice #{notice_id}")
+                terminal.send("d")
+                terminal.expect("Notice dismissed")
+                terminal.expect("Instruction draft suspended", timeout=7)
+                terminal.send("q")
+                terminal.expect("No active requests")
                 terminal.send("q")
                 terminal.expect("Discard this")
                 terminal.expect(calls[0]["identity"])

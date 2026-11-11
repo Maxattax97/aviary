@@ -2451,11 +2451,17 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
         (Vec::new(), list_title.to_string(), "Loading...".to_string())
     };
     let action_status = if view.busy {
-        Some("Action in progress; outcome unconfirmed")
+        Some("Action in progress; outcome unconfirmed".to_string())
+    } else if let Some(status) = &view.status {
+        Some(if view.suspended_instruction.is_some() {
+            format!("{status} · draft held")
+        } else {
+            status.clone()
+        })
     } else if view.suspended_instruction.is_some() {
-        Some("Instruction draft suspended; m resumes")
+        Some("Instruction draft suspended; m resumes".to_string())
     } else {
-        view.status.as_deref()
+        None
     };
     let refresh_status = if terminal::size().is_ok_and(|(w, _)| w < 60) {
         view.poll_summary.as_deref()
@@ -2620,7 +2626,7 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
         } else {
             "Tab focus · ↑↓ · Enter confirms · ?"
         };
-        let footer = match (refresh_status, action_status) {
+        let footer = match (refresh_status, action_status.as_deref()) {
             (Some(refresh), Some(action)) => {
                 format!("{}\n{}\n{}", safe(refresh), safe(action), hint)
             }

@@ -42,6 +42,16 @@ def main() -> None:
             terminal.expect("Decision #2")
             terminal.send("\r")
             assert all(service.call({"op": "get", "id": item})["answer"] is None for item in ids)
+            notice = service.call({"op": "submit_notice", "notice": {
+                "identity": "selection-notice", "agent": "agent", "work": "Work", "result": "Done",
+            }})["id"]
+            terminal.send("n")
+            terminal.expect(f"Notice #{notice}")
+            terminal.send("d")
+            terminal.expect("Notice dismissed")
+            terminal.send("q")
+            screen = terminal.expect("Decision #2")
+            assert b"Decisions [FOCUS]" in screen
             terminal.send("\t")
             terminal.expect("Decision #2 [FOCUS]")
             terminal.send("\r")
