@@ -79,6 +79,11 @@ def main() -> None:
                 terminal.expect("Unconfirmed:", timeout=16)
                 time.sleep(0.6)
                 assert len(calls) == 1
+                terminal.send("\x0f")  # suspend without resubmitting
+                terminal.expect("Instruction draft suspended")
+                terminal.send("m")
+                terminal.expect("Unconfirmed:")
+                assert len(calls) == 1
                 inbox = service.call({"op": "inbox", "participant": "worker"})["messages"]
                 assert len(inbox) == 1 and inbox[0]["message"]["body"] == "Commit once"
                 terminal.send("\x13")

@@ -370,3 +370,9 @@ initial parallel loopback run had one resource timeout, and sandboxed runs
 aborted inside libzmq. These local checks do not establish the remaining
 reviewed layout, complete draft navigation, all terminal sizes or operator
 acceptance.
+
+The local lost-acknowledgment proxy exercise was extended to suspend the
+unconfirmed draft, return to the decision view, and resume it before an explicit
+identical retry; it passed with one stored message. Fourteen unit tests passed,
+including suspension and identity preservation. This does not establish draft
+recovery after exit or the remaining P-04 layout.

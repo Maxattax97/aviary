@@ -405,6 +405,7 @@ struct View {
     request_select_last: Option<bool>,
     arrivals: Arrivals,
     composer: Option<Composer>,
+    suspended_instruction: Option<Composer>,
     status: Option<String>,
     status_expires: Option<Instant>,
     poll_error: Option<String>,
@@ -455,6 +456,7 @@ impl View {
             request_select_last: None,
             arrivals: Arrivals::default(),
             composer: None,
+            suspended_instruction: None,
             status: None,
             status_expires: None,
             poll_error: None,
@@ -700,6 +702,10 @@ impl View {
         }
         if let Some(composer) = &mut self.composer {
             if composer.reply_to.is_none() {
+                if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.suspended_instruction = self.composer.take();
+                    return Action::Redraw;
+                }
                 if composer.confirm_discard {
                     if key.code == KeyCode::Char('y') {
                         self.composer = None;
@@ -910,7 +916,7 @@ impl View {
                         return Action::OpenHistory(HistoryKind::Message, item.id);
                     }
                 }
-                KeyCode::Char('r') if self.inbox_loaded => {
+                KeyCode::Char('r') if self.inbox_loaded && self.suspended_instruction.is_none() => {
                     if let Some(item) = self.inbox.get(self.inbox_current) {
                         if item.message.expects_reply
                             && matches!(&item.message.target, Target::Participant { name } if name == "operator")
@@ -1113,6 +1119,10 @@ impl View {
             return Action::ToggleInbox;
         }
         if key.code == KeyCode::Char('m') {
+            if let Some(draft) = self.suspended_instruction.take() {
+                self.composer = Some(draft);
+                return Action::Redraw;
+            }
             match Composer::instruction() {
                 Ok(composer) => {
                     self.composer = Some(composer);
@@ -1725,6 +1735,9 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         };
         println!("{}\r", safe(text));
     }
+    if view.suspended_instruction.is_some() {
+        println!("Instruction draft suspended; m resumes from decisions.\r");
+    }
     let new_arrival = view.arrivals.pending;
     if new_arrival
         && (view.inbox_view || view.notice_view)
@@ -1740,7 +1753,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
             let capacity = usize::from(width.saturating_sub(4)).max(1) / 2;
             let start = composer.cursor.saturating_sub(capacity.saturating_sub(1));
             let visible: String = body.chars().skip(start).take(capacity).collect();
-            println!("Compose instruction\r\nDestination: all · group\r\nSend to other channel members\r\n{}{}{}\r\n{}^\r\nCtrl-S sends; ←/→ moves; Esc discards; Ctrl-G help.",
+            println!("Compose instruction\r\nDestination: all · group\r\nSend to other channel members\r\n{}{}{}\r\n{}^\r\nCtrl-S sends; ←/→ moves; Ctrl-O suspends; Esc discards.",
                 if start > 0 { "…" } else { "" }, safe(&visible),
                 if start + capacity < body.chars().count() { "…" } else { "" },
                 " ".repeat(composer.cursor.saturating_sub(start) + usize::from(start > 0)));
@@ -1754,6 +1767,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
                 );
             }
             if composer.confirm_discard {
+                println!("Identity: {}", safe(&composer.fields[0]));
                 println!("Discard this possibly accepted draft and identity? y confirms; any other key keeps it.");
             }
             return render(screen, &output);
@@ -2191,6 +2205,25 @@ mod tests {
         view.key(key(KeyCode::Esc));
         view.key(key(KeyCode::Char('y')));
         assert!(view.composer.is_none());
+    }
+
+    #[test]
+    fn suspended_instruction_resumes_with_identity_and_content() {
+        let mut view = View::new();
+        view.composer = Some(Composer::instruction().expect("random identity"));
+        for c in "keep this".chars() {
+            view.key(key(KeyCode::Char(c)));
+        }
+        let identity = view.composer.as_ref().expect("composer").fields[0].clone();
+        view.composer.as_mut().expect("composer").error = Some("Unconfirmed".into());
+        view.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL));
+        assert!(view.composer.is_none());
+        assert!(view.suspended_instruction.is_some());
+        view.key(key(KeyCode::Char('m')));
+        assert!(
+            matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            Action::SendInstruction(message) if message.identity == identity && message.body == "keep this")
+        );
     }
 
     #[test]

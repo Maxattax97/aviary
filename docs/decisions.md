@@ -271,3 +271,9 @@ The operator reviewed and accepted the [terminal mockup](mockups/p04-p05-termina
 
 
 The first P-05 increment sends instructions directly with Ctrl-S from a single-line editor showing the existing `all` group target. Enter does not submit. Left/Right and Home/End inspect the draft; a failed or unconfirmed result locks its content and identity for an explicit identical retry, and discarding it requires confirmation. Drafts remain in memory only. Accepted actions show a human-readable status for four seconds. The remaining reviewed layout, suspended-draft navigation, accessibility and full P-04/P-05 verification are not complete.
+
+An instruction draft can be suspended with Ctrl-O and resumed with m on the
+decision screen. Its content, identity and failure state remain in memory, and
+a reply composer cannot replace it. The interface displays the identity when
+confirming discard after an unsuccessful send. Exiting still loses the draft;
+suspension is not durable recovery.
