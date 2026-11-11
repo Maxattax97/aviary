@@ -4,7 +4,7 @@ use std::{
     fs::{self, OpenOptions},
     io::{BufRead, BufReader},
     net::{SocketAddr, TcpStream},
-    os::unix::fs::OpenOptionsExt,
+    os::unix::{fs::OpenOptionsExt, process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
@@ -80,12 +80,24 @@ pub async fn ensure_local(endpoint: &str) -> Result<()> {
         .append(true)
         .mode(0o600)
         .open(LOG)?;
-    let mut child = Command::new(std::env::current_exe()?)
+    let mut command = Command::new(std::env::current_exe()?);
+    command
         .args(["serve", DATABASE, endpoint, "--ready"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::from(log))
-        .spawn()?;
+        .stderr(Stdio::from(log));
+    // SAFETY: setsid is async-signal-safe and the closure performs no
+    // allocation or locking between fork and exec. Fail startup if detaching
+    // the service from the operator's terminal session fails.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let mut child = command.spawn()?;
     let output = child
         .stdout
         .take()
