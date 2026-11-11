@@ -171,8 +171,7 @@ async fn watch_connection(address: &str, changes: &watch::Sender<ChangeState>) -
     }
 }
 
-pub async fn serve(database_path: &str, address: &str) -> Result<()> {
-    let storage = Storage::open(database_path).await?;
+pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut options = SocketOptions::default();
@@ -185,7 +184,18 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
     let mut monitor = socket.monitor();
     let mut subscribers: HashSet<bytes::Bytes> = HashSet::new();
     socket.bind(&format!("tcp://{address}")).await?;
+    // Acquire the listener before opening the database: a competing service
+    // must not initialize a different database after losing the bind race.
+    let storage = Storage::open(database_path).await?;
+    let database = std::fs::canonicalize(database_path)?
+        .to_string_lossy()
+        .into_owned();
     tracing::info!(%address, "service listening");
+    if ready {
+        use std::io::Write as _;
+        println!("READY");
+        std::io::stdout().flush()?;
+    }
     let mut stopping = false;
     loop {
         let message = tokio::select! {
@@ -237,6 +247,10 @@ pub async fn serve(database_path: &str, address: &str) -> Result<()> {
             || request.correlation.len() > 128
         {
             Err(AppError::InvalidFrame)
+        } else if matches!(&request.operation, Operation::ServiceInfo) {
+            Ok(
+                json!({"service":"aviary", "protocol":VERSION, "database":database, "pid":std::process::id()}),
+            )
         } else if subscribing {
             if subscribers.len() >= MAX_SUBSCRIBERS {
                 subscribers.retain(|identity| socket.has_peer(identity.as_ref()));

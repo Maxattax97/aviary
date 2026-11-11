@@ -55,7 +55,7 @@ def main() -> None:
             assert (cwd / "state.sqlite").is_file()
             context = SimpleNamespace(address=address)
             with Terminal(context, cwd=cwd, env=env) as terminal:
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.quit()
             assert service.poll() is None
             call(
@@ -95,12 +95,12 @@ def main() -> None:
                 == reply_id
             )
             with Terminal(context, cwd=cwd, env=env) as terminal:
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.send("i")
                 screen = terminal.expect("Complete")
                 assert b"From: worker" in screen and b"Fresh startup" in screen
                 terminal.send("q")
-                terminal.expect("No active requests")
+                terminal.expect("No decisions")
                 terminal.quit()
             history = call({"op": "history", "kind": "message", "id": request_id})
             assert [item["id"] for item in history["messages"]] == [

@@ -92,6 +92,7 @@ impl Storage {
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
         match operation {
             Operation::SubscribeChanges => Err(AppError::InvalidRequest),
+            Operation::ServiceInfo => Err(AppError::InvalidRequest),
             Operation::Overview => self.overview().await,
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,

@@ -4,6 +4,7 @@ mod client;
 mod error;
 mod network;
 mod protocol;
+mod startup;
 mod storage;
 
 use std::io::{self, Read};
@@ -44,12 +45,16 @@ enum Command {
         database: String,
         #[arg(default_value = DEFAULT_ADDRESS)]
         address: String,
+        #[arg(long, hide = true)]
+        ready: bool,
     },
     /// Open the operator interface.
     #[command(name = "tui")]
     Terminal {
-        #[arg(default_value = DEFAULT_ADDRESS)]
-        address: String,
+        address: Option<String>,
+        /// Start or reuse a local service on an explicit loopback address.
+        #[arg(long, conflicts_with = "address")]
+        local_address: Option<std::net::SocketAddr>,
     },
     /// Send a JSON operation, or read it from standard input with -.
     Call { address: String, operation: String },
@@ -69,8 +74,26 @@ enum Command {
 impl Command {
     async fn run(self) -> Result<()> {
         match self {
-            Self::Serve { database, address } => network::serve(&database, &address).await,
-            Self::Terminal { address } => client::terminal(&address).await,
+            Self::Serve {
+                database,
+                address,
+                ready,
+            } => network::serve(&database, &address, ready).await,
+            Self::Terminal {
+                address,
+                local_address,
+            } => {
+                let address = match address {
+                    Some(address) => address,
+                    None => {
+                        let address = local_address
+                            .map_or_else(|| DEFAULT_ADDRESS.to_owned(), |value| value.to_string());
+                        startup::ensure_local(&address).await?;
+                        address
+                    }
+                };
+                client::terminal(&address).await
+            }
             Self::Call { address, operation } => {
                 let response = network::call(&address, &parse_operation(&operation)?).await?;
                 println!("{response}");
@@ -114,12 +137,28 @@ mod tests {
     fn cli_preserves_positional_commands_and_checks_arguments() {
         let cli = Cli::try_parse_from(["aviary", "serve"]).expect("default service arguments");
         assert!(
-            matches!(cli.command, Command::Serve { database, address } if database == "aviary.sqlite" && address == DEFAULT_ADDRESS)
+            matches!(cli.command, Command::Serve { database, address, ready: false } if database == "aviary.sqlite" && address == DEFAULT_ADDRESS)
         );
         let cli =
             Cli::try_parse_from(["aviary", "call", DEFAULT_ADDRESS, "-"]).expect("stdin operation");
         assert!(matches!(cli.command, Command::Call { operation, .. } if operation == "-"));
         assert!(Cli::try_parse_from(["aviary", "wait", DEFAULT_ADDRESS, "bad"]).is_err());
         assert!(Cli::try_parse_from(["aviary", "tui", DEFAULT_ADDRESS, "extra"]).is_err());
+        let cli = Cli::try_parse_from(["aviary", "tui"]).expect("automatic local terminal");
+        assert!(matches!(
+            cli.command,
+            Command::Terminal {
+                address: None,
+                local_address: None
+            }
+        ));
+        assert!(Cli::try_parse_from([
+            "aviary",
+            "tui",
+            DEFAULT_ADDRESS,
+            "--local-address",
+            DEFAULT_ADDRESS
+        ])
+        .is_err());
     }
 }

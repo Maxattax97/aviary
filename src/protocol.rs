@@ -53,6 +53,7 @@ impl DecisionRequest {
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Operation {
     SubscribeChanges,
+    ServiceInfo,
     Overview,
     Submit {
         request: DecisionRequest,

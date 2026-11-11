@@ -29,7 +29,7 @@
 | SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
 | SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |
 | SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Local help and draft checks; platform matrix open |
-| SYS-047 | US-059, US-039, US-040 | V1 | T-047 (test) | V1-18 | Planned / not implemented |
+| SYS-047 | US-059, US-039, US-040 | V1 | T-047 (test) | V1-18 | Local isolated-port startup evidence; broader acceptance open |
 | SYS-045 | US-056 | V1 | T-045 (test) | V1-09 | Local group and lost-ack retry checks |
 | SYS-013 | US-020 | V1 | T-013 (test) | V1-08 | Draft / not run |
 | SYS-014 | US-021 | V1 | T-014 (test) | V1-08 | Draft / not run |
@@ -47,7 +47,7 @@
 | SYS-026 | US-037 | V1 | T-026 (test) | SL-01, SL-05, V1-15 | Partial / full acceptance not run |
 | SYS-027 | US-038 | V1 | T-027 (test) | V1-17 | Draft / not run |
 | SYS-028 | US-039 | V1 | T-028 (test) | SL-03, SL-05, V1-18 | Partial / full acceptance not run |
-| SYS-029 | US-040 | V1 | T-029 (demonstration) | V1-18 | Draft / not run |
+| SYS-029 | US-040 | V1 | T-029 (demonstration) | V1-18 | Local existing-toolchain evidence; clean-OS demonstration open |
 | SYS-030 | US-042 | V1 | T-030 (test) | SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-031 | US-049 | V1 | T-031 (test) | V1-20 | Draft / not run |
 | SYS-032 | US-051 | V1 | T-032 (test) | V1-20 | Draft / not run |

@@ -8,7 +8,7 @@ Aviary is a communication service and terminal attention interface for a human o
 
 **Status:** Aviary is an evolving prototype, not a V1 release. The core workflows below work locally; two-machine, OS-crash, supported-platform and representative-operator acceptance are still open. The protocol and CLI are provisional. See [verification](docs/verification.md) for actual evidence and [tickets](docs/tickets.md) for remaining work.
 
-**Planned:** The interface will use a standardized terminal-scheme-aware color system, remain usable without 256 colors and start or reuse the local service automatically. These behaviors are not implemented yet; the service must be started separately. Press `?` for keyboard help, or Ctrl-G during text entry; Esc closes help without discarding the view or draft.
+**Terminal:** The interface uses terminal-scheme-aware colors with basic-color and monochrome fallbacks; broader terminal and theme validation remains open. Press `?` for keyboard help, or Ctrl-G during text entry; Esc closes help without discarding the view or draft.
 
 **Trust boundary:** The service has no authentication, authorization or encryption. Any process that can connect can read communications, impersonate a participant and submit answers. It listens on `127.0.0.1:7432` by default; expose it only to an explicitly trusted network. Participant and channel names are routing labels, not security identities.
 
@@ -18,12 +18,14 @@ A Rust toolchain and C/C++ compiler are required for a source build. The target 
 
 ```sh
 cargo build --locked
-./target/debug/aviary serve
+./target/debug/aviary tui
 ```
+
+With no address, `tui` starts or reuses the service on `127.0.0.1:7432` with `aviary.sqlite` in the current directory. It checks the service protocol and canonical database path before reuse. The service continues after the interface exits and writes `aviary-service.log` in that directory. `aviary tui --local-address 127.0.0.1:PORT` uses another IPv4 loopback port for the same workflow; an explicitly supplied positional address connects only and never starts a service. A conflicting or unidentifiable listener is an error. This identity check is not authentication.
 
 Run `aviary --help` or `aviary <command> --help` for the command-line interface.
 
-To explore the interface with sample work, start a service and run this in another terminal:
+To explore the interface with sample work, open `aviary tui` once, then run this in another terminal:
 
 ```sh
 python3 scripts/seed_demo.py
@@ -38,7 +40,7 @@ The service defaults to `aviary.sqlite` and `127.0.0.1:7432`. To choose both the
 ./target/debug/aviary serve /path/to/aviary.sqlite 192.168.1.10:7432
 ```
 
-Use an address assigned to the host and a trusted network. Keep the service running while clients connect; closing the interface does not stop it. Stop the service with Ctrl-C or SIGTERM. It stops taking new work after observing the signal and lets a request already being processed finish; replies may still be lost, so retry unknown outcomes with the same identity. The SQLite database and its WAL can contain private work: protect their directory and do not remove the WAL while the service is running.
+Use an address assigned to the host and a trusted network. Keep the service running while clients connect; closing the interface does not stop it. Stop a foreground service with Ctrl-C or SIGTERM; for an automatically started service, obtain its current PID using `aviary call 127.0.0.1:7432 '{"op":"service_info"}'` and send SIGTERM to that process. It stops taking new work after observing the signal and lets a request already being processed finish; replies may still be lost, so retry unknown outcomes with the same identity. The SQLite database and its WAL can contain private work: protect their directory and do not remove the WAL while the service is running.
 
 ## Ask for a decision
 
