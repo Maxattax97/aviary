@@ -385,3 +385,7 @@ Ctrl-O suspends an inline custom answer and allows navigation; Ctrl-O from a que
 ## One service per database file (2026-11-11)
 
 Aviary V1 is centered on one service. Two service processes sharing a SQLite database have separate subscriber sets: a local experiment showed a commit through one process did not notify a subscriber of the other. The service now acquires a nonblocking exclusive advisory `flock` on the database file itself before SQLite opens it, holds the file descriptor for the service lifetime, and fails clearly if another cooperating service owns it. The listener is still acquired first; failed startup releases it. Locking the inode detects symlink and hard-link aliases. The lock is released on process exit, including a local process kill. New files are created without truncation with mode 0600 subject to umask; existing permissions are not changed. Different database files can be served independently. This is not authentication, a guarantee against external SQLite writers or file replacement, or evidence for network filesystems and untested POSIX platforms; external writes also do not generate change hints.
+
+## Shared-work queue proposal (2026-11-11)
+
+The [P-03 proposal](shared-work-queue-proposal.md) makes one-claim/manual-recovery, fencing, idempotent action receipts, bounded discovery and nondestructive coexistence concrete for review. These are proposed choices, not current behavior or an approved replacement for `all` group fan-out.
