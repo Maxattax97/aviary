@@ -373,3 +373,7 @@ The automatic startup child creates its own POSIX session before executing the s
 ## History reading position on resize (2026-11-11)
 
 History now keeps a scalar text anchor for its current bounded page, remapping it to the corresponding wrapped line when the terminal width changes. Explicit scrolling updates the anchor; page or section transitions reset it. As with other history navigation, pages are separate snapshots and concurrent changes can shift their contents. Terminal-specific Unicode widths and all resize combinations are not guaranteed by the local test.
+
+## Queue swap with new arrivals (2026-11-11)
+
+Swap versions protect the two identified records and their positions, not a version of the whole queue. A newly inserted equal-priority decision appends without changing the existing two versions; swapping those unchanged records remains valid and leaves the new record in its position. Deferral, priority changes, another swap or answering an identified record invalidate its listed version or availability. These operations and durable event creation remain serialized by the current service request loop and SQLite transactions.
