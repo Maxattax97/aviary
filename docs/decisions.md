@@ -377,3 +377,7 @@ History now keeps a scalar text anchor for its current bounded page, remapping i
 ## Queue swap with new arrivals (2026-11-11)
 
 Swap versions protect the two identified records and their positions, not a version of the whole queue. A newly inserted equal-priority decision appends without changing the existing two versions; swapping those unchanged records remains valid and leaves the new record in its position. Deferral, priority changes, another swap or answering an identified record invalidate its listed version or availability. These operations and durable event creation remain serialized by the current service request loop and SQLite transactions.
+
+## Suspending custom answers (2026-11-11)
+
+Ctrl-O suspends an inline custom answer and allows navigation; Ctrl-O from a queue view or decision detail restores the exact text and original request, then asynchronously refreshes its original queue page. If the request is missing from that page, its saved display and draft remain visible with a warning; any explicit answer still targets the original ID and is subject to service validation. Only one custom answer can be suspended, and another custom editor is blocked until it is resumed. This is an in-memory draft and is lost when the terminal exits; it does not make decision submissions idempotent or automatically retry unknown outcomes.

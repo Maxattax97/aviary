@@ -337,6 +337,16 @@ struct SearchView {
     error: Option<String>,
 }
 
+struct SuspendedAnswer {
+    request: PendingRequest,
+    text: String,
+    offset: usize,
+    previous: Vec<usize>,
+    scroll: usize,
+    anchor: (usize, usize, usize),
+    follow_answer: bool,
+}
+
 async fn fetch_search(address: &str, query: String, after: i64) -> Result<SearchPage> {
     let value = network::call_with_timeout(
         address,
@@ -582,6 +592,7 @@ struct View {
     arrivals: Arrivals,
     composer: Option<Composer>,
     suspended_instruction: Option<Composer>,
+    suspended_answer: Option<SuspendedAnswer>,
     status: Option<String>,
     status_expires: Option<Instant>,
     connection_unavailable: bool,
@@ -681,7 +692,10 @@ impl View {
             } else {
                 self.poll_error.is_some()
             };
-        let has_status = self.busy || self.status.is_some() || self.suspended_instruction.is_some();
+        let has_status = self.busy
+            || self.status.is_some()
+            || self.suspended_instruction.is_some()
+            || self.suspended_answer.is_some();
         let footer_height = 2
             + u16::from(has_refresh && (has_status || self.draft_request_missing))
             + u16::from(self.draft_request_missing && has_status);
@@ -765,6 +779,7 @@ impl View {
             arrivals: Arrivals::default(),
             composer: None,
             suspended_instruction: None,
+            suspended_answer: None,
             status: None,
             status_expires: None,
             connection_unavailable: false,
@@ -1351,6 +1366,37 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('o')
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+            && !self.editing
+        {
+            if let Some(draft) = self.suspended_answer.take() {
+                self.inbox_view = false;
+                self.notice_view = false;
+                self.requests = vec![draft.request];
+                self.current = 0;
+                self.request_offset = draft.offset;
+                self.request_previous = draft.previous;
+                self.request_next = None;
+                self.request_select_last = None;
+                self.request_loaded = true;
+                self.selected = Some(self.choices().len());
+                self.custom = draft.text;
+                self.editing = true;
+                self.list_focus = false;
+                self.detail_page = None;
+                self.detail_option = None;
+                self.priority_edit = false;
+                self.follow_answer = draft.follow_answer;
+                self.detail_scroll.set(draft.scroll);
+                self.detail_anchor.set(draft.anchor);
+                self.draft_request_missing = true;
+                if self.status.as_deref() == Some("Answer draft held; Ctrl-O resumes it") {
+                    self.status = None;
+                }
+                return Action::ReloadRequests;
+            }
+        }
         if key.code == KeyCode::Char('v')
             && !self.editing
             && !self.priority_edit
@@ -1614,6 +1660,23 @@ impl View {
         }
         if self.editing {
             match key.code {
+                KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(request) = self.current().cloned() {
+                        self.suspended_answer = Some(SuspendedAnswer {
+                            request,
+                            text: std::mem::take(&mut self.custom),
+                            offset: self.request_offset,
+                            previous: self.request_previous.clone(),
+                            scroll: self.detail_scroll.get(),
+                            anchor: self.detail_anchor.get(),
+                            follow_answer: self.follow_answer,
+                        });
+                        self.editing = false;
+                        if self.draft_request_missing {
+                            return Action::ReloadRequests;
+                        }
+                    }
+                }
                 KeyCode::Esc => {
                     self.editing = false;
                     if self.draft_request_missing {
@@ -1812,7 +1875,12 @@ impl View {
             }
             KeyCode::Enter => match self.selected {
                 Some(position) if position == choices.len() => {
-                    self.editing = true;
+                    if self.suspended_answer.is_some() {
+                        self.status = Some("Answer draft held; Ctrl-O resumes it".into());
+                        self.status_expires = None;
+                    } else {
+                        self.editing = true;
+                    }
                     Action::Redraw
                 }
                 Some(position) => match choices.get(position) {
@@ -2397,7 +2465,7 @@ History: H selected; g lookup; 1-3 section
 ↑↓ scroll; PgUp/PgDn; R refresh; q returns
 Instruction: Enter sends; arrows move
 Reply: Enter continues/confirms; Esc cancels
-Custom: Enter submits; Esc cancels
+Custom: Enter submits; Ctrl-O suspends/resumes; Esc cancels
 ? opens help outside text entry
 Ctrl-G opens help anywhere; Ctrl-C quits";
         screen.draw(|frame| {
@@ -3080,13 +3148,17 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
     let mut action_status = if view.busy {
         Some("Action in progress; outcome unconfirmed".to_string())
     } else if let Some(status) = &view.status {
-        Some(if view.suspended_instruction.is_some() {
-            format!("{status} · draft held")
-        } else {
-            status.clone()
-        })
+        Some(
+            if view.suspended_instruction.is_some() || view.suspended_answer.is_some() {
+                format!("{status} · draft held")
+            } else {
+                status.clone()
+            },
+        )
     } else if view.suspended_instruction.is_some() {
         Some("Instruction draft suspended; m resumes".to_string())
+    } else if view.suspended_answer.is_some() {
+        Some("Answer draft suspended; Ctrl-O resumes".to_string())
     } else {
         None
     };
@@ -3122,7 +3194,10 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
             2
         } + u16::from(
             view.draft_request_missing
-                && (view.busy || view.status.is_some() || view.suspended_instruction.is_some()),
+                && (view.busy
+                    || view.status.is_some()
+                    || view.suspended_instruction.is_some()
+                    || view.suspended_answer.is_some()),
         );
         let sections = Layout::default()
             .direction(Direction::Vertical)
@@ -3272,7 +3347,7 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
             .collect::<Vec<_>>();
         frame.render_widget(Paragraph::new(content).block(detail_block), panes[1]);
         let hint = if view.editing {
-            "Enter submits · Esc cancels · Ctrl-G help"
+            "Enter submits · Ctrl-O suspends · Esc cancels"
         } else if view.inbox_view {
             "Tab focus · ↑↓ move · PgUp/PgDn · ?"
         } else if view.notice_view {

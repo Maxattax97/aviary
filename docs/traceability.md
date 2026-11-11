@@ -24,7 +24,7 @@
 | SYS-053 | US-065, US-058 | V1 | T-053 (test) | V1-27 | Local view and selection checks; broader validation open |
 | SYS-054 | US-066 | V1 | T-054 (test) | V1-28 | Local outcome and lost-ack checks; broader validation open |
 | SYS-055 | US-067 | V1 | T-055 (test) | V1-29 | Local Unicode resize evidence; broader acceptance open |
-| SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Planned / not implemented |
+| SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Local draft and interruption evidence; broader acceptance open |
 | SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Local target and concurrent-answer checks; broader validation open |
 | SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
 | SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |

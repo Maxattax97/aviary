@@ -58,7 +58,7 @@ The first command returns a JSON `id`. Replace `1` below with that ID to wait fo
 ./target/debug/aviary call 127.0.0.1:7432 '{"op":"get","id":1}'
 ```
 
-The interface presents a recommendation first and preselects it, but Enter is an explicit decision. A shortened `[rec]` label marks a recommendation when its full reason does not fit; `o` opens the answer and reason. Requests can have no suggested answers; the operator can select another suggestion or enter a custom answer. Enter opens the custom answer inline; Enter submits it and Esc cancels editing. The response distinguishes suggested and custom answers. A second decision is rejected.
+The interface presents a recommendation first and preselects it, but Enter is an explicit decision. A shortened `[rec]` label marks a recommendation when its full reason does not fit; `o` opens the answer and reason. Requests can have no suggested answers; the operator can select another suggestion or enter a custom answer. Enter opens the custom answer inline; Enter submits it and Esc cancels editing. Ctrl-O suspends the answer for navigation and resumes it on its original decision; one answer draft can be held at a time. If that decision is no longer on the refreshed page, the terminal retains the draft and warns before any explicit submission. The draft remains in memory only. The response distinguishes suggested and custom answers. A second decision is rejected.
 
 | Key | Action |
 | --- | --- |
