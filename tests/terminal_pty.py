@@ -231,6 +231,7 @@ def exercise_operator_inbox(service: Service) -> None:
         screen = terminal.expect("Ready for review")
         assert b"From: worker" in screen and b"Work: Build release" in screen
         assert b"Activity: release-work" in screen
+        assert b"r reply" not in screen
         live = service.call(
             {
                 "op": "send_message",
@@ -268,6 +269,7 @@ def exercise_operator_inbox(service: Service) -> None:
         terminal.send("l")
         screen = terminal.expect("Need operator response")
         assert f"Message #{incoming}".encode() in screen
+        assert b"r reply" in screen
         terminal.send("?")
         terminal.expect("Keyboard help 1/3")
         terminal.send("j")

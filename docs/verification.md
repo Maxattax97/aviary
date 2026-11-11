@@ -427,3 +427,12 @@ and 23 integration tests; CLI reference and portable-skill examples passed.
 The grapheme unit test is not proof that every terminal renders joined emoji
 with the same width; representative operator and broader scheme validation
 remain open.
+
+The [rendered-screen review captures](mockups/p04-p05-rendered-review.md) were
+made in an isolated tmux server with synthetic records at 100 × 24 and 40 × 12.
+They are awaiting operator review. Inspection exposed a reply hint on a message
+that did not request a reply; the hint now appears only when the selected
+message is eligible and no suspended instruction blocks reply composition. The
+local terminal PTY regression passed with checks for both eligible and
+ineligible messages. Captures do not establish interactive behavior or theme
+contrast on their own.

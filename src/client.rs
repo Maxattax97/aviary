@@ -2299,8 +2299,10 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
         let item = view.inbox.get(view.inbox_current);
         let detail = item
             .map(|item| {
+                let reply = if view.suspended_instruction.is_none() && item.message.expects_reply
+                    && matches!(&item.message.target, Target::Participant { name } if name == "operator") { "r reply · " } else { "" };
                 format!(
-                    "From: {}\nWork: {}\nMessage: {}\nActivity: {}\n\nr reply · H history",
+                    "From: {}\nWork: {}\nMessage: {}\nActivity: {}\n\n{reply}H history",
                     safe(&item.message.sender),
                     safe(item.message.context.as_deref().unwrap_or("(none supplied)")),
                     safe(&item.message.body),
