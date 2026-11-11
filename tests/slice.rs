@@ -1883,3 +1883,95 @@ fn slow_peer_backpressure_does_not_block_other_clients() -> TestResult<()> {
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn subscriptions_are_bounded_and_disconnects_release_capacity() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory =
+        std::env::temp_dir().join(format!("aviary-subscriptions-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let context = zmq::Context::new();
+    let make_socket = || -> TestResult<zmq::Socket> {
+        let socket = context.socket(zmq::DEALER)?;
+        socket.set_linger(0)?;
+        socket.set_rcvtimeo(5_000)?;
+        socket.set_sndtimeo(5_000)?;
+        socket.connect(&format!("tcp://{address}"))?;
+        Ok(socket)
+    };
+    let send = |socket: &zmq::Socket, correlation: &str, operation: Value| -> TestResult<()> {
+        socket.send(
+            json!({"version":2,"correlation":correlation,"operation":operation})
+                .to_string()
+                .as_bytes(),
+            0,
+        )?;
+        Ok(())
+    };
+    let mut subscribers = Vec::new();
+    for _ in 0..256 {
+        let socket = make_socket()?;
+        send(&socket, "subscribe", json!({"op":"subscribe_changes"}))?;
+        let response = receive_reply(&socket)?;
+        assert_eq!(response["result"]["watching"], true);
+        subscribers.push(socket);
+    }
+    let first = subscribers.first().ok_or("missing subscriber")?;
+    send(first, "again", json!({"op":"subscribe_changes"}))?;
+    assert_eq!(receive_reply(first)?["result"]["watching"], true);
+    let overflow = make_socket()?;
+    send(&overflow, "overflow", json!({"op":"subscribe_changes"}))?;
+    assert_eq!(
+        receive_reply(&overflow)?["result"]["error"],
+        "invalid request"
+    );
+    let invalid = call(
+        &address,
+        json!({"op":"answer_custom", "id":123, "value":"x"}),
+    )?;
+    assert!(invalid.get("error").is_some());
+    first.set_rcvtimeo(150)?;
+    assert!(matches!(first.recv_bytes(0), Err(zmq::Error::EAGAIN)));
+    first.set_rcvtimeo(5_000)?;
+    let request =
+        json!({"identity":"subscription-event","agent":"a","question":"Signal?","options":[]});
+    let id = call(&address, json!({"op":"submit","request":request}))?["id"]
+        .as_i64()
+        .ok_or("missing decision")?;
+    let hint = receive_reply(first)?;
+    assert_eq!(hint["correlation"], "event");
+    assert_eq!(hint["result"]["changed"], true);
+    assert!(call(&address, json!({"op":"get","id":id}))?["answer"].is_null());
+    subscribers.truncate(128);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        send(&overflow, "retry", json!({"op":"subscribe_changes"}))?;
+        let response = receive_reply(&overflow)?;
+        if response["result"]["watching"] == true {
+            break;
+        }
+        assert_eq!(response["result"]["error"], "invalid request");
+        if std::time::Instant::now() >= deadline {
+            return Err("disconnected subscribers did not release capacity".into());
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    call(
+        &address,
+        json!({"op":"set_importance", "id":id, "importance":1}),
+    )?;
+    let hint = receive_reply(&overflow)?;
+    assert_eq!(hint["correlation"], "event");
+    assert_eq!(hint["result"]["changed"], true);
+    drop(overflow);
+    drop(subscribers);
+    drop(context);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

@@ -22,7 +22,7 @@ The service ROUTER supplies its routing identity as transport metadata; the appl
 
 `aviary wait ADDRESS ID` returns an answer or a `deferred_event` ID. To continue waiting after handling a deferral, pass `--after-event EVENT_ID`; a final answer is returned in the original answer shape. The waiter subscribes to change hints and rereads durable state after each hint; it exits on a connection or service error.
 
-`aviary watch ADDRESS` emits newline-delimited JSON containing `connected` and a process-local `revision`. It reports disconnections and reconnects automatically. A connection event or revision change is a hint to reread the relevant durable queue, event cursor, or inbox; it is not a durable event ID and notifications can coalesce.
+Direct change subscriptions require a fresh dedicated connection used only for that subscription: multiplexing request/reply traffic can invalidate the full-queue coalescing assumption, and the service does not enforce this restriction. `aviary watch ADDRESS` emits newline-delimited JSON containing `connected` and a process-local `revision`. It reports disconnections and reconnects automatically. A connection event or revision change is a hint to reread the relevant durable queue, event cursor, or inbox; it is not a durable event ID and notifications can coalesce.
 
 ## Operation shapes
 

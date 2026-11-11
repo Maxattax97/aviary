@@ -539,3 +539,7 @@ These checks do not establish a latency guarantee, detection time for silent net
 ## Controlling-terminal hangup (2026-11-11)
 
 `python3 tests/startup_hangup.py` passed on Linux with an isolated pseudo-terminal, controlling session and disposable loopback service. It closed the terminal master, observed the TUI process end, checked the service had its own session, and successfully submitted and retrieved a decision afterward. `python3 tests/auto_startup.py` passed after this change. The test does not establish behavior on other POSIX systems, with every terminal emulator or service manager, or across an OS crash.
+
+## Subscription capacity and disconnection (2026-11-11)
+
+`subscriptions_are_bounded_and_disconnects_release_capacity` opened 256 local version-2 subscriptions, confirmed an additional subscription was rejected, verified a rejected mutation produced no change hint, observed a hint after a durable submission, disconnected 128 subscribers, and observed the formerly rejected client subscribe and receive a later hint. The service remained responsive to a separate request client. This tests subscription-count limits and cleanup, not a full per-peer output queue or a total process-memory bound. The coalescing argument assumes a fresh dedicated subscription connection; the service does not enforce that restriction, so multiplexed traffic can fill its output queue with replies rather than hints. Slow-subscriber saturation, mixed-use behavior, remote partitions and latency remain open.
