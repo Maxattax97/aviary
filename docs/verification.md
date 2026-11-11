@@ -436,3 +436,16 @@ message is eligible and no suspended instruction blocks reply composition. The
 local terminal PTY regression passed with checks for both eligible and
 ineligible messages. Captures do not establish interactive behavior or theme
 contrast on their own.
+
+## Two xterm palettes (2026-11-10)
+
+In isolated Xvfb xterm sessions, the same synthetic decision was rendered at
+100 × 24 with TERM=xterm and two explicitly configured palettes: dark
+background `#101018`, foreground `#eeeeee`, ANSI cyan `#30d6d0`; and light
+background `#f7f5ec`, foreground `#202020`, ANSI cyan `#005c78`. Normal and
+bold cyan were set to the listed value. Captures were visually inspected and
+`PYTHONWARNINGS=ignore python3 tests/theme_render.py` confirmed each configured
+accent appeared in its corresponding screen. [Both captures](mockups/p04-p05-rendered-review.md) show focus labels
+and selection markers as non-color cues. This is evidence for these two xterm
+configurations, not a contrast guarantee for arbitrary themes or terminals;
+interactive basic-color and monochrome behavior has separate PTY coverage.

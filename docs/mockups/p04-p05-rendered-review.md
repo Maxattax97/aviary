@@ -105,3 +105,13 @@ Aviary Active decisions N:1
 
 Tab focus · ↑↓ · Enter confirms · ?
 ```
+
+## Color scheme examples
+
+These xterm captures use the same synthetic decision and different foreground,
+background and ANSI cyan settings. They show the selected theme colors in the
+focused border and header; the text focus label and selection marker also remain.
+
+![Dark terminal palette](p04-theme-dark.png)
+
+![Light terminal palette](p04-theme-light.png)
