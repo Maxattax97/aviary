@@ -2,6 +2,8 @@
 """Drop one committed instruction response and exercise the terminal retry."""
 import ctypes
 import json
+import os
+import select
 import socket
 import threading
 import time
@@ -67,20 +69,30 @@ def main() -> None:
             with Terminal(SimpleNamespace(address=address)) as terminal:
                 terminal.expect("No active requests")
                 terminal.send("m")
-                terminal.expect("Instruction text")
+                terminal.expect("Compose instruction")
                 terminal.send("Commit once\r")
-                terminal.expect("Review instruction")
-                terminal.send("\r")
+                terminal.expect("Destination: all")
+                terminal.send("\x13")
                 terminal.expect("Action in progress")
                 assert dropped.wait(5)
-                terminal.send("\r")  # ignored while the first action is pending
+                terminal.send("\x13")  # ignored while the first action is pending
                 terminal.expect("Unconfirmed:", timeout=16)
                 time.sleep(0.6)
                 assert len(calls) == 1
                 inbox = service.call({"op": "inbox", "participant": "worker"})["messages"]
                 assert len(inbox) == 1 and inbox[0]["message"]["body"] == "Commit once"
-                terminal.send("\r")
-                terminal.expect("Instruction accepted")
+                terminal.send("\x13")
+                terminal.expect("Instruction sent")
+                deadline = time.monotonic() + 6
+                expired = False
+                while time.monotonic() < deadline:
+                    if select.select([terminal.master], [], [], 0.2)[0]:
+                        terminal._feed_screen(os.read(terminal.master, 65536))
+                        screen = "\n".join("".join(row) for row in terminal.screen)
+                        if "Instruction sent" not in screen:
+                            expired = True
+                            break
+                assert expired, "success notification did not disappear"
                 assert len(calls) == 2 and calls[0] == calls[1]
                 assert len(service.call({"op": "inbox", "participant": "worker"})["messages"]) == 1
                 terminal.quit()

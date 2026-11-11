@@ -4,7 +4,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crossterm::{
@@ -301,6 +301,8 @@ struct Composer {
     review_page: usize,
     fields: [String; 4],
     error: Option<String>,
+    cursor: usize,
+    confirm_discard: bool,
 }
 impl Composer {
     fn instruction() -> io::Result<Self> {
@@ -404,6 +406,7 @@ struct View {
     arrivals: Arrivals,
     composer: Option<Composer>,
     status: Option<String>,
+    status_expires: Option<Instant>,
     poll_error: Option<String>,
     poll_summary: Option<String>,
     busy: bool,
@@ -453,6 +456,7 @@ impl View {
             arrivals: Arrivals::default(),
             composer: None,
             status: None,
+            status_expires: None,
             poll_error: None,
             poll_summary: None,
             busy: false,
@@ -695,6 +699,63 @@ impl View {
             return Action::Redraw;
         }
         if let Some(composer) = &mut self.composer {
+            if composer.reply_to.is_none() {
+                if composer.confirm_discard {
+                    if key.code == KeyCode::Char('y') {
+                        self.composer = None;
+                    } else {
+                        composer.confirm_discard = false;
+                    }
+                    return Action::Redraw;
+                }
+                match key.code {
+                    KeyCode::Esc if composer.error.is_some() => composer.confirm_discard = true,
+                    KeyCode::Esc => self.composer = None,
+                    KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if let Some(message) = composer.message() {
+                            return Action::SendInstruction(message);
+                        }
+                    }
+                    KeyCode::Left => composer.cursor = composer.cursor.saturating_sub(1),
+                    KeyCode::Right => {
+                        composer.cursor =
+                            (composer.cursor + 1).min(composer.fields[3].chars().count())
+                    }
+                    KeyCode::Home => composer.cursor = 0,
+                    KeyCode::End => composer.cursor = composer.fields[3].chars().count(),
+                    KeyCode::Backspace if composer.error.is_none() && composer.cursor > 0 => {
+                        let start = composer.fields[3]
+                            .char_indices()
+                            .nth(composer.cursor - 1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let end = composer.fields[3]
+                            .char_indices()
+                            .nth(composer.cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(composer.fields[3].len());
+                        composer.fields[3].replace_range(start..end, "");
+                        composer.cursor -= 1;
+                    }
+                    KeyCode::Char(c)
+                        if composer.error.is_none()
+                            && !c.is_control()
+                            && !key
+                                .modifiers
+                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+                    {
+                        let at = composer.fields[3]
+                            .char_indices()
+                            .nth(composer.cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(composer.fields[3].len());
+                        composer.fields[3].insert(at, c);
+                        composer.cursor += 1;
+                    }
+                    _ => {}
+                }
+                return Action::Redraw;
+            }
             match key.code {
                 KeyCode::Esc => {
                     self.composer = None;
@@ -1056,8 +1117,10 @@ impl View {
                 Ok(composer) => {
                     self.composer = Some(composer);
                     self.status = None;
+                    self.status_expires = None;
                 }
                 Err(error) => {
+                    self.status_expires = None;
                     self.status = Some(format!("Cannot create instruction identity: {error}"))
                 }
             }
@@ -1254,6 +1317,13 @@ pub async fn terminal(address: &str) -> Result<()> {
     display(&mut screen, &view)?;
     loop {
         tokio::select! {
+            _ = time::sleep(Duration::from_millis(100)), if view.status_expires.is_some() => {
+                if view.status_expires.is_some_and(|deadline| Instant::now() >= deadline) {
+                    view.status = None;
+                    view.status_expires = None;
+                    display(&mut screen, &view)?;
+                }
+            }
             _ = interrupt.recv() => return Ok(()),
             _ = terminate.recv() => return Ok(()),
             _ = interval.tick(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
@@ -1345,13 +1415,15 @@ pub async fn terminal(address: &str) -> Result<()> {
             }, if submission.is_some() => {
                 submission = None;
                 view.busy = false;
+                view.status_expires = None;
                 let (is_instruction, is_notice, result) = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
                 if is_instruction {
                     match result {
-                        Ok(response) => {
+                        Ok(_response) => {
                             let label = if view.composer.as_ref().is_some_and(|composer| composer.reply_to.is_some()) { "Reply" } else { "Instruction" };
                             view.composer = None;
-                            view.status = Some(format!("{label} accepted: {response}"));
+                            view.status = Some(format!("{label} sent"));
+                            view.status_expires = Some(Instant::now() + Duration::from_secs(4));
                         }
                         Err(error) => { if let Some(composer) = &mut view.composer {
                             composer.error = Some(match error {
@@ -1366,7 +1438,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     }
                 } else {
                     match result {
-                        Ok(response) => { view.status = Some(format!("Accepted: {response}")); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
+                        Ok(_response) => { view.status = Some(if is_notice { "Notice dismissed".into() } else { "Action accepted".into() }); view.status_expires = Some(Instant::now() + Duration::from_secs(4)); if !is_notice { view.reset_selection(); view.reset_request_page(); } view.reset_notice_page(); }
                         Err(error) => { view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else { format!("Unconfirmed: {error}; check state before retry") }); }
                     }
                 }
@@ -1637,7 +1709,7 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         match view.help_page {
             0 => println!("Decisions: h/l request; j/k or 1-9 choose; Enter confirms\r\nd defer/restore; p importance\r\nc context; o answer detail\r\nTab queues; R clear arrival\r\ni inbox; n notices; m instruction"),
             1 => println!("Inbox: h/l message; j/k text\r\nr reply; H history\r\nNotices: h/l notice; j/k text; d dismiss\r\nHistory: H selected; g lookup\r\n1-3 section; h/l record; j/k text\r\n[ ] page; R refresh; q returns"),
-            _ => println!("Composer: Enter continues/confirms\r\nEsc cancels; j/k review pages\r\nCustom: Ctrl-R review; Enter confirms\r\n? opens help outside text entry\r\nCtrl-G opens help anywhere; Ctrl-C quits"),
+            _ => println!("Instruction: Ctrl-S sends; arrows move\r\nReply: Enter continues/confirms; Esc cancels\r\nCustom: Ctrl-R review; Enter confirms\r\n? opens help outside text entry\r\nCtrl-G opens help anywhere; Ctrl-C quits"),
         }
         return render(screen, &output);
     }
@@ -1662,6 +1734,30 @@ fn display(screen: &mut Terminal<CrosstermBackend<io::Stdout>>, view: &View) -> 
         println!("New decisions (R in queue)\r");
     }
     if let Some(composer) = &view.composer {
+        if composer.reply_to.is_none() {
+            let body = &composer.fields[3];
+            let (width, _) = terminal::size().unwrap_or((80, 24));
+            let capacity = usize::from(width.saturating_sub(4)).max(1) / 2;
+            let start = composer.cursor.saturating_sub(capacity.saturating_sub(1));
+            let visible: String = body.chars().skip(start).take(capacity).collect();
+            println!("Compose instruction\r\nDestination: all · group\r\nSend to other channel members\r\n{}{}{}\r\n{}^\r\nCtrl-S sends; ←/→ moves; Esc discards; Ctrl-G help.",
+                if start > 0 { "…" } else { "" }, safe(&visible),
+                if start + capacity < body.chars().count() { "…" } else { "" },
+                " ".repeat(composer.cursor.saturating_sub(start) + usize::from(start > 0)));
+            if view.busy {
+                println!("Sending — outcome unconfirmed.");
+            }
+            if let Some(error) = &composer.error {
+                println!(
+                    "{}\r\nDraft locked. Ctrl-S retries unchanged; Esc discards.",
+                    safe(error)
+                );
+            }
+            if composer.confirm_discard {
+                println!("Discard this possibly accepted draft and identity? y confirms; any other key keeps it.");
+            }
+            return render(screen, &output);
+        }
         let labels = ["Instruction text"];
         if composer.stage < composer.review_stage() {
             let reply_labels = ["Retry identity (unique deployment-wide)", "Reply text"];
@@ -2051,7 +2147,7 @@ mod tests {
     }
 
     #[test]
-    fn instruction_requires_review_and_retains_identity_and_content() {
+    fn instruction_requires_explicit_send_and_retains_identity_and_content() {
         let mut view = View::new();
         view.composer = Some(Composer::instruction().expect("random identity"));
         let first_id = view.composer.as_ref().expect("composer").fields[0].clone();
@@ -2065,11 +2161,36 @@ mod tests {
         assert!(matches!(view.key(key(KeyCode::Enter)), Action::Redraw));
         for _ in 0..2 {
             assert!(
-                matches!(view.key(key(KeyCode::Enter)), Action::SendInstruction(message)
+                matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)), Action::SendInstruction(message)
                 if message.identity == first_id && message.channel == "all"
                     && matches!(message.target, Target::Group) && message.body == "Do work?")
             );
         }
+    }
+
+    #[test]
+    fn unconfirmed_instruction_locks_content_and_requires_discard_confirmation() {
+        let mut view = View::new();
+        view.composer = Some(Composer::instruction().expect("random identity"));
+        for c in "original".chars() {
+            view.key(key(KeyCode::Char(c)));
+        }
+        let composer = view.composer.as_mut().expect("composer");
+        let identity = composer.fields[0].clone();
+        composer.error = Some("Unconfirmed".into());
+        view.key(key(KeyCode::Backspace));
+        view.key(key(KeyCode::Char('x')));
+        assert!(
+            matches!(view.key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL)),
+            Action::SendInstruction(message) if message.identity == identity && message.body == "original")
+        );
+        view.key(key(KeyCode::Esc));
+        assert!(view.composer.as_ref().expect("composer").confirm_discard);
+        view.key(key(KeyCode::Char('n')));
+        assert!(view.composer.is_some());
+        view.key(key(KeyCode::Esc));
+        view.key(key(KeyCode::Char('y')));
+        assert!(view.composer.is_none());
     }
 
     #[test]

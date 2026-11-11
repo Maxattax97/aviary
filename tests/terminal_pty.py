@@ -159,27 +159,27 @@ def exercise_instructions(service: Service) -> None:
     with Terminal(service) as terminal:
         terminal.expect("Detail check")
         terminal.send("m")
-        terminal.expect("Instruction text")
+        terminal.expect("Compose instruction")
         terminal.send("Start work?")
         terminal.send("\x07")
         terminal.expect("Keyboard help")
         terminal.send("\x1b")
-        assert b"Start work?" in terminal.expect("Instruction text")
+        assert b"Start work?" in terminal.expect("Compose instruction")
         terminal.send("\r")
-        review = terminal.expect("Review instruction")
-        assert b"all" in review and b"(group)" in review and b"Start work?" in review
+        review = terminal.expect("Destination: all")
+        assert b"group" in review and b"Start work?" in review
         assert service.call({"op": "inbox", "participant": "a"})["messages"] == []
-        terminal.send("\r")
+        terminal.send("\x13")
         terminal.expect("Rejected:")
         service.call({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "a", "b"]}})
-        terminal.send("\r")
-        terminal.expect("Instruction accepted")
+        terminal.send("\x13")
+        terminal.expect("Instruction sent")
         terminal.send("m")
-        terminal.expect("Instruction text")
+        terminal.expect("Compose instruction")
         terminal.send("Second instruction\r")
-        terminal.expect("Review instruction")
-        terminal.send("\r")
-        terminal.expect("Instruction accepted")
+        terminal.expect("Destination: all")
+        terminal.send("\x13")
+        terminal.expect("Instruction sent")
         inbox_a = service.call({"op": "inbox", "participant": "a"})["messages"]
         inbox_b = service.call({"op": "inbox", "participant": "b"})["messages"]
         assert [item["message"]["body"] for item in inbox_a] == ["Start work?", "Second instruction"]
@@ -301,7 +301,7 @@ def exercise_operator_inbox(service: Service) -> None:
                 terminal.send("\x1b")
                 terminal.expect("Need operator response")
             else:
-                terminal.expect("Reply accepted")
+                terminal.expect("Reply sent")
                 reply_id = service.call({"op": "get_message_response", "id": incoming})[
                     "response"
                 ]["id"]
@@ -454,15 +454,17 @@ def exercise_unsuitable_channel() -> None:
         with Terminal(service) as terminal:
             terminal.expect("No active requests")
             terminal.send("m")
-            terminal.expect("Instruction text")
+            terminal.expect("Compose instruction")
             terminal.send("Cannot deliver\r")
-            terminal.expect("Review instruction")
-            terminal.send("\r")
+            terminal.expect("Destination: all")
+            terminal.send("\x13")
             terminal.expect("Rejected:")
             assert service.call({"op": "create_channel", "channel": channel})["channel"] == channel
             assert service.run({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "worker"]}}).returncode != 0
             assert not service.call({"op": "inbox", "participant": "worker"})["messages"]
             terminal.send("\x1b")
+            terminal.expect("Discard this")
+            terminal.send("y")
             terminal.expect("No active requests")
             terminal.quit()
     print("Unsuitable all channel is rejected without membership changes")

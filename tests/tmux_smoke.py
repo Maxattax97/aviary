@@ -305,20 +305,17 @@ def main() -> None:
             tmux("send-keys", "-t", "aviary:", "Escape")
             wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "m")
-            wait_for_screen("Instruction text")
+            wait_for_screen("Compose instruction")
             instruction = "x" * 145 + " END-INSTRUCTION"
             tmux("send-keys", "-t", "aviary:", "-l", instruction)
             wait_for_screen("END-INSTRUCTION")
             tmux("send-keys", "-t", "aviary:", "Enter")
-            screen = wait_for_screen("Review instruction")
-            assert "Enter sends" in screen, screen
+            screen = wait_for_screen("Destination: all")
+            assert "Ctrl-S sends" in screen, screen
             assert (
                 service.call({"op": "inbox", "participant": "agent"})["messages"] == []
             )
-            for _ in range(4):
-                tmux("send-keys", "-t", "aviary:", "j")
-            wait_for_screen("END-INSTRUCTION")
-            tmux("send-keys", "-t", "aviary:", "Enter")
+            tmux("send-keys", "-t", "aviary:", "C-s")
             service.wait_for(
                 lambda: [
                     item["message"]["body"]

@@ -348,3 +348,25 @@ These are prospective checks for the candidates in [requirements](requirements.m
 - **T-068:** If deferral is retained, observe the requesting agent's deferred indication, verify the request remains pending with no answer, and test lower placement, restart, repeated deferral and resolution under the chosen semantics. If removed, revise SYS-005/US-006 and test migration of existing deferred records instead.
 
 Additionally rerun T-048/T-049 for selected color schemes, basic color and monochrome, and existing channel, durable retry and decision tests to protect current users. Use real rendered screens and representative operator validation; local simulated process failures do not establish OS-crash or two-machine behavior.
+
+## P-04/P-05 pre-implementation baseline (2026-11-10)
+
+Before operator review of the proposed layout, `cargo test --locked` passed
+(12 unit tests and 23 integration tests). This is evidence for the existing
+implementation only; it does not verify the proposed layout or P-04/P-05
+acceptance. The operator subsequently reviewed the mockup and agreed to proceed; the
+baseline does not verify the proposed interface.
+
+## P-05 direct instruction increment (2026-11-10)
+
+The updated terminal PTY and isolated tmux regressions passed. A local proxy
+lost a committed instruction acknowledgment; the terminal kept the outcome
+unconfirmed, did not resubmit automatically, and an explicit identical retry
+returned one stored message. That exercise also observed the success notice
+disappear. Thirteen unit tests passed, including locked-draft and discard
+confirmation coverage. `cargo test --locked -- --test-threads=1` passed all 12
+then-current unit tests and 23 integration tests with loopback access; an
+initial parallel loopback run had one resource timeout, and sandboxed runs
+aborted inside libzmq. These local checks do not establish the remaining
+reviewed layout, complete draft navigation, all terminal sizes or operator
+acceptance.
