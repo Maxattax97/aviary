@@ -13,11 +13,13 @@ ZMQ_RCVMORE = 13
 ZMQ_LINGER = 17
 ZMQ_RCVTIMEO = 27
 ZMQ_SNDTIMEO = 28
+ZMQ_RCVHWM = 24
+ZMQ_RCVBUF = 12
 MAX_FRAME = 1_048_576
 
 
 class Dealer:
-    def __init__(self, address: str) -> None:
+    def __init__(self, address: str, *, receive_hwm: int | None = None, receive_buffer: int | None = None) -> None:
         name = ctypes.util.find_library("zmq")
         if not name:
             raise RuntimeError(
@@ -56,11 +58,16 @@ class Dealer:
             self.socket = self.lib.zmq_socket(self.context, ZMQ_DEALER)
             if not self.socket:
                 raise RuntimeError("zmq_socket failed")
-            for option, value in [
+            options = [
                 (ZMQ_LINGER, 0),
                 (ZMQ_RCVTIMEO, 5000),
                 (ZMQ_SNDTIMEO, 5000),
-            ]:
+            ]
+            if receive_hwm is not None:
+                options.append((ZMQ_RCVHWM, receive_hwm))
+            if receive_buffer is not None:
+                options.append((ZMQ_RCVBUF, receive_buffer))
+            for option, value in options:
                 number = ctypes.c_int(value)
                 self.check(
                     self.lib.zmq_setsockopt(

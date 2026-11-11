@@ -214,6 +214,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
     let mut monitor = socket.monitor();
     let mut subscribers: HashSet<bytes::Bytes> = HashSet::new();
     let mut used_peers: HashSet<bytes::Bytes> = HashSet::new();
+    let mut saturated_subscribers: HashSet<bytes::Bytes> = HashSet::new();
     socket.bind(&format!("tcp://{address}")).await?;
     // Acquire the listener before opening the database: a competing service
     // must not initialize a different database after losing the bind race.
@@ -237,6 +238,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
                 if let Some(SocketEvent::Disconnected(peer)) = event {
                     subscribers.retain(|identity| identity.as_ref() != peer.as_ref());
                     used_peers.retain(|identity| identity.as_ref() != peer.as_ref());
+                    saturated_subscribers.retain(|identity| identity.as_ref() != peer.as_ref());
                 }
                 continue;
             }
@@ -298,6 +300,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
         } else if subscribing {
             if subscribers.len() >= MAX_SUBSCRIBERS {
                 subscribers.retain(|identity| socket.has_peer(identity.as_ref()));
+                saturated_subscribers.retain(|identity| subscribers.contains(identity));
             }
             if request.version != VERSION
                 || !fresh
@@ -368,15 +371,22 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
                 let mut notification = ZmqMessage::from(subscriber.clone());
                 notification.push_back(bytes::Bytes::copy_from_slice(&payload));
                 match socket.try_send(notification).await {
-                    Ok(()) | Err(ZmqError::BufferFull(_)) => {
+                    Ok(()) => {
+                        saturated_subscribers.remove(subscriber);
+                    }
+                    Err(ZmqError::BufferFull(_)) => {
                         // A full queue already contains change hints, which
                         // cause a durable-state read after the subscriber catches up.
+                        if saturated_subscribers.insert(subscriber.clone()) {
+                            tracing::debug!("subscriber hint queue saturated; coalescing changes");
+                        }
                     }
                     Err(_) => disconnected.push(subscriber.clone()),
                 }
             }
             for subscriber in disconnected {
                 subscribers.remove(&subscriber);
+                saturated_subscribers.remove(&subscriber);
             }
         }
         if stopping {

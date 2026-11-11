@@ -389,3 +389,7 @@ Aviary V1 is centered on one service. Two service processes sharing a SQLite dat
 ## Shared-work queue proposal (2026-11-11)
 
 The [P-03 proposal](shared-work-queue-proposal.md) makes one-claim/manual-recovery, fencing, idempotent action receipts, bounded discovery and nondestructive coexistence concrete for review. These are proposed choices, not current behavior or an approved replacement for `all` group fan-out.
+
+## Saturated change-hint queues (2026-11-11)
+
+When a dedicated subscriber's outbound queue fills, the service coalesces further hints while queued hints remain. It emits one debug diagnostic per saturation episode, without logging participant identities or payloads; a later successful enqueue clears the diagnostic state. Durable state remains authoritative and other peers retain independent queues. This is not a guarantee of prompt partition detection, a latency target or a total process-memory bound.
