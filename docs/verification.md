@@ -345,7 +345,7 @@ These are prospective checks for the candidates in [requirements](requirements.m
 - **T-065:** Navigate more records than fit in one backend response and content longer than one screen without a page-navigation command. Exercise fetch boundary, slow/error recovery, resize, Unicode and concurrent insert/removal, with honest loading/incomplete states and preserved selection where specified.
 - **T-066:** Observe a human-readable accepted notification appear and disappear; verify it does not erase a draft or selection. Separately inject explicit rejection and lost acknowledgment after commit and verify actionable, distinguishable states and no automatic resubmission.
 - **T-067:** In the real composer, verify destination and send effect are visible; typing, cursor movement and inspection do not send; the explicit send action does not open a separate review page. Exercise accepted, rejected and unknown outcomes, preserving the exact identity and payload for a user-initiated retry.
-- **T-068:** If deferral is retained, observe the requesting agent's deferred indication, verify the request remains pending with no answer, and test lower placement, restart, repeated deferral and resolution under the chosen semantics. If removed, revise SYS-005/US-006 and test migration of existing deferred records instead.
+- **T-068:** See the amended deferral-event oracle below.
 
 Additionally rerun T-048/T-049 for selected color schemes, basic color and monochrome, and existing channel, durable retry and decision tests to protect current users. Use real rendered screens and representative operator validation; local simulated process failures do not establish OS-crash or two-machine behavior.
 
@@ -468,3 +468,44 @@ characters each, including vertical selection across fetch boundaries in both
 directions. It also checked notice selection after earlier items were dismissed.
 This is a local PTY regression, not evidence of remote behavior, consistent
 pagination under arbitrary concurrent changes, or representative operator use.
+
+## Proposed queue ordering, deferral and asynchronous update verification
+
+The following are planned oracles only; no new implementation or test result
+is claimed for these amended behaviors.
+
+- **T-068 (deferral event):** Defer a pending decision, verify it remains
+  unanswered and pending, then retrieve its deferral notification as the
+  requesting agent after disconnect and service restart. Check notification
+  identity/duplication and concurrent answer behavior once those contracts are
+  specified.
+- **T-069 (effective order):** Create requests at multiple importance levels
+  and verify FIFO age within each level; swap two equal-importance positions
+  and verify only their positions change and the manual order survives restart.
+  Exercise a stale swap after answer, priority change, insertion and deferral.
+- **T-070 (live notification):** Keep operator and agent clients connected;
+  submit, defer, answer and message while recording client operations. Verify
+  each subscribed client receives relevant change hints without periodic list
+  requests, with bounded memory and explicit behavior when the notification
+  queue is full.
+- **T-071 (reconnect reconciliation):** Disconnect during several state
+  changes, reconnect from a recorded cursor or perform a bounded full
+  reconciliation, and verify current state is recovered despite missed,
+  duplicate or reordered hints. Verify durable acceptance is decided only by
+  the persisted operation response/state, never by a notification.
+
+Transport evaluation should compare the current ZeroMQ ROUTER/DEALER design
+with viable alternatives against subscription fan-out, request/reply
+coexistence, bounded buffering/backpressure, reconnect behavior, missed-event
+reconciliation, cross-platform support, operational dependencies and
+compatibility/migration cost. A transport design must account for these criteria before replacing polling. The prior binding built bundled C++ libzmq; the current prototype uses a locally patched Rust `zeromq` crate and requires further compatibility and failure-mode validation. Replacing the crate alone does not remove application polling. `cargo tree -i cc --locked` also shows `libsqlite3-sys` as a build dependency of `cc`; eliminating the ZeroMQ native build alone does not establish a compiler-free build.
+
+## Terminal interaction follow-up evidence (2026-11-10)
+
+`cargo test --locked`, `python3 tests/terminal_pty.py`, `python3 tests/queue_layout.py`, `python3 tests/tmux_smoke.py`, and `python3 tests/terminal_lost_ack.py` passed locally with loopback access. They exercised explicit Enter sends, a rejected send retry, an unknown committed outcome with unchanged retry, inline custom input, scrollable help, focus and monochrome cues, and tmux including a 40 × 12 pane. The initial sandboxed Rust integration run could not create ZeroMQ sockets and aborted; the loopback-enabled rerun passed. These are local test fixtures, not representative operator, remote, or comprehensive terminal validation.
+
+## Rust transport, mouse, and history increment (2026-11-10)
+
+`cargo test --locked` passed all 17 unit and 23 integration tests locally with loopback access. `python3 tests/zeromq_interop.py` passed against the new Rust ROUTER using a system-libzmq DEALER; the terminal, tmux, reconnect, mouse, signal-restoration and lost-acknowledgment tests also passed. The fork's decoder unit tests passed for an oversized frame header and a multipart message with 100 frames followed by a valid message. `python3 tests/history_terminal.py` exercised multiple visible records, bounded history response navigation, and both decision and message roots. The old tmux screen-restoration test was updated to check the current framed layout and passed.
+
+These tests do not establish a total process-memory bound, OS-crash durability, remote operation, a latency bound, or representative operator validation. A separate `/tmp` Turso 0.8.3 probe found that its resolved `simsimd` dependency requires C compilation; SQL compatibility and recovery were not tested. Per the user's direction, Aviary retains SQLite. Native libzmq remains a test-only dependency, and bundled SQLite still requires a C compiler for a fresh source build. Application-level queue refreshes and CLI waiters still poll.

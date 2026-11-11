@@ -90,7 +90,7 @@ def main() -> None:
             wait_for_screen("Option 0")
             tmux("send-keys", "-t", "aviary:", *(["j"] * 13))
             screen = wait_for_screen("> 13. Custom answer")
-            assert "Decision #" in screen, screen
+            assert "[Decision]" in screen, screen
             tmux("send-keys", "-t", "aviary:", "Enter")
             wait_for_screen("Custom answer:")
             tmux("send-keys", "-t", "aviary:", "custom text", "Enter")
@@ -301,11 +301,12 @@ def main() -> None:
             )
             tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
             tmux("send-keys", "-t", "aviary:", "?")
-            wait_for_screen("Keyboard help 1/3")
+            wait_for_screen("Keyboard help")
             tmux("send-keys", "-t", "aviary:", "j")
-            wait_for_screen("Keyboard help 2/3")
-            tmux("send-keys", "-t", "aviary:", "j")
-            wait_for_screen("Keyboard help 3/3")
+            wait_for_screen("Inbox:")
+            for _ in range(8):
+                tmux("send-keys", "-t", "aviary:", "j")
+            wait_for_screen("Custom:")
             tmux("send-keys", "-t", "aviary:", "Escape")
             wait_for_screen("No active requests")
             tmux("send-keys", "-t", "aviary:", "m")
@@ -313,13 +314,12 @@ def main() -> None:
             instruction = "x" * 145 + " END-INSTRUCTION"
             tmux("send-keys", "-t", "aviary:", "-l", instruction)
             wait_for_screen("END-INSTRUCTION")
-            tmux("send-keys", "-t", "aviary:", "Enter")
             screen = wait_for_screen("Destination: all")
-            assert "Ctrl-S sends" in screen, screen
+            assert "Enter sends" in screen, screen
             assert (
                 service.call({"op": "inbox", "participant": "agent"})["messages"] == []
             )
-            tmux("send-keys", "-t", "aviary:", "C-s")
+            tmux("send-keys", "-t", "aviary:", "Enter")
             service.wait_for(
                 lambda: [
                     item["message"]["body"]
@@ -347,16 +347,9 @@ def main() -> None:
             wait_for_screen("Custom answer:")
             custom = "a" * 145 + " END-CUSTOM"
             tmux("send-keys", "-t", "aviary:", "-l", custom)
-            wait_for_screen("END-CUSTOM")
-            tmux("send-keys", "-t", "aviary:", "C-r")
-            wait_for_screen("Custom answer review")
-            assert service.call({"op": "get", "id": custom_id})["answer"] is None
-            for _ in range(4):
-                tmux("send-keys", "-t", "aviary:", "j")
             screen = wait_for_screen("END-CUST")
-            assert "END-CUSTOM" in screen.replace("\n", ""), screen
-            tmux("send-keys", "-t", "aviary:", "q")
-            wait_for_screen("Ctrl-R reviews")
+            assert "END-CUST" in screen
+            assert service.call({"op": "get", "id": custom_id})["answer"] is None
             tmux("send-keys", "-t", "aviary:", "Enter")
             service.wait_for(
                 lambda: service.call({"op": "get", "id": custom_id})["answer"]

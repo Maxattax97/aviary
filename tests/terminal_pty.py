@@ -80,7 +80,7 @@ def exercise_deferral(service: Service) -> None:
             == 5,
             "priority override",
         )
-        terminal.expect("importance 5")
+        terminal.expect("Importance: 5")
         terminal.send("d")
         service.wait_for(
             lambda: queue_ids(service, "list") == [request_id], "restoration"
@@ -132,7 +132,7 @@ def exercise_context_and_notices(service: Service) -> int:
         screen = terminal.expect("Build package")
         assert b"Tests passed" in screen and f"Notice #{notice_id}".encode() in screen
         terminal.send("?")
-        terminal.expect("Keyboard help 1/3")
+        terminal.expect("Keyboard help")
         terminal.send("j")
         terminal.expect("Notices: Tab focus")
         terminal.send("\x1b")
@@ -165,20 +165,19 @@ def exercise_instructions(service: Service) -> None:
         terminal.expect("Keyboard help")
         terminal.send("\x1b")
         assert b"Start work?" in terminal.expect("Compose instruction")
-        terminal.send("\r")
         review = terminal.expect("Destination: all")
         assert b"group" in review and b"Start work?" in review
         assert service.call({"op": "inbox", "participant": "a"})["messages"] == []
-        terminal.send("\x13")
+        terminal.send("\r")
         terminal.expect("Rejected:")
         service.call({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "a", "b"]}})
-        terminal.send("\x13")
+        terminal.send("\r")
         terminal.expect("Instruction sent")
         terminal.send("m")
         terminal.expect("Compose instruction")
-        terminal.send("Second instruction\r")
+        terminal.send("Second instruction")
         terminal.expect("Destination: all")
-        terminal.send("\x13")
+        terminal.send("\r")
         terminal.expect("Instruction sent")
         inbox_a = service.call({"op": "inbox", "participant": "a"})["messages"]
         inbox_b = service.call({"op": "inbox", "participant": "b"})["messages"]
@@ -271,7 +270,7 @@ def exercise_operator_inbox(service: Service) -> None:
         assert f"Message #{incoming}".encode() in screen
         assert b"r reply" in screen
         terminal.send("?")
-        terminal.expect("Keyboard help 1/3")
+        terminal.expect("Keyboard help")
         terminal.send("j")
         terminal.expect("Inbox: Tab focus")
         terminal.send("\x1b")
@@ -374,16 +373,16 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
     with Terminal(service) as terminal:
         terminal.expect("Queue item 0")
         terminal.send("\t")
-        terminal.expect("Decisions [FOCUS]")
+        terminal.expect("[Decisions]")
         for index in range(1, 8):
             terminal.send("j")
-            terminal.expect(f"Decision #{request_ids[index]}")
+            terminal.expect(f"Question: Queue item {index}")
         terminal.send("l" * 2)
         terminal.expect("Queue item 9")
         terminal.send("h" * 2)
         terminal.expect("Queue item 7")
         terminal.send("k")
-        terminal.expect(f"Decision #{request_ids[6]}")
+        terminal.expect("Question: Queue item 6")
         terminal.send("l")
         terminal.expect("Queue item 7")
         terminal.send("l" * 2)
@@ -464,7 +463,7 @@ def exercise_unsuitable_channel() -> None:
             terminal.expect("Compose instruction")
             terminal.send("Cannot deliver\r")
             terminal.expect("Destination: all")
-            terminal.send("\x13")
+            terminal.send("\r")
             terminal.expect("Rejected:")
             assert service.call({"op": "create_channel", "channel": channel})["channel"] == channel
             assert service.run({"op": "create_channel", "channel": {"name": "all", "members": ["operator", "worker"]}}).returncode != 0

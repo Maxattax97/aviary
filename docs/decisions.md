@@ -262,7 +262,13 @@ Agents should be able to list the decision queue in bounded pages and swap items
 
 The intended `all` destination is a shared work queue: an instruction can be accepted with no agent listening, remains active until resolved and then disappears from the active queue. **Open:** one claimant or multiple participants; take-up and resolution authority; multiple agents racing; agent crash or disconnect; timeout, release and redelivery; completion versus failure; idempotent acceptance and resolution; active listing and privacy; and whether a resolved instruction's content, result and retry identity persist outside the active queue. Removing an item from the active queue does not by itself authorize deleting existing messages, history or retry keys. The existing `all` group channel is not this queue; define coexistence, compatibility and a nondestructive migration before changing it. Direct and group messages continue to have their existing distinct semantics. Participant labels remain unauthenticated and the default listener remains loopback.
 
-Deferral remains a product decision: remove it, or retain it with an observable signal to the requester and lower queue placement. Exact placement (including bottom), ordering across priorities, repeated deferral, whether the event is pushed or retrieved, and interaction with a pending answer remain open. Until a revised policy is agreed, the existing separate durable deferred queue and no-notification behavior remain current. Never imply that a deferred decision was answered.
+## Proposed queue ordering, deferral and asynchronous update direction (2026-11-10; review required)
+
+The proposed queue keeps pending decisions ordered first by effective importance and then FIFO age within each importance. An agent may deliberately swap two positions at the same importance; this manual ordering is an override of the default age order and must not alter importance or the immutable submission payload. Define how swaps persist, how new arrivals fit around overrides, stale-swap rejection, and whether a deferral resets the item's age.
+
+Deferral remains available and does not answer or resolve a request. The proposed behavior keeps it pending, moves it to the bottom of its same-importance queue, and sends a durable notification to the requesting agent. The agent must be able to retrieve that event after disconnect/restart. Define repeated deferral, event identity and retention, notification delivery, answer races, and restoration. The current implementation still stores deferred requests in a separate durable queue and does not notify the requester; this proposal is not implemented.
+
+The operator requests asynchronous queue and inbox updates without periodic polling, including for agents observing queue changes. Candidate behavior is notification-driven while connected, with bounded background reads still allowed for payload retrieval, pagination and reconnect reconciliation. Notifications are hints; durable state remains authoritative and must recover missed changes. Evaluate the current ZeroMQ design and alternatives for subscriptions, bounded queues, coalescing, reconnect, event cursors, and missed-event reconciliation. Do not remove polling or claim transport suitability until an evaluation and verification plan are complete. This direction is proposed, not implemented.
 
 
 ## Reviewed P-04/P-05 interaction direction (2026-11-10)
@@ -319,3 +325,15 @@ When an instruction draft is suspended, an accepted or failed action's status
 remains visible alongside a short draft-held cue. Once a transient success
 expires, the longer resume cue returns. This prevents the draft indicator from
 masking an action outcome; the draft and identity remain unchanged.
+
+## Terminal interaction follow-up (2026-11-10)
+
+The operator requested Enter to send instructions and inline custom-answer entry. The terminal now uses Enter for both explicit actions, preserves the unchanged identity and content for a user-initiated retry, and retains the decision view while editing. Help scrolls instead of using pages; focused pane titles are bracketed, selected rows use the terminal accent with a non-color marker, and decision identifiers are omitted from the main list and detail title. Context and answer detail labels are separated by newlines. Older mockups and entries above describe prior designs. Mouse navigation, continuous history, and the new deferral and event-driven transport semantics remain open implementation work.
+
+## Rust ZeroMQ transport and retained SQLite (2026-11-10)
+
+The user selected zmq.rs and chose to retain SQLite after an isolated Turso 0.8.3 probe found that its dependency graph still builds C code. The service and clients use a local zeromq 0.7.0 source copy with receive limits, multipart draining and bounded per-peer send queues; see `vendor/zeromq/AVIARY-PATCHES.md`. The ROUTER/DEALER wire envelope and durable-acknowledgment boundary remain unchanged. A bounded reply enqueue can drop a response after commit; clients must treat it as unknown. The service now waits asynchronously for transport input and shutdown, while terminal refresh and CLI waiters still poll. SQLx continues to bundle SQLite; the native libzmq test dependency is retained for independent integration checks. A compiler-free build is therefore not claimed.
+
+## Continuous history and mouse (2026-11-10)
+
+History displays records together and scrolls by rendered lines; it loads the next or previous bounded response when scrolling beyond the current page. Pages are separate snapshots, can shift with concurrent changes, and the offset trail can grow; this is not a global chronological timeline or a total process-memory bound. The terminal supports mouse focus and row selection and clickable inbox and notice labels; clicks do not confirm actions. Drafts and overlays retain keyboard control.

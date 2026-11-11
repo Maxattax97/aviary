@@ -75,12 +75,12 @@ def main() -> None:
                 terminal.expect("No active requests")
                 terminal.send("m")
                 terminal.expect("Compose instruction")
-                terminal.send("Commit once\r")
+                terminal.send("Commit once")
                 terminal.expect("Destination: all")
-                terminal.send("\x13")
+                terminal.send("\r")
                 terminal.expect("Action in progress")
                 assert dropped.wait(5)
-                terminal.send("\x13")  # ignored while the first action is pending
+                terminal.send("\r")  # ignored while the first action is pending
                 terminal.expect("Unconfirmed:", timeout=16)
                 time.sleep(0.6)
                 assert len(calls) == 1
@@ -109,7 +109,7 @@ def main() -> None:
                 assert len(calls) == 1
                 inbox = service.call({"op": "inbox", "participant": "worker"})["messages"]
                 assert len(inbox) == 1 and inbox[0]["message"]["body"] == "Commit once"
-                terminal.send("\x13")
+                terminal.send("\r")
                 terminal.expect("Instruction sent")
                 deadline = time.monotonic() + 6
                 expired = False

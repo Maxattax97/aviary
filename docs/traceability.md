@@ -63,6 +63,9 @@
 | SYS-042 | US-037; stakeholder clarification | V1 | T-042 (test) | SL-01, V1-15 | Partial / full acceptance not run |
 | SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
+| SYS-069 | US-003, US-072, US-073 | V1 proposed | T-069 (test) | P-01 | Proposed / not implemented |
+| SYS-070 | US-030, US-080, US-081 | V1 proposed | T-070 (test) | P-06 | Proposed / not implemented |
+| SYS-071 | US-053, US-080, US-081 | V1 proposed | T-071 (test) | P-06 | Proposed / not implemented |
 
 ## Stories to requirements and disposition
 
@@ -76,6 +79,11 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 | US-004 | V1 | As a human operator, I want to see a concise explanation of each request | SYS-003 |
 | US-005 | V1 | As a human operator, I want to inspect supporting context on demand | SYS-004 |
 | US-006 | V1 | As a human operator, I want to defer a request without losing it | SYS-005 |
+| US-072 | V1 proposed | Agent lists pending decisions in bounded pages | SYS-058 |
+| US-073 | V1 proposed | FIFO order within importance with same-importance manual swaps | SYS-059, SYS-060, SYS-069 |
+| US-074 | V1 proposed | Requester is notified when decision is deferred | SYS-005, SYS-068 |
+| US-080 | V1 proposed | Operator clients receive asynchronous queue and inbox updates without polling | SYS-070, SYS-071 |
+| US-081 | V1 proposed | Agents receive asynchronous changes and recover missed events durably | SYS-068, SYS-070, SYS-071 |
 | US-062 | V1 | Concise overview of decisions, messages and completions | SYS-050 |
 | US-063 | V1 | Find communications by text, agent or work context | SYS-051 |
 | US-070 | V2 | Distinguish new or changed items from previously seen items | L-17; no V1 requirement |
@@ -143,16 +151,18 @@ V1 entries map to proposed requirements. Later stories remain visible without a 
 
 ## Proposed workflow amendment traceability (review required)
 
-These mappings are candidate scope, not implemented or approved acceptance. Existing SYS-005 and SYS-045 may need revision after the deferred-work and shared-queue choices are settled; their existing evidence still describes the current implementation.
+These mappings are candidate scope, not implemented or approved acceptance. SYS-005 and SYS-045 need revision if the proposed deferral and shared-queue semantics are approved; existing evidence still describes current behavior.
 
 | Story | Candidate requirement / existing requirement | Planned verification | Proposed ticket |
 |---|---|---|---|
 | US-072 | SYS-058 | T-058 | P-01 |
 | US-073 | SYS-059–060 | T-059–060 | P-01 |
-| US-006, US-074 | SYS-005; candidate SYS-068 if retained | T-005, T-068 | P-02 |
+| US-006, US-074 | Revised SYS-005; SYS-068 | T-005, T-068 | P-02 |
 | US-056, US-075 | SYS-061; revision of SYS-045 | T-061, revised T-045 | P-03 |
 | US-076 | SYS-062–063 | T-062–063 | P-03 |
 | US-077 | SYS-064; SYS-048–049, SYS-052–053 | T-064; T-048–049, T-052–053 | P-04 |
 | US-078 | SYS-065; SYS-055–056 | T-065; T-055–056 | P-04 |
 | US-079 | SYS-066; SYS-054 | T-066, T-054 | P-05 |
 | US-056, US-069 | SYS-067; SYS-057 | T-067, T-057 | P-05 |
+| US-073 | Revised SYS-059; SYS-060; SYS-069 | T-059, T-060, T-069 | P-01 |
+| US-080, US-081 | SYS-070–071 | T-070–071 | P-06 |

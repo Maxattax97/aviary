@@ -23,7 +23,7 @@ pub enum AppError {
     #[error("{0}")]
     Task(String),
     #[error("{0}")]
-    Zmq(#[from] zmq::Error),
+    Zmq(#[from] zeromq::ZmqError),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]

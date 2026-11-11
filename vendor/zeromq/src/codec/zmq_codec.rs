@@ -1,0 +1,303 @@
+use super::command::ZmqCommand;
+use super::error::CodecError;
+use super::greeting::ZmqGreeting;
+use super::Message;
+use crate::{SocketOptions, ZmqMessage};
+
+use asynchronous_codec::{Decoder, Encoder};
+use bytes::{Buf, Bytes, BytesMut};
+
+use std::convert::TryFrom;
+
+#[derive(Debug, Clone, Copy)]
+struct Frame {
+    command: bool,
+    long: bool,
+    more: bool,
+}
+
+#[derive(Debug)]
+enum DecoderState {
+    Greeting,
+    FrameHeader,
+    FrameLen(Frame),
+    Frame(Frame),
+}
+
+#[derive(Debug)]
+pub struct ZmqCodec {
+    state: DecoderState,
+    waiting_for: usize, // Number of bytes needed to decode frame
+    // Needed to store incoming multipart message
+    // This allows to encapsulate its processing inside codec and not expose
+    // internal details to higher levels
+    buffered_message: Option<ZmqMessage>,
+    max_read_chunk_size: usize,
+    buffered_bytes: usize,
+    discarding: bool,
+    max_frame_size: usize,
+    max_message_size: usize,
+    max_frames: usize,
+}
+
+impl ZmqCodec {
+    pub fn new() -> Self {
+        Self::with_options(&SocketOptions::default())
+    }
+
+    pub(crate) fn with_options(options: &SocketOptions) -> Self {
+        Self {
+            state: DecoderState::Greeting,
+            waiting_for: 64, // len of the greeting frame
+            buffered_message: None,
+            max_read_chunk_size: options.read_buffer_max_size,
+            buffered_bytes: 0,
+            discarding: false,
+            max_frame_size: options.max_frame_size,
+            max_message_size: options.max_message_size,
+            max_frames: options.max_frames,
+        }
+    }
+
+    /// Returns the minimum additional bytes needed before decode can progress.
+    pub(crate) fn bytes_needed(&self, buffered_len: usize) -> usize {
+        self.waiting_for.saturating_sub(buffered_len)
+    }
+}
+
+impl Default for ZmqCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Decoder for ZmqCodec {
+    type Error = CodecError;
+    type Item = Message;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        // A single read can contain thousands of frames; keep stack use independent of that count.
+        loop {
+            if src.len() < self.waiting_for {
+                // The final read may coalesce bytes from the following frame. Reserve
+                // its headroom now rather than grow shared storage again at the frame tail.
+                // Qualifying retained frames must leave a full chunk for the next read.
+                // For frames near one chunk, spare shared storage makes the next
+                // almost-complete frame copy its body when reserve detaches it from
+                // a retained predecessor. Limit headroom to frames spanning more
+                // than two chunks, where it adds less than half the body size.
+                let reserve_to = if self.waiting_for > 2 * self.max_read_chunk_size {
+                    // Frame lengths are validated with this headroom before entering Frame.
+                    self.waiting_for + self.max_read_chunk_size
+                } else {
+                    self.waiting_for
+                };
+                src.reserve(reserve_to - src.len());
+                return Ok(None);
+            }
+            match self.state {
+                DecoderState::Greeting => {
+                    if src[0] != 0xff {
+                        return Err(CodecError::Decode("Bad first byte of greeting"));
+                    }
+                    self.state = DecoderState::FrameHeader;
+                    self.waiting_for = 1;
+                    return Ok(Some(Message::Greeting(ZmqGreeting::try_from(
+                        src.split_to(64).freeze(),
+                    )?)));
+                }
+                DecoderState::FrameHeader => {
+                    let flags = src.get_u8();
+
+                    let frame = Frame {
+                        command: (flags & 0b0000_0100) != 0,
+                        long: (flags & 0b0000_0010) != 0,
+                        more: (flags & 0b0000_0001) != 0,
+                    };
+                    self.state = DecoderState::FrameLen(frame);
+                    self.waiting_for = if frame.long { 8 } else { 1 };
+                }
+                DecoderState::FrameLen(frame) => {
+                    let frame_len = if frame.long {
+                        let len = usize::try_from(src.get_u64()).map_err(|_error| {
+                            CodecError::Decode("Frame length exceeds read buffer capacity")
+                        })?;
+                        // The reader may prepare a full read chunk at the frame tail.
+                        // Reject unrepresentable lengths here, before reserve or resize.
+                        len.checked_add(self.max_read_chunk_size)
+                            .filter(|&capacity| isize::try_from(capacity).is_ok())
+                            .ok_or(CodecError::Decode(
+                                "Frame length exceeds read buffer capacity",
+                            ))?;
+                        len
+                    } else {
+                        usize::from(src.get_u8())
+                    };
+                    // Aviary's response ceiling plus multipart envelope overhead.
+                    if frame_len > self.max_frame_size {
+                        return Err(CodecError::Decode("Frame exceeds limit"));
+                    }
+                    if !frame.command && !self.discarding && (self.buffered_bytes.saturating_add(frame_len) > self.max_message_size || self.buffered_message.as_ref().is_some_and(|message| message.len() >= self.max_frames)) {
+                        self.buffered_message = None;
+                        self.buffered_bytes = 0;
+                        self.discarding = true;
+                    }
+                    self.state = DecoderState::Frame(frame);
+                    self.waiting_for = frame_len;
+                }
+                DecoderState::Frame(frame) => {
+                    let data = src.split_to(self.waiting_for);
+                    self.state = DecoderState::FrameHeader;
+                    self.waiting_for = 1;
+                    if frame.command {
+                        return Ok(Some(Message::Command(ZmqCommand::try_from(data.freeze())?)));
+                    }
+
+                    if self.discarding {
+                        if !frame.more { self.discarding = false; }
+                        continue;
+                    }
+                    self.buffered_bytes += data.len();
+                    // process incoming message frame
+                    match &mut self.buffered_message {
+                        Some(v) => v.push_back(data.freeze()),
+                        None => self.buffered_message = Some(ZmqMessage::from(data.freeze())),
+                    }
+
+                    if !frame.more {
+                        self.buffered_bytes = 0;
+                        // Quoth the Raven “Nevermore.”
+                        return Ok(Some(Message::Message(
+                            self.buffered_message
+                                .take()
+                                .expect("Corrupted decoder state"),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn encode_frame(frame: &Bytes, dst: &mut BytesMut, more: bool) {
+    let mut flags: u8 = 0;
+    if more {
+        flags |= 0b0000_0001;
+    }
+    let len = frame.len();
+    if len > 255 {
+        flags |= 0b0000_0010;
+        dst.reserve(len + 9);
+        let mut header = [0u8; 9];
+        header[0] = flags;
+        header[1..].copy_from_slice(&(len as u64).to_be_bytes());
+        dst.extend_from_slice(&header);
+    } else {
+        dst.reserve(len + 2);
+        dst.extend_from_slice(&[flags, len as u8]);
+    }
+    dst.extend_from_slice(frame.as_ref());
+}
+
+impl Encoder for ZmqCodec {
+    type Error = CodecError;
+    type Item<'a> = Message;
+
+    fn encode(&mut self, message: Self::Item<'_>, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        match message {
+            Message::Greeting(payload) => dst.unsplit(payload.into()),
+            Message::Command(command) => dst.unsplit(command.into()),
+            Message::Message(message) => {
+                let last_element = message.len() - 1;
+                for (idx, part) in message.iter().enumerate() {
+                    encode_frame(part, dst, idx != last_element);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    mod multipart;
+    mod read_buffer;
+
+    use super::*;
+
+    #[test]
+    fn configured_limits_reject_oversized_frame_before_reserve() {
+        let mut options = SocketOptions::default();
+        options.message_limits(1024, 2048, 2);
+        let mut codec = ZmqCodec::with_options(&options);
+        codec.state = DecoderState::FrameHeader;
+        codec.waiting_for = 1;
+        let mut header = BytesMut::from(&[2, 0, 0, 0, 0, 0, 0, 8, 0][..]);
+        assert!(codec.decode(&mut header).is_err());
+        assert!(header.capacity() < 4096);
+    }
+
+    #[test]
+    fn excessive_multipart_is_drained_before_next_message() {
+        let mut options = SocketOptions::default();
+        options.message_limits(1024, 2048, 2);
+        let mut codec = ZmqCodec::with_options(&options);
+        codec.state = DecoderState::FrameHeader;
+        codec.waiting_for = 1;
+        let mut bytes = BytesMut::new();
+        for _ in 0..99 { bytes.extend_from_slice(&[1, 1, b'x']); }
+        bytes.extend_from_slice(&[0, 1, b'x', 0, 2, b'o', b'k']);
+        match codec.decode(&mut bytes).expect("decode") {
+            Some(Message::Message(message)) => assert_eq!(message.get(0).map(|part| part.as_ref()), Some(&b"ok"[..])),
+            other => panic!("unexpected result: {other:?}"),
+        }
+        assert!(bytes.is_empty());
+    }
+
+    #[test]
+    pub fn test_message_decode_1() {
+        let data = "01093c4944537c4d53473e01403239386166316563653932306635373637656132393438376261363164643436613534636334313262653032303339316139653831636535633234383039653001cb7b226d73675f6964223a2236356336396230312d636634622d343563322d616165612d323263306365326531316533222c2273657373696f6e223a2230326462356631642d386535632d346464612d383064342d303337363835343465616138222c22757365726e616d65223a223c544f444f3e222c2264617465223a22323032312d31322d32395430343a35393a33392e3539333533372b30303a3030222c226d73675f74797065223a22657865637574655f7265706c79222c2276657273696f6e223a22352e33227d01c07b226d73675f6964223a223965303336313036373262393433393961343432316539373330333330326162222c2273657373696f6e223a226231323139393364663235613432643839376135653163383362306337616665222c22757365726e616d65223a22757365726e616d65222c2264617465223a22313937302d30312d30315430303a30303a30302b30303a3030222c226d73675f74797065223a22657865637574655f72657175657374222c2276657273696f6e223a22352e32227d01027b7d00467b22737461747573223a226f6b222c22657865637574696f6e5f636f756e74223a312c227061796c6f6164223a5b5d2c22757365725f65787072657373696f6e73223a7b7d7d";
+        let hex_data = hex::decode(data).unwrap();
+        let mut bytes = BytesMut::from(hex_data.as_slice());
+        let mut codec = ZmqCodec::new();
+        codec.waiting_for = 1;
+        codec.state = DecoderState::FrameHeader;
+
+        let message = codec
+            .decode(&mut bytes)
+            .expect("decode success")
+            .expect("single message");
+
+        eprintln!("{:?}", message);
+        match message {
+            Message::Message(m) => {
+                assert_eq!(6, m.into_vecdeque().len());
+            }
+            _ => panic!("wrong message type"),
+        }
+        assert_eq!(bytes.len(), 0);
+    }
+
+    #[test]
+    pub fn test_message_decode_2() {
+        let data = "01093c4944537c4d53473e01406139346435366530343438353335303831316561623063663730623464356366373933653431653838616330666339646263346562326238616136643635306601cb7b226d73675f6964223a2263383466623933372d333162662d346335622d386430392d386535633230633434333636222c2273657373696f6e223a2230326462356631642d386535632d346464612d383064342d303337363835343465616138222c22757365726e616d65223a223c544f444f3e222c2264617465223a22323032312d31322d32395430343a35393a34332e3037343831332b30303a3030222c226d73675f74797065223a22657865637574655f7265706c79222c2276657273696f6e223a22352e33227d01c07b226d73675f6964223a223238646635316334303933313433643339393131346664333439643530396634222c2273657373696f6e223a226231323139393364663235613432643839376135653163383362306337616665222c22757365726e616d65223a22757365726e616d65222c2264617465223a22313937302d30312d30315430303a30303a30302b30303a3030222c226d73675f74797065223a22657865637574655f72657175657374222c2276657273696f6e223a22352e32227d01027b7d00467b22737461747573223a226f6b222c22657865637574696f6e5f636f756e74223a322c227061796c6f6164223a5b5d2c22757365725f65787072657373696f6e73223a7b7d7d";
+        let hex_data = hex::decode(data).unwrap();
+        let mut bytes = BytesMut::from(hex_data.as_slice());
+        let mut codec = ZmqCodec::new();
+        codec.waiting_for = 1;
+        codec.state = DecoderState::FrameHeader;
+
+        let message = codec
+            .decode(&mut bytes)
+            .expect("decode success")
+            .expect("single message");
+        eprintln!("{:?}", message);
+        assert_eq!(bytes.len(), 0);
+        match message {
+            Message::Message(m) => {
+                assert_eq!(6, m.into_vecdeque().len());
+            }
+            _ => panic!("wrong message type"),
+        }
+    }
+}

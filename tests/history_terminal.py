@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise paged request history in the real terminal interface."""
+"""Exercise continuously navigable request history in the terminal."""
 
 from support import Service, Terminal
 
@@ -37,6 +37,11 @@ def main() -> None:
                 },
             }
         )["id"]
+        service.call({"op": "send_message", "message": {
+            "identity": "history-ui-small", "channel": "history-team", "sender": "agent",
+            "target": {"kind": "participant", "name": "operator"},
+            "body": "Second linked message", "activity": "history-ui",
+        }})
         for number in range(10):
             service.call(
                 {
@@ -89,11 +94,14 @@ def main() -> None:
             terminal.send("H")
             terminal.expect("history-ui-decision")
             terminal.send("2")
-            terminal.expect("Linked message")
+            screen = terminal.expect("Second linked message")
+            assert b"Linked message" in screen and b"Second linked message" in screen
             terminal.send("]")
             terminal.expect(next_marker)
             terminal.send("[")
-            terminal.expect("Linked message")
+            terminal.expect("History | messages")
+            terminal.send("\x1b[H")
+            terminal.expect("Second linked message")
             terminal.send("3")
             terminal.expect("History result")
             terminal.send("q")
@@ -130,9 +138,7 @@ def main() -> None:
             }
         )
         assert page["messages"][0]["id"] == message_id
-    print(
-        "Terminal history: decision and message roots, sections and wire pages passed"
-    )
+    print("Terminal history: continuous records, long bodies, sections and roots passed")
 
 
 if __name__ == "__main__":
