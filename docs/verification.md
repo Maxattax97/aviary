@@ -527,3 +527,7 @@ These checks do not establish a latency guarantee, detection time for silent net
 ## Terminal message search (2026-11-11)
 
 `python3 tests/search_terminal.py` passed in a local pseudo-terminal: it searched by body, sender and context, crossed the 25-result page boundary in both directions, selected and opened a message within a shared activity, returned to the same selection, displayed an empty result, and explicitly retried a failed search after service restart. `python3 tests/search_messages.py` checked literal matching, activity, bounded previews and root-first history; `python3 tests/history_terminal.py` checked existing history behavior. `cargo test --locked` passed 18 unit and 23 integration tests. Local tests do not establish performance with large retained stores, behavior on all terminals, remote operation or representative operator acceptance.
+
+## Operator overview (2026-11-11)
+
+`python3 tests/overview_terminal.py` passed locally: it checked empty and populated categories, 27 retained operator messages with a multi-page inbox, decision answer and notice dismissal, event-driven count updates, service disconnection and recovery, and a forced missing-table failure showing unavailable instead of counts. `cargo test --locked` passed 18 unit and 23 integration tests; event, partial-refresh, search and terminal PTY regressions also passed. Tests use a disposable SQLite database and local pseudo-terminal. They do not establish large-database latency, remote behavior, silent-partition detection bounds or representative operator acceptance.

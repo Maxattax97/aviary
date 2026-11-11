@@ -30,6 +30,7 @@ The table lists the JSON object supplied to `call` and the success result. Strin
 
 | Operation | Input object | Success result and notes |
 | --- | --- | --- |
+| Overview | `{"op":"overview"}` | Returns `{"decisions":N,"messages":N,"notices":N}` from one database snapshot: unanswered decisions, retained messages addressed to `operator`, and undismissed completion notices. Messages are not an unread count. |
 | Submit decision | `{"op":"submit","request":REQUEST}` | `{"id":ID}`; see decision fields below. |
 | Get decision | `{"op":"get","id":ID}` | `{"id":ID,"answer":null}` while pending, or an answer object below. |
 | List decision queue | `{"op":"decision_queue","offset":0}` | Returns pending requests in descending importance and position order, each with `id`, `request`, `importance`, opaque `position`, and `version`; `next_offset` traverses bounded pages. `newest_id` is the highest submitted decision ID or null. Pages are not one snapshot. |

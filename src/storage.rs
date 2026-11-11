@@ -92,6 +92,7 @@ impl Storage {
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
         match operation {
             Operation::SubscribeChanges => Err(AppError::InvalidRequest),
+            Operation::Overview => self.overview().await,
             Operation::Submit { request } => self.submit(request).await,
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,
@@ -152,6 +153,18 @@ impl Storage {
                     .await
             }
         }
+    }
+
+    async fn overview(&self) -> Result<Value> {
+        // One statement makes all three counts part of the same SQLite snapshot.
+        let (decisions, messages, notices): (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT COUNT(*) FROM requests WHERE answer IS NULL), \
+             (SELECT COUNT(*) FROM message_recipients WHERE participant = 'operator'), \
+             (SELECT COUNT(*) FROM completion_notices WHERE dismissed = 0)",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(json!({"decisions": decisions, "messages": messages, "notices": notices}))
     }
 
     async fn submit(&self, request: DecisionRequest) -> Result<Value> {

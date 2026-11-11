@@ -305,6 +305,26 @@ struct SearchPage {
     next_after: Option<i64>,
 }
 
+#[derive(serde::Deserialize)]
+struct OverviewCounts {
+    decisions: u64,
+    messages: u64,
+    notices: u64,
+}
+
+#[derive(Default)]
+struct OverviewView {
+    counts: Option<OverviewCounts>,
+    error: Option<String>,
+    dirty: bool,
+    loading: bool,
+}
+
+async fn fetch_overview(address: &str) -> Result<OverviewCounts> {
+    let value = network::call_with_timeout(address, &Operation::Overview, READ_TIMEOUT_MS).await?;
+    Ok(serde_json::from_value(value)?)
+}
+
 #[derive(Default)]
 struct SearchView {
     query: String,
@@ -578,6 +598,7 @@ struct View {
     history: Option<HistoryView>,
     history_lookup: Option<HistoryLookup>,
     search: Option<SearchView>,
+    overview: Option<OverviewView>,
     notices: Vec<NoticeItem>,
     notice_view: bool,
     notice_loaded: bool,
@@ -617,6 +638,7 @@ impl View {
             || self.history.is_some()
             || self.history_lookup.is_some()
             || self.search.is_some()
+            || self.overview.is_some()
             || self.help
             || self.detail_page.is_some()
             || width < 40
@@ -759,6 +781,7 @@ impl View {
             history: None,
             history_lookup: None,
             search: None,
+            overview: None,
             notices: Vec::new(),
             notice_view: false,
             notice_loaded: false,
@@ -1230,6 +1253,19 @@ impl View {
             }
             return Action::Redraw;
         }
+        if let Some(overview) = &mut self.overview {
+            return match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
+                    self.overview = None;
+                    Action::CloseOverview
+                }
+                KeyCode::Char('R') if !overview.loading => {
+                    overview.dirty = true;
+                    Action::LoadOverview
+                }
+                _ => Action::None,
+            };
+        }
         if let Some(search) = &mut self.search {
             if key.code == KeyCode::Esc {
                 self.search = None;
@@ -1309,6 +1345,17 @@ impl View {
                 }
             }
             return Action::Redraw;
+        }
+        if key.code == KeyCode::Char('v')
+            && !self.editing
+            && !self.priority_edit
+            && self.detail_page.is_none()
+        {
+            self.overview = Some(OverviewView {
+                dirty: true,
+                ..OverviewView::default()
+            });
+            return Action::LoadOverview;
         }
         if key.code == KeyCode::Char('/')
             && !self.editing
@@ -1790,6 +1837,8 @@ enum Action {
     LoadHistory,
     LoadSearch(String, i64),
     CloseSearch,
+    LoadOverview,
+    CloseOverview,
     SendInstruction(Message),
     SendReply(MessageReply),
     Submit(Operation),
@@ -1813,6 +1862,7 @@ pub async fn terminal(address: &str) -> Result<()> {
     let _guard = TerminalGuard { input };
     let (_watch, mut changes) = network::watch_changes(address);
     let refresh_trigger = Notify::new();
+    let overview_trigger = Notify::new();
     refresh_trigger.notify_one();
     execute!(
         io::stdout(),
@@ -1832,6 +1882,7 @@ pub async fn terminal(address: &str) -> Result<()> {
     > = None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     let mut search_task: Option<tokio::task::JoinHandle<Result<SearchPage>>> = None;
+    let mut overview_task: Option<tokio::task::JoinHandle<Result<OverviewCounts>>> = None;
     display(&mut screen, &view)?;
     loop {
         let status_deadline = view.status_expires;
@@ -1850,8 +1901,22 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let state = *changes.borrow_and_update();
                 let was_unavailable = view.connection_unavailable;
                 view.connection_unavailable = !state.connected;
+                if let Some(overview) = &mut view.overview {
+                    overview.dirty = true;
+                    if state.connected { overview_trigger.notify_one(); }
+                }
                 if state.connected { refresh_trigger.notify_one(); }
                 if was_unavailable != view.connection_unavailable { display(&mut screen, &view)?; }
+            }
+            _ = overview_trigger.notified(), if view.overview.as_ref().is_some_and(|overview| overview.dirty) && overview_task.is_none() => {
+                if let Some(overview) = &mut view.overview {
+                    overview.dirty = false;
+                    overview.loading = true;
+                    overview.error = None;
+                    let address = address.to_owned();
+                    overview_task = Some(tokio::spawn(async move { fetch_overview(&address).await }));
+                    display(&mut screen, &view)?;
+                }
             }
             _ = refresh_trigger.notified(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
                 if let Some(history) = &mut view.history {
@@ -1922,6 +1987,24 @@ pub async fn terminal(address: &str) -> Result<()> {
                     || (notices_ok && !view.notice_loaded)
                     || (messages_ok && !view.inbox_loaded) {
                     refresh_trigger.notify_one();
+                }
+            }
+            result = async {
+                match overview_task.as_mut() {
+                    Some(task) => task.await,
+                    None => std::future::pending().await,
+                }
+            }, if overview_task.is_some() => {
+                overview_task = None;
+                let result = result.map_err(|error| crate::error::AppError::Task(error.to_string()))?;
+                if let Some(overview) = &mut view.overview {
+                    overview.loading = false;
+                    match result {
+                        Ok(counts) => { overview.counts = Some(counts); overview.error = None; }
+                        Err(error) => { overview.counts = None; overview.error = Some(error.to_string()); }
+                    }
+                    if overview.dirty && !view.connection_unavailable { overview_trigger.notify_one(); }
+                    display(&mut screen, &view)?;
                 }
             }
             result = async {
@@ -2056,6 +2139,15 @@ pub async fn terminal(address: &str) -> Result<()> {
                     },
                     Action::CloseSearch => {
                         if let Some(task) = search_task.take() { task.abort(); }
+                        display(&mut screen, &view)?;
+                        refresh_trigger.notify_one();
+                    },
+                    Action::LoadOverview => {
+                        overview_trigger.notify_one();
+                        display(&mut screen, &view)?;
+                    },
+                    Action::CloseOverview => {
+                        if let Some(task) = overview_task.take() { task.abort(); }
                         display(&mut screen, &view)?;
                         refresh_trigger.notify_one();
                     },
@@ -2292,6 +2384,7 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
 d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
+v overview
 / search retained messages
 Inbox: Tab focus; arrows move; r reply; H history
 Notices: Tab focus; arrows move; d dismiss
@@ -2479,6 +2572,25 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             );
         })?;
         return Ok(());
+    }
+    if let Some(overview) = &view.overview {
+        println!("Overview\r\n");
+        if view.connection_unavailable {
+            println!("Unavailable: live connection disconnected.");
+        } else if overview.loading || overview.dirty {
+            println!("Loading current counts...");
+        } else if let Some(error) = &overview.error {
+            println!("Unavailable: {}\r\nR retries.", safe(error));
+        } else if let Some(counts) = &overview.counts {
+            println!("Pending decisions: {}", counts.decisions);
+            println!("Retained operator messages: {}", counts.messages);
+            println!("Open completion notices: {}", counts.notices);
+            println!("\r\nMessages include previously read items.");
+        } else {
+            println!("Loading current counts...");
+        }
+        println!("\r\nR refreshes; q or Esc returns.");
+        return render(screen, &output);
     }
     if let Some(search) = &view.search {
         screen.draw(|frame| {
