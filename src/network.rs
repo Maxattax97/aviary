@@ -6,7 +6,12 @@ use crate::{
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashSet, time::Duration};
+use std::{
+    collections::HashSet,
+    fs::{File, OpenOptions},
+    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    time::Duration,
+};
 use tokio::sync::watch;
 use zeromq::{
     DealerSocket, RouterSocket, Socket, SocketEvent, SocketOptions, SocketRecv, SocketSend,
@@ -16,6 +21,31 @@ use zeromq::{
 const VERSION: u32 = 2;
 const TIMEOUT_MS: i32 = 10_000;
 const MAX_SUBSCRIBERS: usize = 256;
+
+fn lock_database(path: &str) -> Result<File> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(path)?;
+    // SAFETY: flock operates on this live file descriptor and does not retain
+    // the pointer or access Rust memory. Keep the file open for service life.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        let error = std::io::Error::last_os_error();
+        return if error.kind() == std::io::ErrorKind::WouldBlock {
+            Err(AppError::Task(format!(
+                "database is already in use by another service: {path}"
+            )))
+        } else {
+            Err(AppError::Task(format!(
+                "cannot lock database {path}: {error}"
+            )))
+        };
+    }
+    Ok(file)
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RequestEnvelope {
@@ -187,6 +217,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
     socket.bind(&format!("tcp://{address}")).await?;
     // Acquire the listener before opening the database: a competing service
     // must not initialize a different database after losing the bind race.
+    let _database_lock = lock_database(database_path)?;
     let storage = Storage::open(database_path).await?;
     let database = std::fs::canonicalize(database_path)?
         .to_string_lossy()
