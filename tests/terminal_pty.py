@@ -330,17 +330,20 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
     large = "x" * 120_000
     notice_ids = []
     request_ids = []
+    inbox_ids = []
     for number in range(10):
-        request_ids.append(submit(
-            service,
-            {
-                "identity": f"large-request-{number}",
-                "agent": "agent",
-                "question": f"Queue item {number}",
-                "options": [],
-                "context": large,
-            },
-        ))
+        request_ids.append(
+            submit(
+                service,
+                {
+                    "identity": f"large-request-{number}",
+                    "agent": "agent",
+                    "question": f"Queue item {number}",
+                    "options": [],
+                    "context": large,
+                },
+            )
+        )
         notice_ids.append(
             service.call(
                 {
@@ -354,46 +357,48 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
                 }
             )["id"]
         )
-        service.call(
-            {
-                "op": "send_message",
-                "message": {
-                    "identity": f"large-inbox-{number}",
-                    "channel": "inbox-ops",
-                    "sender": "worker",
-                    "target": {"kind": "participant", "name": "operator"},
-                    "body": f"Big inbox {number} " + large,
-                },
-            }
+        inbox_ids.append(
+            service.call(
+                {
+                    "op": "send_message",
+                    "message": {
+                        "identity": f"large-inbox-{number}",
+                        "channel": "inbox-ops",
+                        "sender": "worker",
+                        "target": {"kind": "participant", "name": "operator"},
+                        "body": f"Big inbox {number} " + large,
+                    },
+                }
+            )["id"]
         )
     with Terminal(service) as terminal:
         terminal.expect("Queue item 0")
-        terminal.send("l" * 6)
-        terminal.expect("Queue item 6")
-        terminal.send("l")
-        terminal.expect("Queue item 7")
+        terminal.send("\t")
+        terminal.expect("Decisions [FOCUS]")
+        for index in range(1, 8):
+            terminal.send("j")
+            terminal.expect(f"Decision #{request_ids[index]}")
         terminal.send("l" * 2)
         terminal.expect("Queue item 9")
         terminal.send("h" * 2)
         terminal.expect("Queue item 7")
-        terminal.send("h")
-        terminal.expect("Queue item 6")
+        terminal.send("k")
+        terminal.expect(f"Decision #{request_ids[6]}")
         terminal.send("l")
         terminal.expect("Queue item 7")
         terminal.send("l" * 2)
         terminal.expect("Queue item 9")
         terminal.send("n")
         terminal.expect("Notice 0")
-        terminal.send("l" * 6)
-        terminal.expect("Notice 6")
-        terminal.send("l")
-        terminal.expect("Notice 7")
+        for index in range(1, 8):
+            terminal.send("j")
+            terminal.expect(f"Notice #{notice_ids[index]}")
         terminal.send("l" * 2)
         terminal.expect("Notice 9")
         terminal.send("h" * 2)
         terminal.expect("Notice 7")
-        terminal.send("h")
-        terminal.expect("Notice 6")
+        terminal.send("k")
+        terminal.expect(f"Notice #{notice_ids[6]}")
         terminal.send("l")
         terminal.expect("Notice 7")
         terminal.send("l" * 2)
@@ -419,14 +424,14 @@ def exercise_large_queues(service: Service, request_id: int) -> None:
         terminal.expect("Ready for review")
         terminal.send("l" * 9)
         terminal.expect("Big inbox 6")
-        terminal.send("l")
-        terminal.expect("Big inbox 7")
+        terminal.send("j")
+        terminal.expect(f"Message #{inbox_ids[7]}")
         terminal.send("l" * 2)
         terminal.expect("Big inbox 9")
         terminal.send("h" * 2)
         terminal.expect("Big inbox 7")
-        terminal.send("h")
-        terminal.expect("Big inbox 6")
+        terminal.send("k")
+        terminal.expect(f"Message #{inbox_ids[6]}")
         terminal.send("q")
         terminal.quit()
     print("Terminal navigated decision, notice, and inbox data above frame limit")

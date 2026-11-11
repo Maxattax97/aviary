@@ -459,3 +459,12 @@ retained one message. A separate monochrome PTY check selected a decision,
 dismissed a notice, returned and verified the same decision and list focus
 before explicitly answering it. Both local checks passed. This is not evidence
 for every possible concurrent queue mutation or terminal.
+
+## Large queue navigation regression (2026-11-10)
+
+`python3 tests/terminal_pty.py` passed locally with loopback access. Its large
+queue case navigated decisions, notices and inbox messages containing 120,000
+characters each, including vertical selection across fetch boundaries in both
+directions. It also checked notice selection after earlier items were dismissed.
+This is a local PTY regression, not evidence of remote behavior, consistent
+pagination under arbitrary concurrent changes, or representative operator use.
