@@ -583,3 +583,7 @@ A local disposable two-service experiment first showed that a subscriber attache
 ## Retained-record search (2026-11-12)
 
 `python3 tests/search_records.py` passed locally over loopback, exercising matching in decision, message and notice records, answered and dismissed records, literal matching, a cross-kind cursor boundary and root-first history. `python3 tests/search_terminal.py` exercised message paging, no-match and retry after restart, and opened decision and notice results with overlapping numeric IDs in a local pseudo-terminal. The existing `search_messages.py` and `history_terminal.py` regressions passed, as did `cargo test --locked` (18 unit and 24 integration tests). These checks do not establish concurrent search-page mutation behavior, large-store latency, remote operation or representative operator acceptance.
+
+## Decision queue page shift (2026-11-12)
+
+`python3 tests/reconcile_page_shift.py` used an isolated local service and subscribed before traversing a multi-page decision queue. Answering an item on the first page produced a change hint; continuing from the old offset skipped a still-pending item that shifted left. Restarting at offset zero after the hint returned the full stable remaining queue. `tests/reconcile_missed_events.py` and `tests/change_events.py` also passed. This demonstrates the offset limitation and one recovery after a completed mutation, not an atomic snapshot, bounded hint delivery, or correctness under continuous changes and silent partitions.
