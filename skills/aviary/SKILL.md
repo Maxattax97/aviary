@@ -27,11 +27,11 @@ id=$(printf '%s' "$accepted" | python3 -c 'import json,sys; print(json.load(sys.
 aviary call "$AVIARY_ADDR" "{\"op\":\"get\",\"id\":$id}"
 ```
 
-`get` returns `answer: null` while pending. Use `aviary wait ADDRESS ID` to wait for an answer or deferral; a deferral is not an answer. Do not answer on the operator's behalf unless explicitly authorized.
+`get` returns `answer: null` while pending. Use `aviary wait ADDRESS ID` to wait for an answer or deferral. A deferral is not an answer; retain its `deferred_event` ID and resume with `aviary wait ADDRESS ID --after-event EVENT_ID`. Do not answer on the operator's behalf unless explicitly authorized.
 
 ## Send and retrieve a message
 
-The channel must already include the sender and recipient. Set `AVIARY_CHANNEL` and `AVIARY_RECIPIENT` too. Inbox reads do not remove messages.
+The channel must already include the sender and recipient. Set `AVIARY_KEY` to a fresh identity for this message, and set `AVIARY_CHANNEL` and `AVIARY_RECIPIENT`. Inbox reads do not remove messages.
 
 ```sh
 message=$(python3 -c 'import json,os; print(json.dumps({"op":"send_message","message":{"identity":os.environ["AVIARY_KEY"],"channel":os.environ["AVIARY_CHANNEL"],"sender":os.environ["AVIARY_AGENT"],"target":{"kind":"participant","name":os.environ["AVIARY_RECIPIENT"]},"body":"Please review"}}))')
