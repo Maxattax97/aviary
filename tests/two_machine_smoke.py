@@ -8,11 +8,11 @@ import sys
 import uuid
 from pathlib import Path
 
-from support import BINARY, Service
+from support import BINARY, Service, Terminal
 from terminal_reconnect import restart, stop
 
 
-def run_exchange(service: Service, *, expect_restart: bool) -> None:
+def run_exchange(service: Service, *, expect_restart: bool, operator_answer: bool = False) -> None:
     script = Path(__file__).with_name("two_machine.py")
     token = uuid.uuid4().hex
     common = [service.address, token, "--binary", str(BINARY), "--timeout", "60"]
@@ -41,14 +41,36 @@ def run_exchange(service: Service, *, expect_restart: bool) -> None:
             recovered = stage("recovered")
             assert recovered["request_id"] == ready["request_id"]
             assert recovered["decision_id"] == ready["decision_id"]
-        peer = subprocess.run(
-            [sys.executable, str(script), "peer", *common],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=True,
-        )
-        peer_result = json.loads(peer.stdout)
+        if operator_answer:
+            peer = subprocess.Popen(
+                [sys.executable, str(script), "peer", *common, "--operator-answer"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            )
+            try:
+                assert peer.stdout is not None
+                assert select.select([peer.stdout], [], [], 20)[0]
+                waiting = json.loads(peer.stdout.readline())
+                assert waiting["stage"] == "awaiting_operator"
+                assert waiting["decision_id"] == ready["decision_id"]
+                assert service.call({"op": "get", "id": ready["decision_id"]})["answer"] is None
+                with Terminal(service) as terminal:
+                    terminal.expect(waiting["question"][:-1])
+                    terminal.send("\r")
+                    terminal.expect("No decisions")
+                    terminal.quit()
+                peer_output, peer_error = peer.communicate(timeout=20)
+                assert peer.returncode == 0, peer_error
+                peer_result = json.loads(peer_output)
+            finally:
+                if peer.poll() is None:
+                    peer.kill()
+                    peer.communicate()
+        else:
+            peer = subprocess.run(
+                [sys.executable, str(script), "peer", *common],
+                capture_output=True, text=True, timeout=20, check=True,
+            )
+            peer_result = json.loads(peer.stdout)
         remaining, errors = origin.communicate(timeout=20)
         assert origin.returncode == 0, errors
         result = json.loads(remaining)
@@ -69,7 +91,8 @@ def main() -> None:
     with Service() as service:
         run_exchange(service, expect_restart=False)
         run_exchange(service, expect_restart=True)
-    print("Two-machine exercise coordinated on loopback, including service restart")
+        run_exchange(service, expect_restart=False, operator_answer=True)
+    print("Two-machine exercise coordinated on loopback, including restart and terminal answer")
 
 
 if __name__ == "__main__":

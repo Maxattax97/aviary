@@ -38,11 +38,16 @@ def main() -> None:
         action="store_true",
         help="origin waits for a service outage and verifies retries after recovery",
     )
+    parser.add_argument(
+        "--operator-answer", action="store_true",
+        help="peer waits for an operator to answer using the terminal",
+    )
     args = parser.parse_args()
     if (
         not re.fullmatch(r"[0-9a-f]{32}", args.token)
         or args.timeout <= 0
         or (args.expect_restart and args.role != "origin")
+        or (args.operator_answer and args.role != "peer")
     ):
         parser.error(
             "token must be 32 lowercase hex characters and timeout must be positive"
@@ -223,7 +228,21 @@ def main() -> None:
         or decision["answer"] is not None
     ):
         raise RuntimeError("unexpected decision")
-    call(args.binary, args.address, {"op": "answer", "id": decision_id, "index": 1})
+    if args.operator_answer:
+        print(json.dumps({"stage": "awaiting_operator", "host": host,
+                          "decision_id": decision_id, "question": decision["request"]["question"]}), flush=True)
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            answer = call(args.binary, args.address, {"op": "get", "id": decision_id})["answer"]
+            if answer is not None:
+                if answer != {"type": "suggested", "index": 1, "value": "Yes"}:
+                    raise RuntimeError("operator supplied an unexpected decision answer")
+                break
+            time.sleep(0.5)
+        else:
+            raise TimeoutError("operator decision not observed")
+    else:
+        call(args.binary, args.address, {"op": "answer", "id": decision_id, "index": 1})
     operation = {
         "op": "reply_message",
         "reply": {
