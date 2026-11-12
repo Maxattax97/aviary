@@ -1,5 +1,9 @@
 # Open product and engineering decisions
 
+## CI scope (2026-11-12)
+
+Add GitHub Actions CI for pull requests and pushes to `main`, using Ubuntu, stable Rust, locked dependencies, and Python 3.12. Run `cargo test --locked`, build the binaries, then execute the documented terminal pseudo-terminal and portable-skill smoke checks. This is a Linux CI baseline, not a supported-platform claim. The repository has no approved deployment target or release process; this workflow does not publish artifacts or deploy Aviary. Revisit additional platform jobs and deployment only after those targets are decided.
+
 See [architecture](architecture.md) for the system context, flows and component responsibilities.
 
 **Status:** Initial requirements and architecture direction approved 2026-11-09. The remaining decisions below are open; the first-slice choices are recorded separately below.
