@@ -73,7 +73,7 @@ These are discovery or future implementation outlines, not V1 commitments. V2 an
 | L-10 | Explore participant/group capability discovery and richer structured autonomous coordination. | US-043, US-044; no SYS/T yet | Future; V1-07, V1-10 |
 | L-11 | Define and test broader delivery to temporarily unavailable recipients beyond V1 recovery of communications already accepted by the service. | US-047; no SYS/T yet | Future; V1-21 |
 | L-12 | Define client interfaces and compatibility for alternative web or graphical interfaces. | US-048; no SYS/T yet | Future; protocol contract |
-| L-13 | Threat-model and design participant authentication for network communication; test authorized and unauthorized access. | SYS-034 / T-034; US-054 | Future; separate security design |
+| L-13 | Threat-model and design participant authentication for network communication; test authorized and unauthorized access. | SYS-034 / T-034; US-054 | [Threat model and candidate boundary](network-auth-threat-model.md) prepared; future credential and transport design require review. |
 | L-14 | Design and test per-communication authorization and impersonation resistance for agents and groups. | SYS-035 / T-035; US-020, US-021, US-045, US-054 | Future; L-13; separate security design |
 | L-15 | Design and test multi-user isolation across listing, retrieval and modification, including direct identifiers. | SYS-037 / T-037; US-055 | Future; L-13, L-14; account and sharing design open |
 | L-16 | Design per-message overrides for the generated compose identity, channel and recipient, preserving safe retries and clear routing. | US-057; no V1 requirement | V2; V1-09 |
