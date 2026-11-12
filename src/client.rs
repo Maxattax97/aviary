@@ -33,7 +33,7 @@ use crate::{
     network,
     protocol::{
         HistoryKind, HistorySection, InboxItem, InboxPage, Message, MessageReply, NoticeItem,
-        NoticePage, Operation, PendingRequest, RequestPage, Target,
+        NoticePage, Operation, PendingRequest, RequestPage, SearchCursor, Target,
     },
 };
 
@@ -293,6 +293,7 @@ struct HistoryLookup {
 
 #[derive(serde::Deserialize)]
 struct SearchItem {
+    kind: HistoryKind,
     id: i64,
     sender: String,
     body: String,
@@ -301,8 +302,8 @@ struct SearchItem {
 
 #[derive(serde::Deserialize)]
 struct SearchPage {
-    messages: Vec<SearchItem>,
-    next_after: Option<i64>,
+    items: Vec<SearchItem>,
+    next_after: Option<SearchCursor>,
 }
 
 #[derive(serde::Deserialize)]
@@ -330,8 +331,8 @@ struct SearchView {
     query: String,
     editing: bool,
     loading: bool,
-    after: i64,
-    previous: Vec<i64>,
+    after: Option<SearchCursor>,
+    previous: Vec<Option<SearchCursor>>,
     page: Option<SearchPage>,
     selected: usize,
     error: Option<String>,
@@ -347,24 +348,33 @@ struct SuspendedAnswer {
     follow_answer: bool,
 }
 
-async fn fetch_search(address: &str, query: String, after: i64) -> Result<SearchPage> {
+async fn fetch_search(
+    address: &str,
+    query: String,
+    after: Option<SearchCursor>,
+) -> Result<SearchPage> {
     let value = network::call_with_timeout(
         address,
-        &Operation::SearchMessages { query, after },
+        &Operation::SearchRecords { query, after },
         READ_TIMEOUT_MS,
     )
     .await?;
     let page: SearchPage = serde_json::from_value(value)?;
-    if page.messages.len() > 25
-        || page.messages.iter().any(|item| item.id <= after)
-        || page.messages.windows(2).any(|pair| {
+    let key = |item: &SearchItem| (item.kind.rank(), item.id);
+    if page.items.len() > 25
+        || page.items.iter().any(|item| {
+            item.id <= 0 || after.is_some_and(|cursor| key(item) <= (cursor.kind.rank(), cursor.id))
+        })
+        || page.items.windows(2).any(|pair| {
             pair.first()
                 .zip(pair.last())
-                .is_some_and(|(a, b)| a.id >= b.id)
+                .is_some_and(|(a, b)| key(a) >= key(b))
         })
-        || page
-            .next_after
-            .is_some_and(|next| page.messages.last().is_none_or(|item| item.id != next))
+        || page.next_after.is_some_and(|next| {
+            page.items
+                .last()
+                .is_none_or(|item| item.id != next.id || item.kind != next.kind)
+        })
     {
         return Err(crate::error::AppError::InvalidFrame);
     }
@@ -392,8 +402,8 @@ impl HistoryView {
         Self {
             kind,
             id,
-            root_first: false,
-            section: 0,
+            root_first: kind == HistoryKind::Notice,
+            section: if kind == HistoryKind::Notice { 2 } else { 0 },
             offset: 0,
             previous: Vec::new(),
             items: Vec::new(),
@@ -1172,6 +1182,9 @@ impl View {
                 KeyCode::Char('m') if lookup.kind.is_none() => {
                     lookup.kind = Some(HistoryKind::Message)
                 }
+                KeyCode::Char('n') if lookup.kind.is_none() => {
+                    lookup.kind = Some(HistoryKind::Notice)
+                }
                 KeyCode::Char(c @ '0'..='9') if lookup.kind.is_some() => {
                     lookup.id.push(c);
                     lookup.invalid = false;
@@ -1298,12 +1311,12 @@ impl View {
             if search.editing {
                 match key.code {
                     KeyCode::Enter if !search.query.trim().is_empty() => {
-                        search.after = 0;
+                        search.after = None;
                         search.previous.clear();
                         search.editing = false;
                         search.loading = true;
                         search.error = None;
-                        return Action::LoadSearch(search.query.clone(), 0);
+                        return Action::LoadSearch(search.query.clone(), None);
                     }
                     KeyCode::Backspace => {
                         search.query.pop();
@@ -1329,7 +1342,7 @@ impl View {
                         return Action::LoadSearch(search.query.clone(), search.after);
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        let len = search.page.as_ref().map_or(0, |page| page.messages.len());
+                        let len = search.page.as_ref().map_or(0, |page| page.items.len());
                         search.selected =
                             search.selected.saturating_add(1).min(len.saturating_sub(1));
                     }
@@ -1339,10 +1352,10 @@ impl View {
                     KeyCode::Char('n') if search.error.is_none() => {
                         if let Some(next) = search.page.as_ref().and_then(|page| page.next_after) {
                             search.previous.push(search.after);
-                            search.after = next;
+                            search.after = Some(next);
                             search.selected = 0;
                             search.loading = true;
-                            return Action::LoadSearch(search.query.clone(), next);
+                            return Action::LoadSearch(search.query.clone(), Some(next));
                         }
                     }
                     KeyCode::Char('p') => {
@@ -1357,9 +1370,9 @@ impl View {
                         if let Some(item) = search
                             .page
                             .as_ref()
-                            .and_then(|page| page.messages.get(search.selected))
+                            .and_then(|page| page.items.get(search.selected))
                         {
-                            return Action::OpenHistory(HistoryKind::Message, item.id);
+                            return Action::OpenHistory(item.kind, item.id);
                         }
                     }
                     _ => return Action::None,
@@ -1909,7 +1922,7 @@ enum Action {
     OpenHistory(HistoryKind, i64),
     CloseHistory,
     LoadHistory,
-    LoadSearch(String, i64),
+    LoadSearch(String, Option<SearchCursor>),
     CloseSearch,
     LoadOverview,
     CloseOverview,
@@ -2193,7 +2206,10 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         view.history_lookup = None;
                         let mut history = HistoryView::new(kind, id);
-                        if view.search.is_some() { history.section = 1; history.root_first = true; }
+                        if view.search.is_some() {
+                            history.section = match kind { HistoryKind::Decision => 0, HistoryKind::Message => 1, HistoryKind::Notice => 2 };
+                            history.root_first = true;
+                        }
                         view.history = Some(history);
                         display(&mut screen, &view)?; refresh_trigger.notify_one();
                     },
@@ -2459,7 +2475,7 @@ d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
 v overview
-/ search retained messages
+/ search retained records
 Inbox: Tab focus; arrows move; r reply; H history
 Notices: Tab focus; arrows move; d dismiss
 History: H selected; g lookup; 1-3 section
@@ -2567,11 +2583,12 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
     }
     if let Some(lookup) = &view.history_lookup {
         match lookup.kind {
-            None => println!("History lookup: d decision or m message; Esc cancels."),
+            None => println!("History lookup: d decision, m message or n notice; Esc cancels."),
             Some(kind) => {
                 let label = match kind {
                     HistoryKind::Decision => "decision",
                     HistoryKind::Message => "message",
+                    HistoryKind::Notice => "notice",
                 };
                 println!(
                     "History lookup: {} ID: {}_\r\nEnter opens; Esc cancels.",
@@ -2695,14 +2712,14 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
                 ])
                 .split(area);
             let title = format!(
-                "Search messages: {}{}",
+                "Search records: {}{}",
                 safe(&search.query),
                 if search.editing { "_" } else { "" }
             );
             frame.render_widget(Paragraph::new(title).wrap(Wrap { trim: false }), regions[0]);
             if search.editing {
                 frame.render_widget(
-                    Paragraph::new("Enter searches text, sender, context or activity."),
+                    Paragraph::new("Enter searches decisions, messages and notices."),
                     regions[1],
                 );
             } else if search.loading {
@@ -2714,24 +2731,29 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
                     regions[1],
                 );
             } else if let Some(page) = &search.page {
-                if page.messages.is_empty() {
+                if page.items.is_empty() {
                     frame.render_widget(
-                        Paragraph::new("No matching messages on this page."),
+                        Paragraph::new("No matching records on this page."),
                         regions[1],
                     );
                 } else {
                     let height = usize::from(regions[1].height).max(1);
                     let start = search.selected.saturating_add(1).saturating_sub(height);
                     let rows = page
-                        .messages
+                        .items
                         .iter()
                         .enumerate()
                         .skip(start)
                         .take(height)
                         .map(|(index, item)| {
                             let selected = index == search.selected;
+                            let label = match item.kind {
+                                HistoryKind::Decision => "Decision",
+                                HistoryKind::Message => "Message",
+                                HistoryKind::Notice => "Notice",
+                            };
                             let line = format!(
-                                "{} {}: {} {}",
+                                "{} {label} {}: {} {}",
                                 if selected { ">" } else { " " },
                                 safe(&item.sender),
                                 safe(&item.body),

@@ -13,7 +13,8 @@ use crate::{
     error::{AppError, Result},
     protocol::{
         AnswerType, Channel, CompletionNotice, CustomAnswer, DecisionRequest, HistoryKind,
-        HistorySection, Message, MessageReply, Operation, PendingRequest, SuggestedAnswer, Target,
+        HistorySection, Message, MessageReply, Operation, PendingRequest, SearchCursor,
+        SuggestedAnswer, Target,
     },
 };
 
@@ -135,6 +136,7 @@ impl Storage {
                 offset,
             } => self.inbox_page(participant, offset).await,
             Operation::SearchMessages { query, after } => self.search_messages(query, after).await,
+            Operation::SearchRecords { query, after } => self.search_records(query, after).await,
             Operation::ReplyMessage { reply } => self.reply_message(reply).await,
             Operation::GetMessageResponse { id } => self.get_message_response(id).await,
             Operation::SubmitNotice { notice } => self.submit_notice(notice).await,
@@ -453,6 +455,7 @@ impl Storage {
         let (table, root_kind) = match kind {
             HistoryKind::Decision => ("requests", "decision"),
             HistoryKind::Message => ("messages", "message"),
+            HistoryKind::Notice => ("completion_notices", "notice"),
         };
         let root_payload: Option<String> =
             sqlx::query_scalar(&format!("SELECT payload FROM {table} WHERE id = ?"))
@@ -475,8 +478,8 @@ impl Storage {
         let messages = messages.into_iter().map(|(id, payload, reply_to)| -> Result<Value> {
             Ok(json!({"id":id, "message":serde_json::from_str::<Value>(&payload)?, "reply_to":reply_to}))
         }).collect::<Result<Vec<_>>>()?;
-        let notices: Vec<(i64, String, bool)> = sqlx::query_as("SELECT id, payload, dismissed FROM completion_notices WHERE ? IS NOT NULL AND json_extract(payload, '$.activity') = ? ORDER BY id")
-            .bind(activity).bind(activity).fetch_all(&mut *tx).await?;
+        let notices: Vec<(i64, String, bool)> = sqlx::query_as("SELECT id, payload, dismissed FROM completion_notices WHERE (id = ? AND ? = 'notice') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY id")
+            .bind(id).bind(root_kind).bind(activity).bind(activity).fetch_all(&mut *tx).await?;
         let outcomes = notices.into_iter().map(|(id, payload, dismissed)| -> Result<Value> {
             Ok(json!({"id":id, "notice":serde_json::from_str::<Value>(&payload)?, "dismissed":dismissed}))
         }).collect::<Result<Vec<_>>>()?;
@@ -499,6 +502,7 @@ impl Storage {
         let (table, root_kind) = match kind {
             HistoryKind::Decision => ("requests", "decision"),
             HistoryKind::Message => ("messages", "message"),
+            HistoryKind::Notice => ("completion_notices", "notice"),
         };
         let root_payload: Option<String> =
             sqlx::query_scalar(&format!("SELECT payload FROM {table} WHERE id = ?"))
@@ -519,8 +523,8 @@ impl Storage {
         let more = if let Ok(sql_offset) = i64::try_from(offset) {
             match section {
                 HistorySection::Decisions => {
-                    let mut rows = sqlx::query_as::<_, (i64, String, Option<String>)>("SELECT id, payload, answer FROM requests WHERE (id = ? AND ? = 'decision') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY id LIMIT -1 OFFSET ?")
-                        .bind(id).bind(root_kind).bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    let mut rows = sqlx::query_as::<_, (i64, String, Option<String>)>("SELECT id, payload, answer FROM requests WHERE (id = ? AND ? = 'decision') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY CASE WHEN ? AND ? = 'decision' AND id = ? THEN 0 ELSE 1 END, id LIMIT -1 OFFSET ?")
+                        .bind(id).bind(root_kind).bind(activity).bind(activity).bind(root_first).bind(root_kind).bind(id).bind(sql_offset).fetch(&mut *tx);
                     loop {
                         match rows.try_next().await? {
                             Some((id, payload, answer)) => {
@@ -552,8 +556,8 @@ impl Storage {
                     }
                 }
                 HistorySection::Outcomes => {
-                    let mut rows = sqlx::query_as::<_, (i64, String, bool)>("SELECT id, payload, dismissed FROM completion_notices WHERE ? IS NOT NULL AND json_extract(payload, '$.activity') = ? ORDER BY id LIMIT -1 OFFSET ?")
-                        .bind(activity).bind(activity).bind(sql_offset).fetch(&mut *tx);
+                    let mut rows = sqlx::query_as::<_, (i64, String, bool)>("SELECT id, payload, dismissed FROM completion_notices WHERE (id = ? AND ? = 'notice') OR (? IS NOT NULL AND json_extract(payload, '$.activity') = ?) ORDER BY CASE WHEN ? AND ? = 'notice' AND id = ? THEN 0 ELSE 1 END, id LIMIT -1 OFFSET ?")
+                        .bind(id).bind(root_kind).bind(activity).bind(activity).bind(root_first).bind(root_kind).bind(id).bind(sql_offset).fetch(&mut *tx);
                     loop {
                         match rows.try_next().await? {
                             Some((id, payload, dismissed)) => {
@@ -595,6 +599,74 @@ impl Storage {
             }
         }
         Ok(page.finish("messages", false))
+    }
+
+    async fn search_records(&self, query: String, after: Option<SearchCursor>) -> Result<Value> {
+        if query.trim().is_empty()
+            || query.chars().count() > 256
+            || after.is_some_and(|cursor| cursor.id <= 0)
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let rank = after.map_or(-1_i64, |cursor| i64::from(cursor.kind.rank()));
+        let id = after.map_or(0, |cursor| cursor.id);
+        let mut rows: Vec<(i64, i64, String, String, String)> = sqlx::query_as(
+            "SELECT kind, id, sender, body, context FROM (
+               SELECT 0 AS kind, id, substr(json_extract(payload,'$.agent'),1,160) AS sender,
+                 substr(json_extract(payload,'$.question'),1,160) AS body,
+                 substr(coalesce(json_extract(payload,'$.context'),''),1,160) AS context
+               FROM requests WHERE instr(lower(json_extract(payload,'$.agent')),lower(?1))>0
+                 OR instr(lower(json_extract(payload,'$.question')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.explanation'),'')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.context'),'')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.activity'),'')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.reason'),'')),lower(?1))>0
+                 OR EXISTS (SELECT 1 FROM json_each(json_extract(payload,'$.options')) WHERE instr(lower(value),lower(?1))>0)
+                 OR instr(lower(coalesce(json_extract(answer,'$.value'),'')),lower(?1))>0
+               UNION ALL
+               SELECT 1, id, substr(json_extract(payload,'$.sender'),1,160),
+                 substr(json_extract(payload,'$.body'),1,160),
+                 substr(coalesce(json_extract(payload,'$.context'),''),1,160)
+               FROM messages WHERE instr(lower(json_extract(payload,'$.sender')),lower(?1))>0
+                 OR instr(lower(json_extract(payload,'$.body')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.context'),'')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.activity'),'')),lower(?1))>0
+               UNION ALL
+               SELECT 2, id, substr(json_extract(payload,'$.agent'),1,160),
+                 substr(json_extract(payload,'$.work'),1,160),
+                 substr(json_extract(payload,'$.result'),1,160)
+               FROM completion_notices WHERE instr(lower(json_extract(payload,'$.agent')),lower(?1))>0
+                 OR instr(lower(json_extract(payload,'$.work')),lower(?1))>0
+                 OR instr(lower(json_extract(payload,'$.result')),lower(?1))>0
+                 OR instr(lower(coalesce(json_extract(payload,'$.activity'),'')),lower(?1))>0
+             ) WHERE kind > ?2 OR (kind = ?2 AND id > ?3) ORDER BY kind,id LIMIT 26",
+        ).bind(&query).bind(rank).bind(id).fetch_all(&self.pool).await?;
+        let more = rows.len() > 25;
+        if more {
+            rows.pop();
+        }
+        let kind = |value| match value {
+            0 => Ok(HistoryKind::Decision),
+            1 => Ok(HistoryKind::Message),
+            2 => Ok(HistoryKind::Notice),
+            _ => Err(AppError::InvalidFrame),
+        };
+        let next_after = if more {
+            rows.last()
+                .map(|row| -> Result<SearchCursor> {
+                    Ok(SearchCursor {
+                        kind: kind(row.0)?,
+                        id: row.1,
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let items = rows.into_iter().map(|(rank, id, sender, body, context)| -> Result<Value> {
+            Ok(json!({"kind": kind(rank)?, "id": id, "sender": sender, "body": body, "context": context}))
+        }).collect::<Result<Vec<_>>>()?;
+        Ok(json!({"items": items, "next_after": next_after}))
     }
 
     async fn search_messages(&self, query: String, after: i64) -> Result<Value> {

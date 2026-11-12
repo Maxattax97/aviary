@@ -137,6 +137,11 @@ pub enum Operation {
         #[serde(default)]
         after: i64,
     },
+    SearchRecords {
+        query: String,
+        #[serde(default)]
+        after: Option<SearchCursor>,
+    },
     ReplyMessage {
         reply: MessageReply,
     },
@@ -267,11 +272,29 @@ pub struct NoticeItem {
     pub dismissed: bool,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum HistoryKind {
     Decision,
     Message,
+    Notice,
+}
+
+impl HistoryKind {
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Decision => 0,
+            Self::Message => 1,
+            Self::Notice => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SearchCursor {
+    pub kind: HistoryKind,
+    pub id: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
