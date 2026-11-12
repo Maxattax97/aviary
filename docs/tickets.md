@@ -68,7 +68,7 @@ These are discovery or future implementation outlines, not V1 commitments. V2 an
 | L-05 | Design configurable keybindings and filtering, plus fast overview/detail transitions. | US-032, US-033; no SYS/T yet | V2; V1-12 |
 | L-06 | Investigate safe navigation to an available originating work environment and optional tmux/Herder integration. | US-050; no SYS/T yet | V2; environment and safety decisions |
 | L-07 | Design and verify an activity timeline spanning agents and sessions. | US-052; no SYS/T yet | V2; V1-17, V1-20 |
-| L-08 | Design configurable retention and associated deletion/history behavior without silently weakening retry guarantees. | Retention decision; no SYS/T yet | V2; V1-15, V1-17 |
+| L-08 | Design configurable retention and associated deletion/history behavior without silently weakening retry guarantees. | Retention decision; no SYS/T yet | [Design questions](retention-design.md) prepared; V2 policy and acceptance require review; V1-15, V1-17. |
 | L-09 | Define visibility into excessive or unhelpful sources and unresolved inter-agent requests or communication failures; do not assume automatic suppression. | US-041, US-046; no SYS/T yet | Future; observability design |
 | L-10 | Explore participant/group capability discovery and richer structured autonomous coordination. | US-043, US-044; no SYS/T yet | Future; V1-07, V1-10 |
 | L-11 | Define and test broader delivery to temporarily unavailable recipients beyond V1 recovery of communications already accepted by the service. | US-047; no SYS/T yet | Future; V1-21 |
