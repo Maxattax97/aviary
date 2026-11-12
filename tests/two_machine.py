@@ -155,6 +155,18 @@ def main() -> None:
                 )["answer"]
                 if answer != {"type": "suggested", "index": 1, "value": "Yes"}:
                     raise RuntimeError("unexpected decision answer")
+                # Start a new waiter only after the peer has answered. This
+                # proves the CLI can recover the retained answer; it does not
+                # by itself prove a previously running waiter was restarted.
+                waiter = subprocess.run(
+                    [args.binary, "wait", args.address, str(decision_id)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=15,
+                )
+                if json.loads(waiter.stdout) != {"id": decision_id, "answer": answer}:
+                    raise RuntimeError("decision waiter returned an unexpected result")
                 print(
                     json.dumps(
                         {
@@ -163,6 +175,7 @@ def main() -> None:
                             "request_id": request_id,
                             "reply_id": response["id"],
                             "decision_id": decision_id,
+                            "waiter_recovered": True,
                         }
                     ),
                     flush=True,

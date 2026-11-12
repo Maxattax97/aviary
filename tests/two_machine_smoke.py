@@ -53,6 +53,7 @@ def run_exchange(service: Service, *, expect_restart: bool) -> None:
         assert origin.returncode == 0, errors
         result = json.loads(remaining)
         assert result["stage"] == peer_result["stage"] == "complete"
+        assert result["waiter_recovered"] is True
         assert result["request_id"] == peer_result["request_id"] == ready["request_id"]
         assert result["reply_id"] == peer_result["reply_id"]
         assert (
