@@ -63,7 +63,7 @@ These are discovery or future implementation outlines, not V1 commitments. V2 an
 |---|---|---|---|
 | L-01 | Explore a primary objective and attention weighting, periodic resurfacing, duplicate consolidation and lower-priority review. Define operator controls and evaluation before implementation. | US-007, US-008, US-009, US-010; no SYS/T yet | V2; attention policy |
 | L-02 | Design pending-request revision and clarification with authority, visibility and preserved context. | US-017; no SYS/T yet | V2; request history |
-| L-03 | Assess feasibility and cost of linked corrections that preserve the original and report delivery where a correction can still influence action. Do not promise cancellation, rollback or that delivery precedes action. | US-018; no SYS/T yet | V2; feasibility and review |
+| L-03 | Assess feasibility and cost of linked corrections that preserve the original and report delivery where a correction can still influence action. Do not promise cancellation, rollback or that delivery precedes action. | US-018; no SYS/T yet | [Feasibility assessment](correction-feasibility.md) prepared; V2 scope, receipt semantics and acceptance require review. |
 | L-04 | Define richer direct agent exchange beyond the limited V1 targeted request/reply, including its distinction from future autonomous coordination. | US-026; no SYS/T yet | V2; V1-10 |
 | L-05 | Design configurable keybindings and filtering, plus fast overview/detail transitions. | US-032, US-033; no SYS/T yet | V2; V1-12 |
 | L-06 | Investigate safe navigation to an available originating work environment and optional tmux/Herder integration. | US-050; no SYS/T yet | V2; environment and safety decisions |
