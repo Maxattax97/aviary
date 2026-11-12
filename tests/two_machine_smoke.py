@@ -117,8 +117,8 @@ def main() -> None:
     with Service() as service:
         run_exchange(service, expect_restart=False)
         run_exchange(service, expect_restart=True)
-        run_exchange(service, expect_restart=False, operator_answer=True)
-    print("Two-machine exercise coordinated on loopback, including restart and terminal answer")
+        run_exchange(service, expect_restart=True, operator_answer=True)
+    print("Two-machine exercise coordinated on loopback, including combined restarts and terminal answer")
 
 
 if __name__ == "__main__":

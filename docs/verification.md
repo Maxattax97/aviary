@@ -603,3 +603,7 @@ The origin role now launches a fresh decision waiter after the peer answers and 
 ## Requester restart in exchange rehearsal (2026-11-12)
 
 The local operator-driven `tests/two_machine_smoke.py` rehearsal now starts a decision waiter while the decision is pending, kills it, starts another waiter, confirms the decision through the pseudo-terminal, and checks the restarted waiter returns the exact structured answer. The test also exercises the scripted peer and origin exchange and closes the terminal. Its service-restart variant runs separately in the same local test. This is local process and PTY evidence; it does not establish a remote requester restart or a human operator session.
+
+## Combined slice rehearsal (2026-11-12)
+
+`python3 tests/two_machine_smoke.py` passed a single local exchange combining service-process kill and restart, identical submission retries, requester waiter kill and restart, explicit pseudo-terminal recommendation confirmation, interface closure and retained answer and reply retrieval. The other automated exchange variants passed in the same invocation. This is one-host loopback and simulated terminal evidence; the trusted two-machine, human operator and OS-crash acceptance gates remain open.
