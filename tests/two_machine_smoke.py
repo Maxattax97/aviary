@@ -5,6 +5,7 @@ import json
 import select
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -42,11 +43,26 @@ def run_exchange(service: Service, *, expect_restart: bool, operator_answer: boo
             assert recovered["request_id"] == ready["request_id"]
             assert recovered["decision_id"] == ready["decision_id"]
         if operator_answer:
+            def waiter():
+                return subprocess.Popen(
+                    [str(BINARY), "wait", service.address, str(ready["decision_id"])],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                )
+
+            first_waiter = waiter()
+            restarted_waiter = None
             peer = subprocess.Popen(
                 [sys.executable, str(script), "peer", *common, "--operator-answer"],
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
             try:
+                time.sleep(0.5)
+                assert first_waiter.poll() is None
+                first_waiter.kill()
+                first_waiter.communicate(timeout=5)
+                restarted_waiter = waiter()
+                time.sleep(0.5)
+                assert restarted_waiter.poll() is None
                 assert peer.stdout is not None
                 assert select.select([peer.stdout], [], [], 20)[0]
                 waiting = json.loads(peer.stdout.readline())
@@ -58,10 +74,20 @@ def run_exchange(service: Service, *, expect_restart: bool, operator_answer: boo
                     terminal.send("\r")
                     terminal.expect("No decisions")
                     terminal.quit()
+                waiter_output, waiter_error = restarted_waiter.communicate(timeout=20)
+                assert restarted_waiter.returncode == 0, waiter_error
+                assert json.loads(waiter_output) == {
+                    "id": ready["decision_id"],
+                    "answer": {"type": "suggested", "index": 1, "value": "Yes"},
+                }
                 peer_output, peer_error = peer.communicate(timeout=20)
                 assert peer.returncode == 0, peer_error
                 peer_result = json.loads(peer_output)
             finally:
+                for process in (first_waiter, restarted_waiter):
+                    if process is not None and process.poll() is None:
+                        process.kill()
+                        process.communicate()
                 if peer.poll() is None:
                     peer.kill()
                     peer.communicate()
