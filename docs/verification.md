@@ -587,3 +587,7 @@ A local disposable two-service experiment first showed that a subscriber attache
 ## Decision queue page shift (2026-11-12)
 
 `python3 tests/reconcile_page_shift.py` used an isolated local service and subscribed before traversing a multi-page decision queue. Answering an item on the first page produced a change hint; continuing from the old offset skipped a still-pending item that shifted left. Restarting at offset zero after the hint returned the full stable remaining queue. `tests/reconcile_missed_events.py` and `tests/change_events.py` also passed. This demonstrates the offset limitation and one recovery after a completed mutation, not an atomic snapshot, bounded hint delivery, or correctness under continuous changes and silent partitions.
+
+## Terminal draft across a queue page shift (2026-11-12)
+
+`python3 tests/terminal_page_shift_draft.py` used a local service and pseudo-terminal with a multi-page queue. It began a Unicode custom-answer draft on the first decision of a later page, answered an earlier decision from another client, observed the page-shift warning, extended the draft and explicitly submitted it. The exact stored answer belonged to the original decision; the next decision remained unanswered. `tests/terminal_arrivals.py` and `tests/answer_draft_navigation.py` also passed. The PTY screen parser inserts a spacing artifact after a wide character, so the stored structured answer is the exact-text oracle. This is one local interleaving, not exhaustive page mutation, remote, terminal or operator validation.
