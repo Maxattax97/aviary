@@ -20,9 +20,6 @@ jobs:
       - name: Install stable Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@v2
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
