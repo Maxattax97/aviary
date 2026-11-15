@@ -610,4 +610,4 @@ The local operator-driven `tests/two_machine_smoke.py` rehearsal now starts a de
 
 ## GitHub Actions CI baseline (2026-11-12)
 
-Added `.github/workflows/ci.yml` for pull requests and pushes to `main`. The workflow uses Ubuntu, stable Rust, Python 3.12, `cargo test --locked`, `cargo build --locked --bins`, `python3 tests/terminal_pty.py`, and `python3 tests/skill_smoke.py`. The same command sequence passed locally: 18 Rust unit tests, 24 Rust integration tests, binary build, `tests/terminal_pty.py`, and `tests/skill_smoke.py`. The workflow has not run on GitHub in this task; hosted-runner behavior and the repository's configured default branch name remain to be confirmed there. It does not publish or deploy artifacts because no deployment target is approved.
+The command sequence in the [CI scope decision](decisions.md#ci-scope-2026-11-12) passed locally: 18 Rust unit tests, 24 Rust integration tests, binary build, terminal pseudo-terminal check, and portable-skill smoke check. The workflow has not run on GitHub in this task; hosted-runner behavior and the repository's configured default branch name remain to be confirmed there.
