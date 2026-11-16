@@ -607,3 +607,7 @@ The local operator-driven `tests/two_machine_smoke.py` rehearsal now starts a de
 ## Combined slice rehearsal (2026-11-12)
 
 `python3 tests/two_machine_smoke.py` passed a single local exchange combining service-process kill and restart, identical submission retries, requester waiter kill and restart, explicit pseudo-terminal recommendation confirmation, interface closure and retained answer and reply retrieval. The other automated exchange variants passed in the same invocation. This is one-host loopback and simulated terminal evidence; the trusted two-machine, human operator and OS-crash acceptance gates remain open.
+
+## GitHub Actions CI baseline (2026-11-12)
+
+The command sequence in the [CI scope decision](decisions.md#ci-scope-2026-11-12) passed locally: 18 Rust unit tests, 24 Rust integration tests, binary build, terminal pseudo-terminal check, and portable-skill smoke check. The workflow has not run on GitHub in this task; hosted-runner behavior and the repository's configured default branch name remain to be confirmed there.

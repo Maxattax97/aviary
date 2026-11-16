@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Linux tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Rust tests
+        run: cargo test --locked
+
+      - name: Build Aviary binaries
+        run: cargo build --locked --bins
+
+      - name: Exercise terminal workflow
+        run: python3 tests/terminal_pty.py
+
+      - name: Exercise portable skill examples
+        run: python3 tests/skill_smoke.py
