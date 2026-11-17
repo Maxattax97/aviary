@@ -71,23 +71,60 @@ impl Storage {
             .max_connections(5)
             .connect_with(options)
             .await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, answer TEXT)")
-            .execute(&pool).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS submission_keys (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, record_id INTEGER)").execute(&pool).await?;
-        sqlx::query("INSERT OR IGNORE INTO submission_keys (identity, kind, payload, record_id) SELECT identity, 'decision', payload, id FROM requests").execute(&pool).await?;
-        sqlx::query(
-            "CREATE TABLE IF NOT EXISTS channels (name TEXT PRIMARY KEY, members TEXT NOT NULL)",
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)").execute(&pool).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&pool).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&pool).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS request_attention (request_id INTEGER PRIMARY KEY, importance INTEGER, deferred INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (request_id) REFERENCES requests(id))").execute(&pool).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS completion_notices (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0)").execute(&pool).await?;
+        Self::migrate(&pool).await?;
         let storage = Self { pool };
-        storage.initialize_queue().await?;
         Ok(storage)
+    }
+
+    async fn migrate(pool: &SqlitePool) -> Result<()> {
+        const CURRENT_SCHEMA_VERSION: i64 = 1;
+        let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&mut *tx)
+            .await?;
+        if version > CURRENT_SCHEMA_VERSION {
+            return Err(AppError::Task(format!(
+                "database schema version {version} is newer than supported version {CURRENT_SCHEMA_VERSION}"
+            )));
+        }
+        if version < 1 {
+            sqlx::query("CREATE TABLE IF NOT EXISTS requests (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, answer TEXT)")
+                .execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS submission_keys (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, record_id INTEGER)").execute(&mut *tx).await?;
+            sqlx::query("INSERT OR IGNORE INTO submission_keys (identity, kind, payload, record_id) SELECT identity, 'decision', payload, id FROM requests").execute(&mut *tx).await?;
+            sqlx::query(
+                "CREATE TABLE IF NOT EXISTS channels (name TEXT PRIMARY KEY, members TEXT NOT NULL)",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL)").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS message_recipients (message_id INTEGER NOT NULL, participant TEXT NOT NULL, PRIMARY KEY (message_id, participant), FOREIGN KEY (message_id) REFERENCES messages(id))").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS message_responses (request_id INTEGER PRIMARY KEY, response_id INTEGER NOT NULL UNIQUE, FOREIGN KEY (request_id) REFERENCES messages(id), FOREIGN KEY (response_id) REFERENCES messages(id))").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS request_attention (request_id INTEGER PRIMARY KEY, importance INTEGER, deferred INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (request_id) REFERENCES requests(id))").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS completion_notices (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, dismissed INTEGER NOT NULL DEFAULT 0)").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS decision_queue_clock (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), position INTEGER NOT NULL)").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS decision_queue_positions (request_id INTEGER PRIMARY KEY, position INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(request_id) REFERENCES requests(id))").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS decision_events (id INTEGER PRIMARY KEY, request_id INTEGER NOT NULL, agent TEXT NOT NULL, kind TEXT NOT NULL, FOREIGN KEY(request_id) REFERENCES requests(id))").execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT OR IGNORE INTO decision_queue_clock(singleton, position) VALUES (1, 0)",
+            )
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("UPDATE decision_queue_clock SET position = MAX(position, COALESCE((SELECT MAX(position) FROM decision_queue_positions), 0)) WHERE singleton = 1")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("INSERT OR IGNORE INTO decision_queue_positions(request_id, position) SELECT r.id, (SELECT position FROM decision_queue_clock WHERE singleton = 1) + row_number() OVER (ORDER BY COALESCE(a.deferred, 0), r.id) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("UPDATE decision_queue_clock SET position = COALESCE((SELECT MAX(position) FROM decision_queue_positions), 0) WHERE singleton = 1")
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("PRAGMA user_version = 1")
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn handle(&self, operation: Operation) -> Result<Value> {
@@ -1030,6 +1067,122 @@ mod tests {
         let response = storage.handle(Operation::Get { id: 7 }).await?;
         assert_eq!(response["answer"]["value"], "Yes");
         storage.pool.close().await;
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_openers_apply_legacy_migration_once(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("aviary-concurrent-migration-{nonce}"));
+        std::fs::create_dir_all(&directory)?;
+        let database_path = directory.join("legacy.sqlite");
+        let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+        let legacy = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(database)
+                    .create_if_missing(true),
+            )
+            .await?;
+        sqlx::query("CREATE TABLE requests (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, answer TEXT)")
+            .execute(&legacy).await?;
+        let payload = r#"{"identity":"legacy-race","agent":"agent","question":"Proceed?","options":["Yes"],"recommendation":0,"reason":"Ready"}"#;
+        sqlx::query("INSERT INTO requests (id, identity, payload) VALUES (12, 'legacy-race', ?)")
+            .bind(payload)
+            .execute(&legacy)
+            .await?;
+        legacy.close().await;
+
+        let (first, second) = tokio::join!(Storage::open(database), Storage::open(database));
+        let first = first?;
+        let second = second?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&first.pool)
+            .await?;
+        let keys: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM submission_keys WHERE identity = 'legacy-race'",
+        )
+        .fetch_one(&first.pool)
+        .await?;
+        let positions: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM decision_queue_positions WHERE request_id = 12",
+        )
+        .fetch_one(&second.pool)
+        .await?;
+        assert_eq!(version, 1);
+        assert_eq!(keys, 1);
+        assert_eq!(positions, 1);
+        first.pool.close().await;
+        second.pool.close().await;
+        std::fs::remove_dir_all(directory)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_migration_rolls_back_schema_and_version(
+    ) -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("aviary-migration-rollback-{nonce}"));
+        std::fs::create_dir_all(&directory)?;
+        let database_path = directory.join("legacy.sqlite");
+        let database = database_path.to_str().ok_or("database path is not UTF-8")?;
+        let legacy = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(database)
+                    .create_if_missing(true),
+            )
+            .await?;
+        sqlx::query("CREATE TABLE requests (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, answer TEXT)")
+            .execute(&legacy).await?;
+        sqlx::query("CREATE TABLE submission_keys (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, record_id INTEGER)")
+            .execute(&legacy).await?;
+        let payload = r#"{"identity":"legacy-rollback","agent":"agent","question":"Proceed?","options":["Yes"],"recommendation":0,"reason":"Ready"}"#;
+        sqlx::query(
+            "INSERT INTO requests (id, identity, payload) VALUES (13, 'legacy-rollback', ?)",
+        )
+        .bind(payload)
+        .execute(&legacy)
+        .await?;
+        sqlx::query("CREATE TRIGGER reject_backfill BEFORE INSERT ON submission_keys BEGIN SELECT RAISE(ABORT, 'forced migration failure'); END")
+            .execute(&legacy)
+            .await?;
+        legacy.close().await;
+
+        assert!(Storage::open(database).await.is_err());
+        let check = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(SqliteConnectOptions::new().filename(database))
+            .await?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&check)
+            .await?;
+        let channels: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'channels'",
+        )
+        .fetch_one(&check)
+        .await?;
+        assert_eq!(version, 0);
+        assert_eq!(channels, 0);
+        sqlx::query("DROP TRIGGER reject_backfill")
+            .execute(&check)
+            .await?;
+        check.close().await;
+
+        let recovered = Storage::open(database).await?;
+        let request_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM requests WHERE id = 13")
+            .fetch_one(&recovered.pool)
+            .await?;
+        assert_eq!(request_count, 1);
+        recovered.pool.close().await;
         std::fs::remove_dir_all(directory)?;
         Ok(())
     }

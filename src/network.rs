@@ -8,8 +8,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
-    fs::{File, OpenOptions},
-    os::{fd::AsRawFd, unix::fs::OpenOptionsExt},
+    ffi::OsString,
+    fs::{self, File, OpenOptions},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{MetadataExt, OpenOptionsExt},
+    },
+    path::{Path, PathBuf},
     time::Duration,
 };
 use tokio::sync::watch;
@@ -23,28 +28,68 @@ const TIMEOUT_MS: i32 = 10_000;
 const MAX_SUBSCRIBERS: usize = 256;
 
 fn lock_database(path: &str) -> Result<File> {
+    let database_path = canonical_database_path(Path::new(path))?;
+    match fs::metadata(&database_path) {
+        Ok(metadata) if metadata.nlink() > 1 => {
+            return Err(AppError::Task(format!(
+                "database has multiple hard links; refusing to lock it: {}",
+                database_path.display()
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut lock_name: OsString = database_path
+        .file_name()
+        .ok_or_else(|| AppError::Task("database path has no file name".into()))?
+        .to_owned();
+    lock_name.push(".lock");
+    let lock_path = database_path.with_file_name(lock_name);
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(path)?;
-    // SAFETY: flock operates on this live file descriptor and does not retain
-    // the pointer or access Rust memory. Keep the file open for service life.
+        .open(&lock_path)?;
+    // SAFETY: flock operates on the sidecar descriptor and does not retain
+    // the pointer or access Rust memory. Keep it open for service life.
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         let error = std::io::Error::last_os_error();
         return if error.kind() == std::io::ErrorKind::WouldBlock {
             Err(AppError::Task(format!(
-                "database is already in use by another service: {path}"
+                "database is already in use by another service: {}",
+                database_path.display()
             )))
         } else {
             Err(AppError::Task(format!(
-                "cannot lock database {path}: {error}"
+                "cannot lock database sidecar {}: {error}",
+                lock_path.display()
             )))
         };
     }
     Ok(file)
+}
+
+fn canonical_database_path(path: &Path) -> Result<PathBuf> {
+    match fs::canonicalize(path) {
+        Ok(path) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if fs::symlink_metadata(path).is_ok() {
+                return Err(error.into());
+            }
+            let parent = path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or_else(|| Path::new("."));
+            let file_name = path
+                .file_name()
+                .ok_or_else(|| AppError::Task("database path has no file name".into()))?;
+            Ok(fs::canonicalize(parent)?.join(file_name))
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -394,4 +439,75 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock_database;
+    use crate::storage::Storage;
+    use std::{
+        fs,
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn temporary_directory() -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("aviary-lock-{nonce}"));
+        fs::create_dir(&path).expect("create test directory");
+        path
+    }
+
+    #[test]
+    fn sidecar_lock_is_shared_by_canonical_and_symlink_paths() {
+        let directory = temporary_directory();
+        let database = directory.join("state.sqlite");
+        let alias = directory.join("alias.sqlite");
+        fs::write(&database, []).expect("create database");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&database, &alias).expect("create database symlink");
+
+        let lock = lock_database(database.to_str().expect("UTF-8 path")).expect("first lock");
+        let sidecar = directory.join("state.sqlite.lock");
+        assert!(sidecar.exists());
+        assert!(lock_database(alias.to_str().expect("UTF-8 alias")).is_err());
+        drop(lock);
+        let reopened =
+            lock_database(alias.to_str().expect("UTF-8 alias")).unwrap_or_else(|error| {
+                panic!("released sidecar lock could not be reacquired: {error}")
+            });
+        drop(reopened);
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[test]
+    fn refuses_database_with_multiple_hard_links() {
+        let directory = temporary_directory();
+        let database = directory.join("state.sqlite");
+        let alias = directory.join("hardlink.sqlite");
+        fs::write(&database, []).expect("create database");
+        fs::hard_link(&database, alias).expect("create hard link");
+
+        let error = lock_database(database.to_str().expect("UTF-8 path"))
+            .expect_err("hard-linked database must be rejected");
+        assert!(error.to_string().contains("multiple hard links"));
+        assert!(!directory.join("state.sqlite.lock").exists());
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    #[tokio::test]
+    async fn sidecar_flock_does_not_block_sqlite_open() {
+        let directory = temporary_directory();
+        let database = directory.join("state.sqlite");
+        let lock = lock_database(database.to_str().expect("UTF-8 path")).expect("sidecar lock");
+        let storage = Storage::open(database.to_str().expect("UTF-8 path"))
+            .await
+            .expect("SQLite opens while the service sidecar is locked");
+        drop(storage);
+        drop(lock);
+        fs::remove_dir_all(directory).expect("remove test directory");
+    }
 }

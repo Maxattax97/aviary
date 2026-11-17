@@ -10,27 +10,6 @@ use serde_json::{json, Value};
 use sqlx::{Sqlite, Transaction};
 
 impl Storage {
-    pub(super) async fn initialize_queue(&self) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS decision_queue_clock (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), position INTEGER NOT NULL)").execute(&mut *tx).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS decision_queue_positions (request_id INTEGER PRIMARY KEY, position INTEGER NOT NULL, version INTEGER NOT NULL DEFAULT 0, FOREIGN KEY(request_id) REFERENCES requests(id))").execute(&mut *tx).await?;
-        sqlx::query("CREATE TABLE IF NOT EXISTS decision_events (id INTEGER PRIMARY KEY, request_id INTEGER NOT NULL, agent TEXT NOT NULL, kind TEXT NOT NULL, FOREIGN KEY(request_id) REFERENCES requests(id))").execute(&mut *tx).await?;
-        let initialized = sqlx::query(
-            "INSERT OR IGNORE INTO decision_queue_clock(singleton, position) VALUES (1, 0)",
-        )
-        .execute(&mut *tx)
-        .await?
-        .rows_affected()
-            == 1;
-        if initialized {
-            // Preserve old active-before-deferred placement for each priority.
-            sqlx::query("INSERT INTO decision_queue_positions(request_id, position) SELECT r.id, row_number() OVER (ORDER BY COALESCE(a.deferred, 0), r.id) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id").execute(&mut *tx).await?;
-            sqlx::query("UPDATE decision_queue_clock SET position = COALESCE((SELECT MAX(position) FROM decision_queue_positions), 0) WHERE singleton = 1").execute(&mut *tx).await?;
-        }
-        tx.commit().await?;
-        Ok(())
-    }
-
     pub(super) async fn enqueue_decision(tx: &mut Transaction<'_, Sqlite>, id: i64) -> Result<()> {
         let position = Self::next_position(tx).await?;
         sqlx::query("INSERT INTO decision_queue_positions(request_id, position) VALUES (?, ?)")

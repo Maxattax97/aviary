@@ -611,3 +611,9 @@ The local operator-driven `tests/two_machine_smoke.py` rehearsal now starts a de
 ## GitHub Actions CI baseline (2026-11-12)
 
 The command sequence in the [CI scope decision](decisions.md#ci-scope-2026-11-12) passed locally: 18 Rust unit tests, 24 Rust integration tests, binary build, terminal pseudo-terminal check, and portable-skill smoke check. The workflow has not run on GitHub in this task; hosted-runner behavior and the repository's configured default branch name remain to be confirmed there.
+
+## SQLite portability and startup bounds (2026-11-17)
+
+On Linux, `cargo test --locked` passed 24 Rust unit tests and 24 integration tests. Added regressions verify that SQLite opens while the service sidecar is flocked, symlink aliases contend on one canonical sidecar, hard-linked databases are rejected, concurrent legacy openers apply one versioned migration, migration failure rolls back schema and version, and startup phases consume one shared deadline. `cargo build --locked --bins`, `python3 tests/auto_startup.py`, and `python3 tests/startup_smoke.py` passed. Targeted `rustfmt --check` and `git diff --check` passed.
+
+The workflow now has a `macos-latest` Rust test job, but this local run did not execute on macOS and no hosted pipeline was run. macOS-specific SQLite/flock behavior therefore remains pending that runner's result; network filesystems, external SQLite writers, OS-crash recovery, and broader POSIX behavior are not established by these tests.
