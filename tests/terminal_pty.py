@@ -16,7 +16,7 @@ def exercise_answers(service: Service) -> None:
     expected = {
         "recommended": {"type": "suggested", "index": 1, "value": "Yes"},
         "other": {"type": "suggested", "index": 0, "value": "No"},
-        "custom": {"type": "custom", "value": "Custom 鳥"},
+        "custom": {"type": "custom", "value": "CustomX"},
     }
     for case, answer in expected.items():
         request = {
@@ -39,7 +39,7 @@ def exercise_answers(service: Service) -> None:
             terminal.expect(f"Choose {case}")
             assert service.call({"op": "get", "id": request_id})["answer"] is None
             terminal.send(
-                {"recommended": "\r", "other": "2\r", "custom": "j\rCustom 鳥\r"}[case]
+                {"recommended": "\r", "other": "2\r", "custom": "j\rCustom 鳥\x1b[D\x1b[3~\x7fX\r"}[case]
             )
             service.wait_for(
                 lambda: service.call({"op": "get", "id": request_id})["answer"]

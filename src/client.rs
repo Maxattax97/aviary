@@ -341,6 +341,7 @@ struct SearchView {
 struct SuspendedAnswer {
     request: PendingRequest,
     text: String,
+    cursor: usize,
     offset: usize,
     previous: Vec<usize>,
     scroll: usize,
@@ -650,6 +651,7 @@ struct View {
     selected: Option<usize>,
     editing: bool,
     custom: String,
+    custom_cursor: usize,
     draft_request_missing: bool,
 }
 impl View {
@@ -837,6 +839,7 @@ impl View {
             selected: None,
             editing: false,
             custom: String::new(),
+            custom_cursor: 0,
             draft_request_missing: false,
         }
     }
@@ -868,6 +871,7 @@ impl View {
         self.detail_page = None;
         self.detail_option = None;
         self.custom.clear();
+        self.custom_cursor = 0;
         self.draft_request_missing = false;
     }
     fn update(&mut self, requests: Vec<PendingRequest>) -> bool {
@@ -1396,6 +1400,7 @@ impl View {
                 self.request_loaded = true;
                 self.selected = Some(self.choices().len());
                 self.custom = draft.text;
+                self.custom_cursor = draft.cursor.min(self.custom.graphemes(true).count());
                 self.editing = true;
                 self.list_focus = false;
                 self.detail_page = None;
@@ -1679,6 +1684,7 @@ impl View {
                         self.suspended_answer = Some(SuspendedAnswer {
                             request,
                             text: std::mem::take(&mut self.custom),
+                            cursor: self.custom_cursor,
                             offset: self.request_offset,
                             previous: self.request_previous.clone(),
                             scroll: self.detail_scroll.get(),
@@ -1698,7 +1704,47 @@ impl View {
                     }
                 }
                 KeyCode::Backspace => {
-                    self.custom.pop();
+                    if self.custom_cursor > 0 {
+                        let start = self
+                            .custom
+                            .grapheme_indices(true)
+                            .nth(self.custom_cursor - 1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(0);
+                        let end = self
+                            .custom
+                            .grapheme_indices(true)
+                            .nth(self.custom_cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(self.custom.len());
+                        self.custom.replace_range(start..end, "");
+                        self.custom_cursor -= 1;
+                    }
+                }
+                KeyCode::Left => self.custom_cursor = self.custom_cursor.saturating_sub(1),
+                KeyCode::Right => {
+                    self.custom_cursor =
+                        (self.custom_cursor + 1).min(self.custom.graphemes(true).count())
+                }
+                KeyCode::Home => self.custom_cursor = 0,
+                KeyCode::End => self.custom_cursor = self.custom.graphemes(true).count(),
+                KeyCode::Delete => {
+                    let count = self.custom.graphemes(true).count();
+                    if self.custom_cursor < count {
+                        let start = self
+                            .custom
+                            .grapheme_indices(true)
+                            .nth(self.custom_cursor)
+                            .map(|(i, _)| i)
+                            .unwrap_or(self.custom.len());
+                        let end = self
+                            .custom
+                            .grapheme_indices(true)
+                            .nth(self.custom_cursor + 1)
+                            .map(|(i, _)| i)
+                            .unwrap_or(self.custom.len());
+                        self.custom.replace_range(start..end, "");
+                    }
                 }
                 KeyCode::Enter if !self.custom.is_empty() => {
                     if let Some(request) = self.current() {
@@ -1714,7 +1760,14 @@ impl View {
                             .modifiers
                             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                 {
-                    self.custom.push(c)
+                    let at = self
+                        .custom
+                        .grapheme_indices(true)
+                        .nth(self.custom_cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.custom.len());
+                    self.custom.insert(at, c);
+                    self.custom_cursor = self.custom[..at + c.len_utf8()].graphemes(true).count();
                 }
                 _ => {}
             }
@@ -2349,6 +2402,30 @@ fn preview_tail(text: &str) -> String {
         .rev()
         .collect();
     format!("…{tail}")
+}
+
+fn preview_at_cursor(text: &str, cursor: usize) -> String {
+    let clean = safe(text);
+    let graphemes: Vec<&str> = clean.graphemes(true).collect();
+    let (width, _) = terminal::size().unwrap_or((80, 24));
+    let width = if width == 0 { 80 } else { width };
+    let limit = (usize::from(width.saturating_sub(1)) / 2).max(1);
+    let cursor = cursor.min(graphemes.len());
+    let start = cursor.saturating_sub(limit.saturating_sub(1));
+    let end = graphemes
+        .len()
+        .min(start.saturating_add(limit.saturating_sub(1)));
+    let mut shown = String::new();
+    if start > 0 {
+        shown.push('…');
+    }
+    shown.push_str(&graphemes[start..cursor].concat());
+    shown.push('_');
+    shown.push_str(&graphemes[cursor..end].concat());
+    if end < graphemes.len() {
+        shown.push('…');
+    }
+    shown
 }
 
 // Do not let remote content inject terminal control sequences.
@@ -3144,7 +3221,7 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
                     "{mark} {}. Custom answer{}",
                     view.choices().len() + 1,
                     if view.editing {
-                        format!(": {}_", preview_tail(&view.custom))
+                        format!(": {}", preview_at_cursor(&view.custom, view.custom_cursor))
                     } else {
                         String::new()
                     }
@@ -3658,6 +3735,35 @@ mod tests {
         }
         assert!(
             matches!(view.key(key(KeyCode::Enter)), Action::Submit(Operation::AnswerCustom { id: 42, value }) if value == "鳥 q")
+        );
+    }
+
+    #[test]
+    fn custom_answer_cursor_edits_unicode_graphemes_at_boundaries() {
+        let mut view = View::new();
+        view.update(vec![request(None, 0)]);
+        view.request_loaded = true;
+        view.selected = Some(0);
+        view.key(key(KeyCode::Enter));
+        for c in "ae\u{301}c".chars() {
+            view.key(key(KeyCode::Char(c)));
+        }
+        view.key(key(KeyCode::Left));
+        view.key(key(KeyCode::Char('鳥')));
+        assert_eq!(view.custom, "ae\u{301}鳥c");
+        view.key(key(KeyCode::Left));
+        view.key(key(KeyCode::Backspace));
+        assert_eq!(view.custom, "a鳥c");
+        view.key(key(KeyCode::Home));
+        view.key(key(KeyCode::Backspace));
+        view.key(key(KeyCode::Delete));
+        assert_eq!(view.custom, "鳥c");
+        view.key(key(KeyCode::End));
+        view.key(key(KeyCode::Right));
+        view.key(key(KeyCode::Delete));
+        assert_eq!(view.custom, "鳥c");
+        assert!(
+            matches!(view.key(key(KeyCode::Enter)), Action::Submit(Operation::AnswerCustom { value, .. }) if value == "鳥c")
         );
     }
 
