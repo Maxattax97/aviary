@@ -425,3 +425,7 @@ The custom-answer editor tracks its cursor in Unicode grapheme clusters, so left
 ## Managed projects (2026-11-17)
 
 Projects are explicit service records identified by a caller-chosen stable string ID, independent of agent/workspace identity and distinct from the existing activity correlation field. V1 status values are `in_progress`, `blocked` and `completed`; default priority is 0–5. Existing decisions can be associated or disassociated explicitly. Their effective priority is decision override, then associated project's default, then the request's submitted importance; changing a project default therefore reprioritizes only decisions without explicit overrides. Completion is descriptive project status and does not answer or archive decisions. New operations and optional queue response metadata preserve existing decision payloads and operations. Schema v2 adds project and association tables transactionally; existing records remain unassociated.
+
+## Terminal project overview (2026-11-17)
+
+The existing `v` overview remains the entry point; `p` opens its in-flight projects subview and `p` returns to counts. The list excludes completed projects, shows each active project's ID, status and default priority, and shows the selected description and associated decision count. Keyboard selection and existing change-hint refresh are reused. Create/update/association management stays available through documented API/CLI operations; decision queue navigation and priority controls are unchanged.

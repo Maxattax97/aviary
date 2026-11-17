@@ -70,7 +70,7 @@ The interface presents a recommendation first and preselects it, but Enter is an
 | `c` / `o` | Open request context / selected answer detail |
 | `H` / `g` | Open history for the current request or inbox message / look up history by kind and ID |
 | `/` | Search retained records; Enter opens the selected result |
-| `v` | Show the operator overview |
+| `v` | Show the operator overview; press `p` there to list in-flight projects |
 | `d`, `p` then `0`–`5` | Defer to the bottom of this priority; override importance |
 | `n`, `i`, `m` | View completion notices; open operator inbox; compose an instruction |
 | `q`, Escape | Return from a view or quit; Escape cancels editing |
