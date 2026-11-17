@@ -1,9 +1,11 @@
 use std::{
     cell::Cell,
     io::{self, Read, Write},
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use crossterm::{
     cursor::Show,
     event::{
@@ -15,11 +17,12 @@ use crossterm::{
 use futures_util::StreamExt;
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    buffer::Buffer,
+    layout::{Constraint, Direction, Layout, Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Terminal,
+    Frame, Terminal,
 };
 use tokio::{
     sync::{mpsc, Notify},
@@ -577,6 +580,218 @@ struct Arrivals {
     highest_id: i64,
     pending: bool,
 }
+
+#[derive(Clone)]
+struct RenderedScreen {
+    area: Rect,
+    cells: Vec<String>,
+}
+
+impl RenderedScreen {
+    fn capture(buffer: &Buffer, area: Rect) -> Self {
+        let mut cells =
+            Vec::with_capacity(usize::from(area.width).saturating_mul(usize::from(area.height)));
+        let bottom = area.y.saturating_add(area.height);
+        let right = area.x.saturating_add(area.width);
+        let mut y = area.y;
+        while y < bottom {
+            let mut x = area.x;
+            while x < right {
+                let symbol = buffer
+                    .cell(Position::new(x, y))
+                    .map_or("", |cell| cell.symbol());
+                cells.push(symbol.to_owned());
+                x = x.saturating_add(1);
+            }
+            y = y.saturating_add(1);
+        }
+        Self { area, cells }
+    }
+
+    fn symbol(&self, x: u16, y: u16) -> Option<&str> {
+        if !self.area.contains(Position::new(x, y)) || self.area.width == 0 {
+            return None;
+        }
+        let row = usize::from(y.saturating_sub(self.area.y));
+        let column = usize::from(x.saturating_sub(self.area.x));
+        let index = row
+            .saturating_mul(usize::from(self.area.width))
+            .saturating_add(column);
+        self.cells.get(index).map(String::as_str)
+    }
+
+    fn text_between(&self, first: Position, last: Position) -> String {
+        let (start, end) = if position_before(first, last) {
+            (first, last)
+        } else {
+            (last, first)
+        };
+        if self.symbol(start.x, start.y).is_none() || self.symbol(end.x, end.y).is_none() {
+            return String::new();
+        }
+
+        let right = self
+            .area
+            .x
+            .saturating_add(self.area.width.saturating_sub(1));
+        let mut result = String::new();
+        let mut y = start.y;
+        while y <= end.y {
+            let first_x = if y == start.y { start.x } else { self.area.x };
+            let last_x = if y == end.y { end.x } else { right };
+            let mut line = String::new();
+            let mut x = first_x;
+            while x <= last_x {
+                if let Some(symbol) = self.symbol(x, y) {
+                    line.push_str(symbol);
+                }
+                if x == u16::MAX {
+                    break;
+                }
+                x += 1;
+            }
+            result.push_str(line.trim_end_matches(' '));
+            if y != end.y {
+                result.push('\n');
+            }
+            if y == u16::MAX {
+                break;
+            }
+            y += 1;
+        }
+        result
+    }
+}
+
+fn position_before(first: Position, last: Position) -> bool {
+    first.y < last.y || (first.y == last.y && first.x <= last.x)
+}
+
+#[derive(Clone)]
+struct MouseStart {
+    position: Position,
+    modifiers: KeyModifiers,
+    screen: Option<RenderedScreen>,
+}
+
+#[derive(Clone)]
+struct MouseSelection {
+    start: Position,
+    end: Position,
+    screen: RenderedScreen,
+}
+
+fn apply_mouse_selection(frame: &mut Frame<'_>, selection: Option<&MouseSelection>) {
+    let Some(selection) = selection else {
+        return;
+    };
+    let (start, end) = if position_before(selection.start, selection.end) {
+        (selection.start, selection.end)
+    } else {
+        (selection.end, selection.start)
+    };
+    let area = frame.area();
+    let right = area.x.saturating_add(area.width.saturating_sub(1));
+    let mut y = start.y;
+    while y <= end.y {
+        let first_x = if y == start.y { start.x } else { area.x };
+        let last_x = if y == end.y { end.x } else { right };
+        let mut x = first_x;
+        while x <= last_x {
+            if let Some(cell) = frame.buffer_mut().cell_mut(Position::new(x, y)) {
+                cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
+            }
+            if x == u16::MAX {
+                break;
+            }
+            x += 1;
+        }
+        if y == u16::MAX {
+            break;
+        }
+        y += 1;
+    }
+}
+
+fn draw_with_selection<F>(
+    screen: &mut Screen,
+    selection: Option<MouseSelection>,
+    draw: F,
+) -> Result<RenderedScreen>
+where
+    F: FnOnce(&mut Frame<'_>),
+{
+    let frame = screen.draw(|frame| {
+        draw(frame);
+        apply_mouse_selection(frame, selection.as_ref());
+    })?;
+    Ok(RenderedScreen::capture(frame.buffer, frame.area))
+}
+
+enum ClipboardResult {
+    System,
+    TerminalRequest,
+}
+
+fn copy_with_command(name: &str, args: &[&str], text: &str) -> io::Result<bool> {
+    let mut child = match Command::new(name)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| io::Error::other("clipboard command has no stdin"))?;
+    stdin.write_all(text.as_bytes())?;
+    drop(stdin);
+    let result = child.wait_with_output()?;
+    if result.status.success() {
+        Ok(true)
+    } else {
+        let error = String::from_utf8_lossy(&result.stderr).trim().to_owned();
+        Err(io::Error::other(if error.is_empty() {
+            format!("{name} exited with {}", result.status)
+        } else {
+            format!("{name}: {error}")
+        }))
+    }
+}
+
+fn copy_to_clipboard(text: &str) -> io::Result<ClipboardResult> {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        match copy_with_command("wl-copy", &[], text) {
+            Ok(true) => return Ok(ClipboardResult::System),
+            Ok(false) => {}
+            Err(_) => {}
+        }
+    }
+    if std::env::var_os("DISPLAY").is_some() {
+        for (name, args) in [
+            ("xclip", &["-selection", "clipboard", "-in"][..]),
+            ("xsel", &["--clipboard", "--input"][..]),
+        ] {
+            match copy_with_command(name, args, text) {
+                Ok(true) => return Ok(ClipboardResult::System),
+                Ok(false) => {}
+                Err(_) => {}
+            }
+        }
+    }
+
+    let encoded = BASE64.encode(text.as_bytes());
+    let request = format!("\x1b]52;c;{encoded}\x07");
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(request.as_bytes())?;
+    stdout.flush()?;
+    Ok(ClipboardResult::TerminalRequest)
+}
 impl Arrivals {
     fn observe(&mut self, newest: Option<i64>) -> bool {
         let newest = newest.unwrap_or(0);
@@ -591,6 +806,9 @@ impl Arrivals {
 }
 
 struct View {
+    rendered: Option<RenderedScreen>,
+    mouse_start: Option<MouseStart>,
+    mouse_selection: Option<MouseSelection>,
     help: bool,
     help_page: usize,
     page_size: usize,
@@ -654,6 +872,67 @@ struct View {
 }
 impl View {
     fn mouse(&mut self, mouse: MouseEvent, width: u16, height: u16) -> Action {
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.mouse_selection = None;
+                self.mouse_start = Some(MouseStart {
+                    position: Position::new(mouse.column, mouse.row),
+                    modifiers: mouse.modifiers,
+                    screen: self.rendered.clone(),
+                });
+                Action::None
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                let Some(start) = &self.mouse_start else {
+                    return Action::None;
+                };
+                let Some(screen) = start.screen.clone() else {
+                    return Action::None;
+                };
+                let end = Position::new(mouse.column, mouse.row);
+                if screen.symbol(start.position.x, start.position.y).is_none()
+                    || screen.symbol(end.x, end.y).is_none()
+                {
+                    return Action::None;
+                }
+                self.mouse_selection = Some(MouseSelection {
+                    start: start.position,
+                    end,
+                    screen,
+                });
+                Action::Redraw
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let start = self.mouse_start.take();
+                if let Some(selection) = self.mouse_selection.take() {
+                    let text = selection
+                        .screen
+                        .text_between(selection.start, selection.end);
+                    if text.is_empty() {
+                        Action::Redraw
+                    } else {
+                        Action::CopySelection(text)
+                    }
+                } else if let Some(start) = start {
+                    self.mouse_click(
+                        MouseEvent {
+                            kind: MouseEventKind::Down(MouseButton::Left),
+                            column: start.position.x,
+                            row: start.position.y,
+                            modifiers: start.modifiers,
+                        },
+                        width,
+                        height,
+                    )
+                } else {
+                    Action::None
+                }
+            }
+            _ => Action::None,
+        }
+    }
+
+    fn mouse_click(&mut self, mouse: MouseEvent, width: u16, height: u16) -> Action {
         if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
             || self.busy
             || self.composer.is_some()
@@ -778,6 +1057,9 @@ impl View {
 
     fn new() -> Self {
         Self {
+            rendered: None,
+            mouse_start: None,
+            mouse_selection: None,
             help: false,
             help_page: 0,
             page_size: detail_page_size(),
@@ -1022,6 +1304,8 @@ impl View {
         if key.kind != KeyEventKind::Press {
             return Action::None;
         }
+        self.mouse_start = None;
+        self.mouse_selection = None;
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             return Action::Quit;
         }
@@ -1913,6 +2197,7 @@ impl View {
 enum Action {
     None,
     Redraw,
+    CopySelection(String),
     Quit,
     ReloadRequests,
     ToggleInbox,
@@ -1970,7 +2255,7 @@ pub async fn terminal(address: &str) -> Result<()> {
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     let mut search_task: Option<tokio::task::JoinHandle<Result<SearchPage>>> = None;
     let mut overview_task: Option<tokio::task::JoinHandle<Result<OverviewCounts>>> = None;
-    display(&mut screen, &view)?;
+    display(&mut screen, &mut view)?;
     loop {
         let status_deadline = view.status_expires;
         tokio::select! {
@@ -1978,7 +2263,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 if view.status_expires.is_some_and(|deadline| Instant::now() >= deadline) {
                     view.status = None;
                     view.status_expires = None;
-                    display(&mut screen, &view)?;
+                    display(&mut screen, &mut view)?;
                 }
             }
             _ = interrupt.recv() => return Ok(()),
@@ -1993,7 +2278,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     if state.connected { overview_trigger.notify_one(); }
                 }
                 if state.connected { refresh_trigger.notify_one(); }
-                if was_unavailable != view.connection_unavailable { display(&mut screen, &view)?; }
+                if was_unavailable != view.connection_unavailable { display(&mut screen, &mut view)?; }
             }
             _ = overview_trigger.notified(), if view.overview.as_ref().is_some_and(|overview| overview.dirty) && overview_task.is_none() => {
                 if let Some(overview) = &mut view.overview {
@@ -2002,7 +2287,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                     overview.error = None;
                     let address = address.to_owned();
                     overview_task = Some(tokio::spawn(async move { fetch_overview(&address).await }));
-                    display(&mut screen, &view)?;
+                    display(&mut screen, &mut view)?;
                 }
             }
             _ = refresh_trigger.notified(), if !view.help && ((view.history.as_ref().is_some_and(|history| history.needs_load) && history_task.is_none()) || (view.history.is_none() && view.composer.is_none() && refresh.is_none() && submission.is_none())) => {
@@ -2067,7 +2352,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 let error = if errors.is_empty() { None } else { Some(format!("Refresh incomplete: {}; press R to retry", errors.iter().map(|(name, error)| format!("{name}: {error}")).collect::<Vec<_>>().join("; "))) };
                 if view.poll_summary != summary { view.poll_summary = summary; changed = true; }
                 if view.poll_error != error { view.poll_error = error; changed = true; }
-                if changed { display(&mut screen, &view)?; }
+                if changed { display(&mut screen, &mut view)?; }
                 // A successful page can reveal that an offset has moved beyond
                 // the end. Load the selected fallback page without a timer.
                 if (requests_ok && !view.request_loaded)
@@ -2091,7 +2376,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         Err(error) => { overview.counts = None; overview.error = Some(error.to_string()); }
                     }
                     if overview.dirty && !view.connection_unavailable { overview_trigger.notify_one(); }
-                    display(&mut screen, &view)?;
+                    display(&mut screen, &mut view)?;
                 }
             }
             result = async {
@@ -2108,7 +2393,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         Ok(page) => { search.page = Some(page); search.error = None; }
                         Err(error) => { search.page = None; search.error = Some(error.to_string()); }
                     }
-                    display(&mut screen, &view)?;
+                    display(&mut screen, &mut view)?;
                 }
             }
             result = async {
@@ -2130,7 +2415,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                             }
                             Err(error) => { history.error = Some(error.to_string()); }
                         }
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                     }
                 }
                 if view.history.as_ref().is_some_and(|history| history.needs_load) { refresh_trigger.notify_one(); }
@@ -2170,7 +2455,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         Err(error) => { if is_defer && rejection(&error) { view.defer_retry = None; } view.status = Some(if rejection(&error) { format!("Rejected: {error}; inspect current state") } else if is_defer { format!("Unconfirmed deferral: {error}; U retries the same action") } else { format!("Unconfirmed: {error}; check state before retry") }); }
                     }
                 }
-                display(&mut screen, &view)?;
+                display(&mut screen, &mut view)?;
                 refresh_trigger.notify_one();
             }
             event = receiver.recv() => {
@@ -2195,12 +2480,21 @@ pub async fn terminal(address: &str) -> Result<()> {
                         let (width, height) = terminal::size().unwrap_or((0, 0));
                         view.mouse(mouse, width, height)
                     }
-                    Event::Resize(width, height) => { view.resize_pages(page_size_for(width, height)); display(&mut screen, &view)?; continue; },
+                    Event::Resize(width, height) => { view.mouse_start = None; view.mouse_selection = None; view.resize_pages(page_size_for(width, height)); display(&mut screen, &mut view)?; continue; },
                     _ => continue,
                 };
                 match action {
                     Action::None => {},
-                    Action::Redraw => display(&mut screen, &view)?,
+                    Action::Redraw => display(&mut screen, &mut view)?,
+                    Action::CopySelection(text) => {
+                        view.status = Some(match copy_to_clipboard(&text) {
+                            Ok(ClipboardResult::System) => "Copied selection to system clipboard".into(),
+                            Ok(ClipboardResult::TerminalRequest) => "Clipboard request sent to terminal".into(),
+                            Err(error) => format!("Clipboard copy failed: {error}"),
+                        });
+                        view.status_expires = Some(Instant::now() + Duration::from_secs(4));
+                        display(&mut screen, &mut view)?;
+                    }
                     Action::Quit => return Ok(()),
                     Action::OpenHistory(kind, id) => {
                         generation = generation.wrapping_add(1);
@@ -2211,34 +2505,34 @@ pub async fn terminal(address: &str) -> Result<()> {
                             history.root_first = true;
                         }
                         view.history = Some(history);
-                        display(&mut screen, &view)?; refresh_trigger.notify_one();
+                        display(&mut screen, &mut view)?; refresh_trigger.notify_one();
                     },
                     Action::CloseHistory => {
                         generation = generation.wrapping_add(1);
                         view.history = None;
-                        display(&mut screen, &view)?; refresh_trigger.notify_one();
+                        display(&mut screen, &mut view)?; refresh_trigger.notify_one();
                     },
                     Action::LoadHistory => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?; refresh_trigger.notify_one();
+                        display(&mut screen, &mut view)?; refresh_trigger.notify_one();
                     },
                     Action::LoadSearch(query, after) => {
                         let address = address.to_owned();
                         search_task = Some(tokio::spawn(async move { fetch_search(&address, query, after).await }));
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                     },
                     Action::CloseSearch => {
                         if let Some(task) = search_task.take() { task.abort(); }
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         refresh_trigger.notify_one();
                     },
                     Action::LoadOverview => {
                         overview_trigger.notify_one();
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                     },
                     Action::CloseOverview => {
                         if let Some(task) = overview_task.take() { task.abort(); }
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         refresh_trigger.notify_one();
                     },
                     Action::ToggleNotices => {
@@ -2250,11 +2544,11 @@ pub async fn terminal(address: &str) -> Result<()> {
                             view.notice_view = !view.notice_view;
                         }
                         view.reset_notice_page();
-                        display(&mut screen, &view)?; refresh_trigger.notify_one();
+                        display(&mut screen, &mut view)?; refresh_trigger.notify_one();
                     },
                     Action::ReloadNotices => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?; refresh_trigger.notify_one();
+                        display(&mut screen, &mut view)?; refresh_trigger.notify_one();
                     },
                     Action::ToggleInbox => {
                         generation = generation.wrapping_add(1);
@@ -2266,24 +2560,24 @@ pub async fn terminal(address: &str) -> Result<()> {
                         }
                         view.inbox_loaded = false;
                         view.inbox_page = 0;
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         refresh_trigger.notify_one();
                     },
                     Action::ReloadInbox => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         refresh_trigger.notify_one();
                     },
                     Action::ReloadRequests => {
                         generation = generation.wrapping_add(1);
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         refresh_trigger.notify_one();
                     },
                     Action::SendInstruction(message) => {
                         generation = generation.wrapping_add(1);
                         if let Some(composer) = &mut view.composer { composer.error = None; }
                         view.busy = true;
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, false, false, submit_checked(&address, &Operation::SendMessage { message }).await)
@@ -2293,7 +2587,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         if let Some(composer) = &mut view.composer { composer.error = None; }
                         view.busy = true;
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, false, false, submit_checked(&address, &Operation::ReplyMessage { reply }).await)
@@ -2303,7 +2597,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         generation = generation.wrapping_add(1);
                         view.status = None;
                         view.busy = true;
-                        display(&mut screen, &view)?;
+                        display(&mut screen, &mut view)?;
                         let address = address.to_owned();
                         let is_notice = matches!(&operation, Operation::DismissNotice { .. });
                         let is_defer = matches!(&operation, Operation::DeferDecision { .. });
@@ -2463,14 +2757,15 @@ fn notice_pages(item: &NoticeItem) -> Vec<String> {
         .map(|part| part.iter().collect())
         .collect()
 }
-fn display(screen: &mut Screen, view: &View) -> Result<()> {
+fn display(screen: &mut Screen, view: &mut View) -> Result<()> {
     use std::fmt::Write as _;
     let mut output = String::new();
     macro_rules! println {
         ($($arg:tt)*) => {{ let _ = writeln!(&mut output, $($arg)*); }};
     }
     if view.help {
-        let help = "Decisions: h/l request; j/k or 1-9 choose; Enter confirms
+        let help = "Mouse: drag across text; release copies the selection
+Decisions: h/l request; j/k or 1-9 choose; Enter confirms
 d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
@@ -2485,24 +2780,28 @@ Reply: Enter continues/confirms; Esc cancels
 Custom: Enter submits; Ctrl-O suspends/resumes; Esc cancels
 ? opens help outside text entry
 Ctrl-G opens help anywhere; Ctrl-C quits";
-        screen.draw(|frame| {
-            let area = frame.area();
-            let lines = wrap_visible(help, usize::from(area.width).max(1));
-            let height = usize::from(area.height.saturating_sub(2));
-            let scroll = view.help_page.min(lines.len().saturating_sub(height));
-            let mut content = vec![
-                Line::from("Keyboard help · ↑↓ scroll · Esc closes"),
-                Line::from(""),
-            ];
-            content.extend(
-                lines
-                    .iter()
-                    .skip(scroll)
-                    .take(height)
-                    .map(|(line, _)| Line::from(line.as_str())),
-            );
-            frame.render_widget(Paragraph::new(content), area);
-        })?;
+        view.rendered = Some(draw_with_selection(
+            screen,
+            view.mouse_selection.clone(),
+            |frame| {
+                let area = frame.area();
+                let lines = wrap_visible(help, usize::from(area.width).max(1));
+                let height = usize::from(area.height.saturating_sub(2));
+                let scroll = view.help_page.min(lines.len().saturating_sub(height));
+                let mut content = vec![
+                    Line::from("Keyboard help · ↑↓ scroll · Esc closes"),
+                    Line::from(""),
+                ];
+                content.extend(
+                    lines
+                        .iter()
+                        .skip(scroll)
+                        .take(height)
+                        .map(|(line, _)| Line::from(line.as_str())),
+                );
+                frame.render_widget(Paragraph::new(content), area);
+            },
+        )?);
         return Ok(());
     }
     if view.busy {
@@ -2524,7 +2823,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         if composer.reply_to.is_none() {
             if composer.confirm_discard {
                 println!("Discard this uncertain instruction?\r\nDestination: all · group\r\nID: {}\r\ny discards; any other key keeps it.", safe(&composer.fields[0]));
-                return render(screen, &output);
+                return render(screen, view, &output);
             }
             let body = &composer.fields[3];
             let (width, _) = terminal::size().unwrap_or((80, 24));
@@ -2544,7 +2843,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
                     safe(error)
                 );
             }
-            return render(screen, &output);
+            return render(screen, view, &output);
         }
         let labels = ["Instruction text"];
         if composer.stage < composer.review_stage() {
@@ -2579,7 +2878,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
                 println!("\r\n{}\r\nEnter retries unchanged with the same identity; Esc discards the draft.", safe(error));
             }
         }
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     if let Some(lookup) = &view.history_lookup {
         match lookup.kind {
@@ -2600,7 +2899,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         if lookup.invalid {
             println!("Enter a positive numeric ID.");
         }
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     if let Some(history) = &view.history {
         let (_, section) = history_section(history.section);
@@ -2610,75 +2909,79 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             .map(|item| safe(&item.to_string()))
             .collect::<Vec<_>>()
             .join("\n\n");
-        screen.draw(|frame| {
-            let area = frame.area();
-            let regions = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(1),
-                    Constraint::Min(1),
-                    Constraint::Length(1),
-                ])
-                .split(area);
-            let state = if history.loading {
-                "loading"
-            } else if history.error.is_some() {
-                "unavailable"
-            } else if history.next_offset.is_some() {
-                "more"
-            } else {
-                "end"
-            };
-            frame.render_widget(
-                Paragraph::new(format!("History | {section} | {state}")),
-                regions[0],
-            );
-            if history.loading {
-                frame.render_widget(Paragraph::new("Loading history..."), regions[1]);
-            } else if let Some(error) = &history.error {
-                frame.render_widget(
-                    Paragraph::new(format!("History unavailable: {}. R retries.", safe(error)))
-                        .wrap(Wrap { trim: false }),
-                    regions[1],
-                );
-            } else if history.items.is_empty() {
-                frame.render_widget(Paragraph::new("No records in this section."), regions[1]);
-            } else {
-                let width = usize::from(regions[1].width).max(1);
-                let lines = wrap_visible(&content, width);
-                let max = lines.len().saturating_sub(usize::from(regions[1].height));
-                let (old_width, anchor, old_scroll) = history.anchor.get();
-                let moved = history.scroll.get() != old_scroll;
-                let scroll = if old_width != 0 && old_width != width && !moved {
-                    lines
-                        .iter()
-                        .rposition(|(_, start)| *start <= anchor)
-                        .unwrap_or(0)
+        view.rendered = Some(draw_with_selection(
+            screen,
+            view.mouse_selection.clone(),
+            |frame| {
+                let area = frame.area();
+                let regions = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(1),
+                        Constraint::Min(1),
+                        Constraint::Length(1),
+                    ])
+                    .split(area);
+                let state = if history.loading {
+                    "loading"
+                } else if history.error.is_some() {
+                    "unavailable"
+                } else if history.next_offset.is_some() {
+                    "more"
                 } else {
-                    history.scroll.get()
-                }
-                .min(max);
-                history.scroll.set(scroll);
-                let next_anchor = if old_width == 0 || moved {
-                    lines.get(scroll).map_or(0, |(_, start)| *start)
-                } else {
-                    anchor
+                    "end"
                 };
-                history.anchor.set((width, next_anchor, scroll));
-                history.max_scroll.set(max);
-                let visible = lines
-                    .iter()
-                    .skip(scroll)
-                    .take(usize::from(regions[1].height))
-                    .map(|(line, _)| Line::from(line.as_str()))
-                    .collect::<Vec<_>>();
-                frame.render_widget(Paragraph::new(visible), regions[1]);
-            }
-            frame.render_widget(
-                Paragraph::new("↑↓ scroll · PgUp/PgDn · 1-3 sections · q"),
-                regions[2],
-            );
-        })?;
+                frame.render_widget(
+                    Paragraph::new(format!("History | {section} | {state}")),
+                    regions[0],
+                );
+                if history.loading {
+                    frame.render_widget(Paragraph::new("Loading history..."), regions[1]);
+                } else if let Some(error) = &history.error {
+                    frame.render_widget(
+                        Paragraph::new(format!("History unavailable: {}. R retries.", safe(error)))
+                            .wrap(Wrap { trim: false }),
+                        regions[1],
+                    );
+                } else if history.items.is_empty() {
+                    frame.render_widget(Paragraph::new("No records in this section."), regions[1]);
+                } else {
+                    let width = usize::from(regions[1].width).max(1);
+                    let lines = wrap_visible(&content, width);
+                    let max = lines.len().saturating_sub(usize::from(regions[1].height));
+                    let (old_width, anchor, old_scroll) = history.anchor.get();
+                    let moved = history.scroll.get() != old_scroll;
+                    let scroll = if old_width != 0 && old_width != width && !moved {
+                        lines
+                            .iter()
+                            .rposition(|(_, start)| *start <= anchor)
+                            .unwrap_or(0)
+                    } else {
+                        history.scroll.get()
+                    }
+                    .min(max);
+                    history.scroll.set(scroll);
+                    let next_anchor = if old_width == 0 || moved {
+                        lines.get(scroll).map_or(0, |(_, start)| *start)
+                    } else {
+                        anchor
+                    };
+                    history.anchor.set((width, next_anchor, scroll));
+                    history.max_scroll.set(max);
+                    let visible = lines
+                        .iter()
+                        .skip(scroll)
+                        .take(usize::from(regions[1].height))
+                        .map(|(line, _)| Line::from(line.as_str()))
+                        .collect::<Vec<_>>();
+                    frame.render_widget(Paragraph::new(visible), regions[1]);
+                }
+                frame.render_widget(
+                    Paragraph::new("↑↓ scroll · PgUp/PgDn · 1-3 sections · q"),
+                    regions[2],
+                );
+            },
+        )?);
         return Ok(());
     }
     if let Some(overview) = &view.overview {
@@ -2698,100 +3001,104 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             println!("Loading current counts...");
         }
         println!("\r\nR refreshes; q or Esc returns.");
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     if let Some(search) = &view.search {
-        screen.draw(|frame| {
-            let area = frame.area();
-            let regions = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(2),
-                    Constraint::Min(1),
-                    Constraint::Length(2),
-                ])
-                .split(area);
-            let title = format!(
-                "Search records: {}{}",
-                safe(&search.query),
-                if search.editing { "_" } else { "" }
-            );
-            frame.render_widget(Paragraph::new(title).wrap(Wrap { trim: false }), regions[0]);
-            if search.editing {
-                frame.render_widget(
-                    Paragraph::new("Enter searches decisions, messages and notices."),
-                    regions[1],
+        view.rendered = Some(draw_with_selection(
+            screen,
+            view.mouse_selection.clone(),
+            |frame| {
+                let area = frame.area();
+                let regions = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(2),
+                        Constraint::Min(1),
+                        Constraint::Length(2),
+                    ])
+                    .split(area);
+                let title = format!(
+                    "Search records: {}{}",
+                    safe(&search.query),
+                    if search.editing { "_" } else { "" }
                 );
-            } else if search.loading {
-                frame.render_widget(Paragraph::new("Searching..."), regions[1]);
-            } else if let Some(error) = &search.error {
-                frame.render_widget(
-                    Paragraph::new(format!("Search unavailable: {}. R retries.", safe(error)))
-                        .wrap(Wrap { trim: false }),
-                    regions[1],
-                );
-            } else if let Some(page) = &search.page {
-                if page.items.is_empty() {
+                frame.render_widget(Paragraph::new(title).wrap(Wrap { trim: false }), regions[0]);
+                if search.editing {
                     frame.render_widget(
-                        Paragraph::new("No matching records on this page."),
+                        Paragraph::new("Enter searches decisions, messages and notices."),
                         regions[1],
                     );
-                } else {
-                    let height = usize::from(regions[1].height).max(1);
-                    let start = search.selected.saturating_add(1).saturating_sub(height);
-                    let rows = page
-                        .items
-                        .iter()
-                        .enumerate()
-                        .skip(start)
-                        .take(height)
-                        .map(|(index, item)| {
-                            let selected = index == search.selected;
-                            let label = match item.kind {
-                                HistoryKind::Decision => "Decision",
-                                HistoryKind::Message => "Message",
-                                HistoryKind::Notice => "Notice",
-                            };
-                            let line = format!(
-                                "{} {label} {}: {} {}",
-                                if selected { ">" } else { " " },
-                                safe(&item.sender),
-                                safe(&item.body),
-                                safe(&item.context)
-                            );
-                            Line::from(Span::styled(
-                                line,
-                                if selected {
-                                    Style::default()
-                                        .fg(
-                                            if std::env::var_os("NO_COLOR").is_none()
-                                                && std::env::var("TERM").ok().as_deref()
-                                                    != Some("dumb")
-                                            {
-                                                Color::Cyan
-                                            } else {
-                                                Color::Reset
-                                            },
-                                        )
-                                        .add_modifier(Modifier::BOLD)
-                                } else {
-                                    Style::default()
-                                },
-                            ))
-                        })
-                        .collect::<Vec<_>>();
-                    frame.render_widget(Paragraph::new(rows), regions[1]);
+                } else if search.loading {
+                    frame.render_widget(Paragraph::new("Searching..."), regions[1]);
+                } else if let Some(error) = &search.error {
+                    frame.render_widget(
+                        Paragraph::new(format!("Search unavailable: {}. R retries.", safe(error)))
+                            .wrap(Wrap { trim: false }),
+                        regions[1],
+                    );
+                } else if let Some(page) = &search.page {
+                    if page.items.is_empty() {
+                        frame.render_widget(
+                            Paragraph::new("No matching records on this page."),
+                            regions[1],
+                        );
+                    } else {
+                        let height = usize::from(regions[1].height).max(1);
+                        let start = search.selected.saturating_add(1).saturating_sub(height);
+                        let rows = page
+                            .items
+                            .iter()
+                            .enumerate()
+                            .skip(start)
+                            .take(height)
+                            .map(|(index, item)| {
+                                let selected = index == search.selected;
+                                let label = match item.kind {
+                                    HistoryKind::Decision => "Decision",
+                                    HistoryKind::Message => "Message",
+                                    HistoryKind::Notice => "Notice",
+                                };
+                                let line = format!(
+                                    "{} {label} {}: {} {}",
+                                    if selected { ">" } else { " " },
+                                    safe(&item.sender),
+                                    safe(&item.body),
+                                    safe(&item.context)
+                                );
+                                Line::from(Span::styled(
+                                    line,
+                                    if selected {
+                                        Style::default()
+                                            .fg(
+                                                if std::env::var_os("NO_COLOR").is_none()
+                                                    && std::env::var("TERM").ok().as_deref()
+                                                        != Some("dumb")
+                                                {
+                                                    Color::Cyan
+                                                } else {
+                                                    Color::Reset
+                                                },
+                                            )
+                                            .add_modifier(Modifier::BOLD)
+                                    } else {
+                                        Style::default()
+                                    },
+                                ))
+                            })
+                            .collect::<Vec<_>>();
+                        frame.render_widget(Paragraph::new(rows), regions[1]);
+                    }
                 }
-            }
-            frame.render_widget(
-                Paragraph::new(if search.editing {
-                    "Enter search · Esc cancel"
-                } else {
-                    "↑↓ select · Enter open · n/p pages\ne edit · Esc close"
-                }),
-                regions[2],
-            );
-        })?;
+                frame.render_widget(
+                    Paragraph::new(if search.editing {
+                        "Enter search · Esc cancel"
+                    } else {
+                        "↑↓ select · Enter open · n/p pages\ne edit · Esc close"
+                    }),
+                    regions[2],
+                );
+            },
+        )?);
         return Ok(());
     }
     if view.inbox_view || view.notice_view || (view.detail_page.is_none() && !view.priority_edit) {
@@ -2835,7 +3142,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         } else {
             println!("Operator inbox: no messages. ? help; q returns.");
         }
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     if view.notice_view {
         if let Some(status) = &view.status {
@@ -2861,7 +3168,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         } else {
             println!("No open completion notices. ? help; q returns.");
         }
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     let notice_count = if !view.notice_loaded {
         "loading".into()
@@ -2889,7 +3196,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
     }
     if !view.request_loaded {
         println!("Loading requests. i inbox; ? help; q quits.\r");
-        return render(screen, &output);
+        return render(screen, view, &output);
     }
     if let Some(pending) = view.current() {
         let request = &pending.request;
@@ -2902,7 +3209,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
                 pages.len(),
                 pages.get(page).map(String::as_str).unwrap_or("")
             );
-            return render(screen, &output);
+            return render(screen, view, &output);
         }
         println!(
             "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r",
@@ -2982,7 +3289,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
     } else {
         println!("No {} requests. i inbox; ? help; q quits.", "pending");
     }
-    render(screen, &output)
+    render(screen, view, &output)
 }
 
 // Preserve every printable scalar while wrapping to the available terminal cells.
@@ -3016,7 +3323,7 @@ fn wrap_visible(text: &str, width: usize) -> Vec<(String, usize)> {
 
 // Queue contents remain bounded to the current backend page. Page transitions
 // still fetch asynchronously; the list never claims an exact total if more exist.
-fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
+fn display_queue(screen: &mut Screen, view: &mut View) -> Result<()> {
     let (title, list_title, detail_title, rows, selected, more, loaded, detail) = if view.inbox_view
     {
         let rows = view
@@ -3205,196 +3512,202 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
     let use_color = std::env::var_os("NO_COLOR").is_none()
         && std::env::var("TERM").ok().as_deref() != Some("dumb");
     let accent = if use_color { Color::Cyan } else { Color::Reset };
-    screen.draw(|frame| {
-        let area = frame.area();
-        if area.width < 40 || area.height < 12 {
-            frame.render_widget(Paragraph::new("Resize terminal to at least 40 x 12"), area);
-            return;
-        }
-        let footer_height = if refresh_status.is_some() && action_status.is_some() {
-            3
-        } else {
-            2
-        } + u16::from(
-            view.draft_request_missing
-                && (view.busy
-                    || view.status.is_some()
-                    || view.suspended_instruction.is_some()
-                    || view.suspended_answer.is_some()),
-        );
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(footer_height),
-            ])
-            .split(area);
-        let notices = if !view.notice_loaded {
-            "loading".to_string()
-        } else if view.notice_next.is_some() {
-            format!("{}+", view.notices.len())
-        } else {
-            view.notices.len().to_string()
-        };
-        let arrival = "";
-        let heading = if area.width < 60 {
-            format!("Aviary {title} I:i N:{notices}{arrival}")
-        } else {
-            format!("Aviary  {title} | inbox | notices {notices}{arrival} | ? help")
-        };
-        frame.render_widget(
-            Paragraph::new(heading).style(Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-            sections[0],
-        );
-        let horizontal = area.width >= 70;
-        let panes = if horizontal {
-            Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
-                .split(sections[1])
-        } else {
-            Layout::default()
+    view.rendered = Some(draw_with_selection(
+        screen,
+        view.mouse_selection.clone(),
+        |frame| {
+            let area = frame.area();
+            if area.width < 40 || area.height < 12 {
+                frame.render_widget(Paragraph::new("Resize terminal to at least 40 x 12"), area);
+                return;
+            }
+            let footer_height = if refresh_status.is_some() && action_status.is_some() {
+                3
+            } else {
+                2
+            } + u16::from(
+                view.draft_request_missing
+                    && (view.busy
+                        || view.status.is_some()
+                        || view.suspended_instruction.is_some()
+                        || view.suspended_answer.is_some()),
+            );
+            let sections = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(4), Constraint::Min(3)])
-                .split(sections[1])
-        };
-        let focus_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
-        let list_label = if view.list_focus {
-            format!("[{list_title}]")
-        } else {
-            list_title.to_string()
-        };
-        let detail_label = if !view.list_focus {
-            format!("[{detail_title}]")
-        } else {
-            detail_title.clone()
-        };
-        let height = usize::from(panes[0].height.saturating_sub(2));
-        let capacity = height.saturating_sub(usize::from(!loaded || more)).max(1);
-        let start = selected.saturating_sub(capacity.saturating_sub(1));
-        let mut list = rows
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(capacity)
-            .map(|(idx, row)| {
-                let text = format!("{} {}", if idx == selected { ">" } else { " " }, row);
-                if idx == selected {
-                    Line::from(Span::styled(text, focus_style))
-                } else {
-                    Line::from(text)
-                }
-            })
-            .collect::<Vec<_>>();
-        if !loaded {
-            list.push(Line::from("Loading..."));
-        } else if more {
-            list.push(Line::from("More available ↓"));
-        }
-        let list_block = Block::default()
-            .borders(Borders::ALL)
-            .title(list_label)
-            .border_style(if view.list_focus {
-                focus_style
+                .constraints([
+                    Constraint::Length(1),
+                    Constraint::Min(1),
+                    Constraint::Length(footer_height),
+                ])
+                .split(area);
+            let notices = if !view.notice_loaded {
+                "loading".to_string()
+            } else if view.notice_next.is_some() {
+                format!("{}+", view.notices.len())
             } else {
-                Style::default()
-            });
-        frame.render_widget(Paragraph::new(list).block(list_block), panes[0]);
-        let inner_width = usize::from(panes[1].width.saturating_sub(2)).max(1);
-        let inner_height = usize::from(panes[1].height.saturating_sub(2)).max(1);
-        let lines = wrap_visible(&detail, inner_width);
-        let max_scroll = lines.len().saturating_sub(inner_height);
-        let (saved_scroll, saved_anchor) = if view.inbox_view {
-            (&view.inbox_scroll, &view.inbox_anchor)
-        } else if view.notice_view {
-            (&view.notice_scroll, &view.notice_anchor)
-        } else {
-            (&view.detail_scroll, &view.detail_anchor)
-        };
-        let (old_width, anchor, old_scroll) = saved_anchor.get();
-        let moved = saved_scroll.get() != old_scroll;
-        let mut scroll = if old_width != 0 && old_width != inner_width {
-            lines
+                view.notices.len().to_string()
+            };
+            let arrival = "";
+            let heading = if area.width < 60 {
+                format!("Aviary {title} I:i N:{notices}{arrival}")
+            } else {
+                format!("Aviary  {title} | inbox | notices {notices}{arrival} | ? help")
+            };
+            frame.render_widget(
+                Paragraph::new(heading)
+                    .style(Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+                sections[0],
+            );
+            let horizontal = area.width >= 70;
+            let panes = if horizontal {
+                Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+                    .split(sections[1])
+            } else {
+                Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(4), Constraint::Min(3)])
+                    .split(sections[1])
+            };
+            let focus_style = Style::default().fg(accent).add_modifier(Modifier::BOLD);
+            let list_label = if view.list_focus {
+                format!("[{list_title}]")
+            } else {
+                list_title.to_string()
+            };
+            let detail_label = if !view.list_focus {
+                format!("[{detail_title}]")
+            } else {
+                detail_title.clone()
+            };
+            let height = usize::from(panes[0].height.saturating_sub(2));
+            let capacity = height.saturating_sub(usize::from(!loaded || more)).max(1);
+            let start = selected.saturating_sub(capacity.saturating_sub(1));
+            let mut list = rows
                 .iter()
-                .rposition(|(_, start)| *start <= anchor)
-                .unwrap_or(0)
-        } else {
-            saved_scroll.get()
-        }
-        .min(max_scroll);
-        if !view.inbox_view && !view.notice_view && view.follow_answer {
-            if let Some(answer_line) = lines.iter().position(|(line, _)| line.starts_with("> ")) {
-                scroll = answer_line
-                    .saturating_sub(inner_height.saturating_sub(2))
-                    .min(max_scroll);
+                .enumerate()
+                .skip(start)
+                .take(capacity)
+                .map(|(idx, row)| {
+                    let text = format!("{} {}", if idx == selected { ">" } else { " " }, row);
+                    if idx == selected {
+                        Line::from(Span::styled(text, focus_style))
+                    } else {
+                        Line::from(text)
+                    }
+                })
+                .collect::<Vec<_>>();
+            if !loaded {
+                list.push(Line::from("Loading..."));
+            } else if more {
+                list.push(Line::from("More available ↓"));
             }
-        }
-        saved_scroll.set(scroll);
-        let next_anchor = if old_width == 0
-            || moved
-            || (!view.inbox_view && !view.notice_view && view.follow_answer)
-        {
-            lines.get(scroll).map_or(0, |(_, start)| *start)
-        } else {
-            anchor
-        };
-        saved_anchor.set((inner_width, next_anchor, scroll));
-        view.detail_max.set(max_scroll);
-        view.detail_actual.set(scroll);
-        let continuation = match (scroll > 0, scroll < max_scroll) {
-            (true, true) => " ↑↓",
-            (true, false) => " ↑",
-            (false, true) => " ↓",
-            _ => "",
-        };
-        let detail_block = Block::default()
-            .borders(Borders::ALL)
-            .title(format!("{detail_label}{continuation}"))
-            .border_style(if !view.list_focus {
-                focus_style
-            } else {
-                Style::default()
-            });
-        let content = lines
-            .iter()
-            .skip(scroll)
-            .take(inner_height)
-            .map(|(line, _)| {
-                if line.starts_with("> ") {
-                    Line::from(Span::styled(line.as_str(), focus_style))
+            let list_block = Block::default()
+                .borders(Borders::ALL)
+                .title(list_label)
+                .border_style(if view.list_focus {
+                    focus_style
                 } else {
-                    Line::from(line.as_str())
-                }
-            })
-            .collect::<Vec<_>>();
-        frame.render_widget(Paragraph::new(content).block(detail_block), panes[1]);
-        let hint = if view.editing {
-            "Enter submits · Ctrl-O suspends · Esc cancels"
-        } else if view.inbox_view {
-            "Tab focus · ↑↓ move · PgUp/PgDn · ?"
-        } else if view.notice_view {
-            "Tab focus · ↑↓ move · d dismiss · ?"
-        } else {
-            "Tab focus · ↑↓ · Enter confirms · ?"
-        };
-        let action_lines = action_status
-            .as_deref()
-            .map(|status| status.lines().map(safe).collect::<Vec<_>>().join("\n"));
-        let footer = match (refresh_status, action_lines.as_deref()) {
-            (Some(refresh), Some(action)) => {
-                format!("{}\n{}\n{}", safe(refresh), action, hint)
+                    Style::default()
+                });
+            frame.render_widget(Paragraph::new(list).block(list_block), panes[0]);
+            let inner_width = usize::from(panes[1].width.saturating_sub(2)).max(1);
+            let inner_height = usize::from(panes[1].height.saturating_sub(2)).max(1);
+            let lines = wrap_visible(&detail, inner_width);
+            let max_scroll = lines.len().saturating_sub(inner_height);
+            let (saved_scroll, saved_anchor) = if view.inbox_view {
+                (&view.inbox_scroll, &view.inbox_anchor)
+            } else if view.notice_view {
+                (&view.notice_scroll, &view.notice_anchor)
+            } else {
+                (&view.detail_scroll, &view.detail_anchor)
+            };
+            let (old_width, anchor, old_scroll) = saved_anchor.get();
+            let moved = saved_scroll.get() != old_scroll;
+            let mut scroll = if old_width != 0 && old_width != inner_width {
+                lines
+                    .iter()
+                    .rposition(|(_, start)| *start <= anchor)
+                    .unwrap_or(0)
+            } else {
+                saved_scroll.get()
             }
-            (Some(refresh), None) => format!("{}\n{}", safe(refresh), hint),
-            (None, Some(action)) => format!("{}\n{}", action, hint),
-            (None, None) => format!("\n{hint}"),
-        };
-        frame.render_widget(Paragraph::new(footer), sections[2]);
-    })?;
+            .min(max_scroll);
+            if !view.inbox_view && !view.notice_view && view.follow_answer {
+                if let Some(answer_line) = lines.iter().position(|(line, _)| line.starts_with("> "))
+                {
+                    scroll = answer_line
+                        .saturating_sub(inner_height.saturating_sub(2))
+                        .min(max_scroll);
+                }
+            }
+            saved_scroll.set(scroll);
+            let next_anchor = if old_width == 0
+                || moved
+                || (!view.inbox_view && !view.notice_view && view.follow_answer)
+            {
+                lines.get(scroll).map_or(0, |(_, start)| *start)
+            } else {
+                anchor
+            };
+            saved_anchor.set((inner_width, next_anchor, scroll));
+            view.detail_max.set(max_scroll);
+            view.detail_actual.set(scroll);
+            let continuation = match (scroll > 0, scroll < max_scroll) {
+                (true, true) => " ↑↓",
+                (true, false) => " ↑",
+                (false, true) => " ↓",
+                _ => "",
+            };
+            let detail_block = Block::default()
+                .borders(Borders::ALL)
+                .title(format!("{detail_label}{continuation}"))
+                .border_style(if !view.list_focus {
+                    focus_style
+                } else {
+                    Style::default()
+                });
+            let content = lines
+                .iter()
+                .skip(scroll)
+                .take(inner_height)
+                .map(|(line, _)| {
+                    if line.starts_with("> ") {
+                        Line::from(Span::styled(line.as_str(), focus_style))
+                    } else {
+                        Line::from(line.as_str())
+                    }
+                })
+                .collect::<Vec<_>>();
+            frame.render_widget(Paragraph::new(content).block(detail_block), panes[1]);
+            let hint = if view.editing {
+                "Enter submits · Ctrl-O suspends · Esc cancels"
+            } else if view.inbox_view {
+                "Tab focus · ↑↓ move · PgUp/PgDn · ?"
+            } else if view.notice_view {
+                "Tab focus · ↑↓ move · d dismiss · ?"
+            } else {
+                "Tab focus · ↑↓ · Enter confirms · ?"
+            };
+            let action_lines = action_status
+                .as_deref()
+                .map(|status| status.lines().map(safe).collect::<Vec<_>>().join("\n"));
+            let footer = match (refresh_status, action_lines.as_deref()) {
+                (Some(refresh), Some(action)) => {
+                    format!("{}\n{}\n{}", safe(refresh), action, hint)
+                }
+                (Some(refresh), None) => format!("{}\n{}", safe(refresh), hint),
+                (None, Some(action)) => format!("{}\n{}", action, hint),
+                (None, None) => format!("\n{hint}"),
+            };
+            frame.render_widget(Paragraph::new(footer), sections[2]);
+        },
+    )?);
     Ok(())
 }
 
-fn render(screen: &mut Screen, output: &str) -> Result<()> {
+fn render(screen: &mut Screen, view: &mut View, output: &str) -> Result<()> {
     let lines: Vec<Line<'_>> = output
         .lines()
         .map(|line| {
@@ -3433,12 +3746,16 @@ fn render(screen: &mut Screen, output: &str) -> Result<()> {
             Line::from(Span::styled(line, style))
         })
         .collect();
-    screen.draw(|frame| {
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            frame.area(),
-        )
-    })?;
+    view.rendered = Some(draw_with_selection(
+        screen,
+        view.mouse_selection.clone(),
+        |frame| {
+            frame.render_widget(
+                Paragraph::new(lines).wrap(Wrap { trim: false }),
+                frame.area(),
+            )
+        },
+    )?);
     Ok(())
 }
 

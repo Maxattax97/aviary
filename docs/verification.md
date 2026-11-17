@@ -611,3 +611,7 @@ The local operator-driven `tests/two_machine_smoke.py` rehearsal now starts a de
 ## GitHub Actions CI baseline (2026-11-12)
 
 The command sequence in the [CI scope decision](decisions.md#ci-scope-2026-11-12) passed locally: 18 Rust unit tests, 24 Rust integration tests, binary build, terminal pseudo-terminal check, and portable-skill smoke check. The workflow has not run on GitHub in this task; hosted-runner behavior and the repository's configured default branch name remain to be confirmed there.
+
+## Pane drag selection and clipboard (2026-11-17)
+
+`cargo check --offline`, `cargo test --locked`, and `cargo build --locked` passed. `python3 tests/mouse_pty.py` drove SGR press/drag/release events over the real Aviary TUI and verified the exact right-column marker reached a test `wl-copy` helper, while existing click navigation still worked and no decision was submitted. A live Wayland clipboard check drove the same drag through a PTY and verified `wl-paste --no-newline` returned the exact selected marker. A second live check ran Aviary in an isolated tmux pane, injected the SGR drag through the attached tmux client, and verified the host Wayland clipboard held only the selected right-column text. The pre-test clipboard was restored. These tests use synthetic mouse input and an isolated tmux client; physical st input and Herdr nested inside tmux still need the captain's manual check.
