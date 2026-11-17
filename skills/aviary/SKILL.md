@@ -1,37 +1,37 @@
 ---
 name: aviary
-description: Use the Aviary CLI to send or receive agent communications and request human decisions on a configured trusted deployment.
+description: Use Aviary CLI for agent communications and human decisions on a configured trusted deployment.
 ---
 
-# Aviary communication
+# Aviary
 
-Use the installed `aviary` executable and the deployment's configured `host:port` address; no MCP server or particular agent framework is required. Ask for the address, participant label, and channel if they are not available in task context. The service has no authentication or encryption: use it only on the operator's trusted network. Participant names and channel membership are routing labels, not access control.
+Use the installed `aviary` CLI and configured `host:port` address. The CLI accepts one JSON operation with `aviary call ADDRESS JSON`, prints JSON on success, and exits nonzero on error. See Aviary's `docs/cli.md` for all operations and current schemas.
 
-`aviary call ADDRESS JSON` prints a JSON result on success and exits nonzero with an error on stderr on failure. For larger operations, use `aviary call ADDRESS -` and supply one JSON object on standard input, ending with EOF; raw stdin is limited to 1 MiB and the serialized wire envelope must also fit. Retain each returned numeric ID. Submission identities are caller-supplied, unique across the deployment and shared by decisions, messages, replies, and notices. Generate a fresh identity for each new submission; after a timeout or disconnect the outcome is unknown, so retry **the identical content with the same identity**. A conflicting retry fails. Store the identity and content until acceptance is known. A successful transport send alone is not acceptance. The current protocol is provisional; consult the matching Aviary `docs/cli.md` and README for operation shapes and limits. Use `decision_queue`, `notices_page`, and `inbox_page` with `offset` and the returned `next_offset` to traverse queues and inboxes. For `history_page`, supply root `kind`, `id`, and `section` (`decisions`, `messages`, or `outcomes`), and traverse each section separately. Start at offset 0 and stop when `next_offset` is null. Concurrent changes can shift offset pages. Legacy unpaged list, inbox, and history results can exceed the response frame limit (3 MiB for version 2; 1 MiB for version 1).
+Aviary separates three kinds of work:
 
-## Request a human decision
+- **Decisions** are actionable questions for the operator. Submit one only when human judgment or authorization is needed. The operator's answer is explicit; a recommendation is not an answer.
+- **Messages** are targeted communications between participants or groups. They appear in the recipient's inbox, not the decision queue.
+- **Notices** report completed work and its result. They appear in the operator's completion notices, not as a request for a decision.
 
-A decision needs `identity`, `agent`, `question`, and an `options` array (which may be empty). `recommendation` is a zero-based option index and requires a nonempty `reason`; omit both when there is no recommendation. Optional `explanation`, `context`, `activity`, and `importance` (0–5) provide decision context. An operator must explicitly confirm; do not treat a recommendation as an answer.
+Pending decisions have importance 0–5 (default 0). Higher importance appears first; items of equal importance retain their queue order. The operator can change importance, and deferral keeps a decision pending while moving it to the bottom of its importance group. Do not use a decision as a general status message.
 
-For this example set `AVIARY_ADDR`, `AVIARY_KEY` (a fresh stable retry identity), and `AVIARY_AGENT` in the environment. Construct JSON with a serializer rather than interpolating untrusted text into shell or JSON:
+## Submit and retrieve a decision
+
+Give every new submission a fresh deployment-wide `identity`; retain it with the exact content. If the result is unknown after timeout or disconnect, retry the same operation with the same identity and content. An identical retry returns the original ID; changed content with that identity fails. Set `AVIARY_ADDR`, `AVIARY_KEY`, and `AVIARY_AGENT` for these examples.
 
 ```sh
-request=$(python3 -c 'import json,os; print(json.dumps({"op":"submit","request":{"identity":os.environ["AVIARY_KEY"],"agent":os.environ["AVIARY_AGENT"],"question":"Proceed?","options":["No","Yes"],"recommendation":1,"reason":"Checks passed"}}))')
+request=$(python3 -c 'import json,os; print(json.dumps({"op":"submit","request":{"identity":os.environ["AVIARY_KEY"],"agent":os.environ["AVIARY_AGENT"],"question":"Proceed?","options":["No","Yes"],"importance":4,"recommendation":1,"reason":"Checks passed"}}))')
 accepted=$(aviary call "$AVIARY_ADDR" "$request")
 printf '%s\n' "$accepted"
 id=$(printf '%s' "$accepted" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 aviary call "$AVIARY_ADDR" "{\"op\":\"get\",\"id\":$id}"
 ```
 
-`get` returns `answer: null` while pending; a response has `type` (`suggested` or `custom`) and `value`, with an original zero-based `index` for suggested answers. Use `aviary wait ADDRESS ID` to wait for an answer or a deferral event. If the output has `deferred_event`, retain that event ID and continue with `aviary wait ADDRESS ID --after-event EVENT_ID` when appropriate. A deferral is not an answer; move on if possible. The waiter subscribes to change hints and exits on a service error. Do not submit an answer on the operator's behalf unless authorized.
+`get` returns `answer: null` while pending. Use `aviary wait ADDRESS ID` to wait for an answer or deferral. A deferral is not an answer; retain its `deferred_event` ID and resume with `aviary wait ADDRESS ID --after-event EVENT_ID`. Do not answer on the operator's behalf unless explicitly authorized.
 
-Run `aviary watch ADDRESS` to receive JSON change hints and connection state. Hints can coalesce and are not durable records; read `decision_queue`, `decision_events`, or the relevant inbox after connecting and after each hint. On reconnect, reread durable state.
+## Send and retrieve a message
 
-To inspect and reorder pending decisions, read `decision_queue` pages and use `swap_decisions` with the two IDs and their listed `version` values. A swap only succeeds at equal importance; on a stale-queue error refresh the listing. Supply a new deployment-unique action identity and reuse the exact operation and identity after an unknown outcome.
-
-## Exchange channel messages
-
-Channels must already exist with the sender and recipient labels as members. A direct target is `{"kind":"participant","name":"..."}`; `{"kind":"group"}` addresses all other channel members. Set `AVIARY_ADDR`, `AVIARY_KEY` (fresh for this message), `AVIARY_AGENT`, `AVIARY_CHANNEL`, and `AVIARY_RECIPIENT`:
+The channel must already include the sender and recipient. Set `AVIARY_KEY` to a fresh identity for this message, and set `AVIARY_CHANNEL` and `AVIARY_RECIPIENT`. Inbox reads do not remove messages.
 
 ```sh
 message=$(python3 -c 'import json,os; print(json.dumps({"op":"send_message","message":{"identity":os.environ["AVIARY_KEY"],"channel":os.environ["AVIARY_CHANNEL"],"sender":os.environ["AVIARY_AGENT"],"target":{"kind":"participant","name":os.environ["AVIARY_RECIPIENT"]},"body":"Please review"}}))')
@@ -40,4 +40,6 @@ inbox=$(python3 -c 'import json,os; print(json.dumps({"op":"inbox_page","partici
 aviary call "$AVIARY_ADDR" "$inbox"
 ```
 
-Inbox reads are non-destructive; follow `next_offset` to retrieve later pages. To request one reply, set `expects_reply: true` on a direct message and retain its message ID; group requests are rejected. The addressed participant sends `reply_message` with `reply` containing a new stable `identity`, `request_id`, its `sender` label, and `body`. Retrieve with `get_message_response` or `aviary wait-message ADDRESS ID`. An identical reply retry returns the original response ID; a different second response is rejected. The response is also in the requester's inbox. For completion notices, request history, channel creation, operator controls, schemas, and example commands, consult the matching `docs/cli.md` and README. Do not infer authorization from a routing label.
+Use `inbox_page` and `notices_page` with `offset`, following `next_offset` until null. Submit completed work with `submit_notice`; use `decision_queue` to read pending decisions. For larger operations, pass JSON on stdin with `aviary call ADDRESS - < operation.json`.
+
+The service has no authentication, authorization, or encryption. Participant and channel names route communications; they do not establish identity or access control. Use only on the configured trusted deployment. The protocol is provisional; coordinate client updates with the service and current CLI documentation.
