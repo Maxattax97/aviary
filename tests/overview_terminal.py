@@ -10,6 +10,7 @@ from terminal_reconnect import restart, stop
 def main() -> None:
     with Service() as service:
         assert service.call({"op": "overview"}) == {"decisions": 0, "messages": 0, "notices": 0}
+        service.call({"op": "create_project", "id": "launch", "description": "Release the first build", "status": "blocked", "priority": 5})
         service.call({"op": "create_channel", "channel": {"name": "overview", "members": ["alpha", "operator"]}})
         with Terminal(service) as terminal:
             terminal.expect("Decisions")
@@ -17,6 +18,12 @@ def main() -> None:
             terminal.expect("Pending decisions: 0")
             terminal.expect("Retained operator messages: 0")
             terminal.expect("Open completion notices: 0")
+            terminal.send("p")
+            terminal.expect("In-flight projects")
+            terminal.expect("launch — blocked · priority 5")
+            terminal.expect("Release the first build")
+            terminal.send("p")
+            terminal.expect("Pending decisions: 0")
             decision = service.call({"op": "submit", "request": {"identity": "overview-d", "agent": "alpha", "question": "Choose", "options": []}})["id"]
             for i in range(27):
                 service.call({"op": "send_message", "message": {"identity": f"overview-m{i}", "channel": "overview", "sender": "alpha", "target": {"kind": "participant", "name": "operator"}, "body": "Message" + "x" * 40000}})

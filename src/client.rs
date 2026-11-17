@@ -313,17 +313,40 @@ struct OverviewCounts {
     notices: u64,
 }
 
+#[derive(serde::Deserialize)]
+struct ProjectRecord {
+    id: String,
+    description: String,
+    status: String,
+    priority: u8,
+    decision_count: u64,
+}
+
+#[derive(serde::Deserialize)]
+struct ProjectList {
+    projects: Vec<ProjectRecord>,
+}
+
 #[derive(Default)]
 struct OverviewView {
     counts: Option<OverviewCounts>,
+    projects: Option<Vec<ProjectRecord>>,
     error: Option<String>,
     dirty: bool,
     loading: bool,
+    project_mode: bool,
+    project_selected: usize,
+    project_scroll: usize,
 }
 
-async fn fetch_overview(address: &str) -> Result<OverviewCounts> {
-    let value = network::call_with_timeout(address, &Operation::Overview, READ_TIMEOUT_MS).await?;
-    Ok(serde_json::from_value(value)?)
+async fn fetch_overview(address: &str) -> Result<(OverviewCounts, Vec<ProjectRecord>)> {
+    let (counts, projects) = tokio::try_join!(
+        network::call_with_timeout(address, &Operation::Overview, READ_TIMEOUT_MS),
+        network::call_with_timeout(address, &Operation::ListProjects, READ_TIMEOUT_MS),
+    )?;
+    let counts = serde_json::from_value(counts)?;
+    let projects: ProjectList = serde_json::from_value(projects)?;
+    Ok((counts, projects.projects))
 }
 
 #[derive(Default)]
@@ -1293,6 +1316,56 @@ impl View {
                     self.overview = None;
                     Action::CloseOverview
                 }
+                KeyCode::Char('p') if !overview.project_mode => {
+                    overview.project_mode = true;
+                    overview.project_selected = 0;
+                    overview.project_scroll = 0;
+                    Action::Redraw
+                }
+                KeyCode::Char('p') => {
+                    overview.project_mode = false;
+                    Action::Redraw
+                }
+                KeyCode::Down | KeyCode::Char('j') if overview.project_mode => {
+                    let count = overview.projects.as_ref().map_or(0, |projects| {
+                        projects
+                            .iter()
+                            .filter(|project| project.status != "completed")
+                            .count()
+                    });
+                    overview.project_selected = overview
+                        .project_selected
+                        .saturating_add(1)
+                        .min(count.saturating_sub(1));
+                    let capacity = usize::from(
+                        terminal::size()
+                            .map(|(_, rows)| rows)
+                            .unwrap_or(24)
+                            .saturating_sub(9),
+                    )
+                    .max(1);
+                    overview.project_scroll = overview
+                        .project_selected
+                        .saturating_sub(capacity.saturating_sub(1));
+                    Action::Redraw
+                }
+                KeyCode::Up | KeyCode::Char('k') if overview.project_mode => {
+                    overview.project_selected = overview.project_selected.saturating_sub(1);
+                    let capacity = usize::from(
+                        terminal::size()
+                            .map(|(_, rows)| rows)
+                            .unwrap_or(24)
+                            .saturating_sub(9),
+                    )
+                    .max(1);
+                    overview.project_scroll =
+                        overview.project_scroll.min(overview.project_selected).max(
+                            overview
+                                .project_selected
+                                .saturating_sub(capacity.saturating_sub(1)),
+                        );
+                    Action::Redraw
+                }
                 KeyCode::Char('R') if !overview.loading => {
                     overview.dirty = true;
                     Action::LoadOverview
@@ -1969,7 +2042,9 @@ pub async fn terminal(address: &str) -> Result<()> {
     > = None;
     let mut history_task: Option<tokio::task::JoinHandle<_>> = None;
     let mut search_task: Option<tokio::task::JoinHandle<Result<SearchPage>>> = None;
-    let mut overview_task: Option<tokio::task::JoinHandle<Result<OverviewCounts>>> = None;
+    let mut overview_task: Option<
+        tokio::task::JoinHandle<Result<(OverviewCounts, Vec<ProjectRecord>)>>,
+    > = None;
     display(&mut screen, &view)?;
     loop {
         let status_deadline = view.status_expires;
@@ -2087,7 +2162,14 @@ pub async fn terminal(address: &str) -> Result<()> {
                 if let Some(overview) = &mut view.overview {
                     overview.loading = false;
                     match result {
-                        Ok(counts) => { overview.counts = Some(counts); overview.error = None; }
+                        Ok((counts, projects)) => {
+                            let active_count = projects.iter().filter(|project| project.status != "completed").count();
+                            overview.project_selected = overview.project_selected.min(active_count.saturating_sub(1));
+                            overview.project_scroll = overview.project_scroll.min(overview.project_selected);
+                            overview.counts = Some(counts);
+                            overview.projects = Some(projects);
+                            overview.error = None;
+                        }
                         Err(error) => { overview.counts = None; overview.error = Some(error.to_string()); }
                     }
                     if overview.dirty && !view.connection_unavailable { overview_trigger.notify_one(); }
@@ -2474,7 +2556,7 @@ fn display(screen: &mut Screen, view: &View) -> Result<()> {
 d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
 i inbox; n notices; m instruction
-v overview
+v overview; p projects/status/priority
 / search retained records
 Inbox: Tab focus; arrows move; r reply; H history
 Notices: Tab focus; arrows move; d dismiss
@@ -2682,6 +2764,62 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         return Ok(());
     }
     if let Some(overview) = &view.overview {
+        if overview.project_mode {
+            println!("In-flight projects\r\n");
+            if view.connection_unavailable {
+                println!("Unavailable: live connection disconnected.");
+            } else if overview.loading || overview.dirty {
+                println!("Loading projects...");
+            } else if let Some(error) = &overview.error {
+                println!("Unavailable: {}\r\nR retries.", safe(error));
+            } else if let Some(projects) = &overview.projects {
+                let active: Vec<&ProjectRecord> = projects
+                    .iter()
+                    .filter(|project| project.status != "completed")
+                    .collect();
+                if active.is_empty() {
+                    println!("No in-flight projects.");
+                } else {
+                    let capacity = usize::from(
+                        terminal::size()
+                            .map(|(_, rows)| rows)
+                            .unwrap_or(24)
+                            .saturating_sub(9),
+                    )
+                    .max(1);
+                    for (index, project) in active
+                        .iter()
+                        .skip(overview.project_scroll)
+                        .take(capacity)
+                        .enumerate()
+                    {
+                        let absolute = overview.project_scroll + index;
+                        println!(
+                            "{}{} — {} · priority {}",
+                            if absolute == overview.project_selected {
+                                "> "
+                            } else {
+                                "  "
+                            },
+                            safe(&project.id),
+                            safe(&project.status),
+                            project.priority
+                        );
+                    }
+                    if let Some(project) = active.get(overview.project_selected) {
+                        println!(
+                            "\r\n{}\r\nAssociated decisions: {}",
+                            safe(&project.description),
+                            project.decision_count
+                        );
+                    }
+                }
+            } else {
+                println!("Loading projects...");
+            }
+            println!("\r\nj/k select · R refresh · p returns to counts · q or Esc closes.");
+            return render(screen, &output);
+        }
         println!("Overview\r\n");
         if view.connection_unavailable {
             println!("Unavailable: live connection disconnected.");
@@ -2697,7 +2835,7 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
         } else {
             println!("Loading current counts...");
         }
-        println!("\r\nR refreshes; q or Esc returns.");
+        println!("\r\np in-flight projects · R refreshes; q or Esc returns.");
         return render(screen, &output);
     }
     if let Some(search) = &view.search {
