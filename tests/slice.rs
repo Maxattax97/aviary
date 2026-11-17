@@ -732,6 +732,73 @@ fn priority_override_and_deferred_recovery() -> TestResult<()> {
 }
 
 #[test]
+fn project_priority_inheritance_and_decision_override() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-projects-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    call(
+        &address,
+        json!({"op":"create_project","id":"launch","description":"Launch work","status":"in_progress","priority":4}),
+    )?;
+    let inherited = call(&address, json!({"op":"submit","request":{"identity":"project-inherited","agent":"worker","question":"Choose","options":[]}}))?["id"].as_i64().ok_or("missing id")?;
+    let overridden = call(&address, json!({"op":"submit","request":{"identity":"project-overridden","agent":"worker","question":"Choose","options":[]}}))?["id"].as_i64().ok_or("missing id")?;
+    call(
+        &address,
+        json!({"op":"associate_decision","id":inherited,"project_id":"launch"}),
+    )?;
+    call(
+        &address,
+        json!({"op":"associate_decision","id":overridden,"project_id":"launch"}),
+    )?;
+    let queue = call(&address, json!({"op":"decision_queue"}))?;
+    assert_eq!(queue["requests"][0]["id"], inherited);
+    assert_eq!(queue["requests"][0]["importance"], 4);
+    call(
+        &address,
+        json!({"op":"set_importance","id":overridden,"importance":1}),
+    )?;
+    call(
+        &address,
+        json!({"op":"update_project","id":"launch","description":"Launch work","status":"blocked","priority":5}),
+    )?;
+    let list = call(&address, json!({"op":"list"}))?;
+    let items = list["requests"].as_array().ok_or("missing decisions")?;
+    let inherited_item = items
+        .iter()
+        .find(|item| item["id"] == inherited)
+        .ok_or("missing inherited decision")?;
+    let override_item = items
+        .iter()
+        .find(|item| item["id"] == overridden)
+        .ok_or("missing overridden decision")?;
+    assert_eq!(inherited_item["importance"], 5);
+    assert_eq!(inherited_item["project_id"], "launch");
+    assert_eq!(override_item["importance"], 1);
+    let cleared = call(&address, json!({"op":"clear_importance","id":overridden}))?;
+    assert_eq!(cleared["importance"], 5);
+    let inherited_again = call(&address, json!({"op":"list"}))?;
+    let inherited_again = inherited_again["requests"]
+        .as_array()
+        .ok_or("missing decisions")?;
+    let reset_item = inherited_again
+        .iter()
+        .find(|item| item["id"] == overridden)
+        .ok_or("missing reset decision")?;
+    assert_eq!(reset_item["importance"], 5);
+    let projects = call(&address, json!({"op":"list_projects"}))?;
+    assert_eq!(projects["projects"][0]["status"], "blocked");
+    assert_eq!(projects["projects"][0]["decision_count"], 2);
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}
+
+#[test]
 fn completion_notice_retry_and_dismissal_recover() -> TestResult<()> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let address = listener.local_addr()?.to_string();

@@ -321,6 +321,7 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
             &request.operation,
             Operation::Submit { .. }
                 | Operation::SetImportance { .. }
+                | Operation::ClearImportance { .. }
                 | Operation::SetDeferred { .. }
                 | Operation::DeferDecision { .. }
                 | Operation::SwapDecisions { .. }
@@ -331,6 +332,9 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
                 | Operation::ReplyMessage { .. }
                 | Operation::SubmitNotice { .. }
                 | Operation::DismissNotice { .. }
+                | Operation::CreateProject { .. }
+                | Operation::UpdateProject { .. }
+                | Operation::AssociateDecision { .. }
         );
         tracing::debug!("processing request");
         let result = if !matches!(request.version, 1 | VERSION)

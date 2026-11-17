@@ -95,3 +95,13 @@ The following candidate V1 requirements derive from US-072–079 and the amended
 | SYS-071 | Allow a client to recover changes missed while disconnected by reconciling asynchronous notifications with durable state. | US-053, US-080, US-081 | Preserve correctness across transient disconnection | Test: Disconnect a client during several changes, reconnect, reconcile from its last cursor or full bounded reads, and recover all applicable current state without treating a notification as durable acceptance. | Cursor scope, event retention, duplicates, ordering and compatibility. |
 
 The color and non-color obligations remain SYS-048 and SYS-049; the requested use of color and framing should be addressed together with SYS-064, not treated as a reason to rely on color alone. The proposed SYS-005 amendment and exact disposition of SYS-045 require baseline review. Existing message history and retry requirements must be reconciled with removal from the active work queue rather than silently deleted. SYS-070–071 require a transport design evaluation; they do not select a replacement for the current ZeroMQ target or establish that polling has been removed from the prototype.
+
+## Project overview first-version requirements
+
+This authorized first version adds the following requirements to the baseline. Projects are conceptual records and do not identify or control agents or workspaces.
+
+| ID | Requirement | Verification and acceptance criterion |
+|---|---|---|
+| SYS-072 | The system shall let the operator list projects and create or update each project's description, in-progress/blocked/completed status and default importance from 0 through 5. | Create, list and update a project through the documented CLI operations; verify persisted fields and decision count after service restart (T-072). |
+| SYS-073 | The system shall associate or disassociate a decision with a project independently of its activity correlation label. | Associate and remove an existing decision; verify project association in queue output and project counts (T-073). |
+| SYS-074 | The system shall order an associated decision using its explicit operator importance override when set, otherwise the project default, otherwise its submitted importance. | Verify inheritance, project-default changes, explicit override precedence, clearing an override, and unchanged behavior for decisions without project associations (T-074). |

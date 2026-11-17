@@ -2905,12 +2905,17 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             return render(screen, &output);
         }
         println!(
-            "{} queue: {}/{}{} | importance {}\r\n{}\r\n{}\r",
+            "{} queue: {}/{}{} | importance {}{}\r\n{}\r\n{}\r",
             "Decisions",
             view.request_offset + view.current + 1,
             view.request_offset + view.requests.len(),
             if view.request_next.is_some() { "+" } else { "" },
             pending.importance,
+            pending
+                .project_id
+                .as_deref()
+                .map(|id| format!(" | project {id}"))
+                .unwrap_or_default(),
             preview(&format!("Request {} from {}", pending.id, request.agent)),
             preview(&request.question)
         );
@@ -3452,6 +3457,7 @@ mod tests {
             id: 42,
             importance: 0,
             deferred: false,
+            project_id: None,
             request: DecisionRequest {
                 identity: "test".into(),
                 agent: "agent".into(),
