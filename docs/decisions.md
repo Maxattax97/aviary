@@ -398,6 +398,10 @@ Schema creation, decision retry-key backfill, and queue-index backfill are appli
 
 Automatic local service startup uses one 15-second deadline across endpoint probing, child readiness, and service identity verification. Service identity verification also retains a five-second maximum, further limited by the remaining shared deadline. Timing out does not prove that the detached child failed or stopped; the endpoint and service log remain the recovery evidence. The deadline bounds the caller's startup wait, not child lifetime or work already accepted by the operating system.
 
+## Selected option wrapping (2026-11-17)
+
+The split-pane decision detail keeps selected-option styling attached to the option's Unicode-scalar range before wrapping. Each wrapped visual row uses its scalar start anchor to decide whether it belongs to that selected option, so continuation rows stay highlighted and the following option does not. Wrapping remains grapheme-aware and measures terminal cells with `unicode-width`.
+
 ## Shared-work queue proposal (2026-11-11)
 
 The [P-03 proposal](shared-work-queue-proposal.md) makes one-claim/manual-recovery, fencing, idempotent action receipts, bounded discovery and nondestructive coexistence concrete for review. These are proposed choices, not current behavior or an approved replacement for `all` group fan-out.

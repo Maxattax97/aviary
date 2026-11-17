@@ -3014,9 +3014,15 @@ fn wrap_visible(text: &str, width: usize) -> Vec<(String, usize)> {
     lines
 }
 
+fn is_selected_option_line(start: usize, selected_range: Option<(usize, usize)>) -> bool {
+    selected_range
+        .is_some_and(|(option_start, option_end)| start >= option_start && start < option_end)
+}
+
 // Queue contents remain bounded to the current backend page. Page transitions
 // still fetch asynchronously; the list never claims an exact total if more exist.
 fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
+    let mut selected_option_range = None;
     let (title, list_title, detail_title, rows, selected, more, loaded, detail) = if view.inbox_view
     {
         let rows = view
@@ -3128,12 +3134,16 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
                     } else {
                         ""
                     };
+                    let option_start = text.chars().count();
                     text.push_str(&format!(
                         "{mark} {}. {prefix}{}{}\n",
                         position + 1,
                         safe(option),
                         rec
                     ));
+                    if view.selected == Some(position) {
+                        selected_option_range = Some((option_start, text.chars().count() - 1));
+                    }
                 }
                 let mark = if view.selected == Some(view.choices().len()) {
                     ">"
@@ -3360,8 +3370,9 @@ fn display_queue(screen: &mut Screen, view: &View) -> Result<()> {
             .iter()
             .skip(scroll)
             .take(inner_height)
-            .map(|(line, _)| {
-                if line.starts_with("> ") {
+            .map(|(line, start)| {
+                let selected_option_line = is_selected_option_line(*start, selected_option_range);
+                if line.starts_with("> ") || selected_option_line {
                     Line::from(Span::styled(line.as_str(), focus_style))
                 } else {
                     Line::from(line.as_str())
@@ -3583,6 +3594,37 @@ mod tests {
                 .collect::<String>(),
             "a👩‍💻e\u{301}鳥z"
         );
+    }
+
+    #[test]
+    fn selected_option_style_covers_wrapped_unicode_lines_only() {
+        let detail = "Answers:\n> 1. a long option with 鳥 and 👩‍💻\n  2. next option";
+        let option_start = detail.find("> 1.").expect("selected option");
+        let option_end = detail.find("\n  2.").expect("following option");
+        let range = Some((
+            detail[..option_start].chars().count(),
+            detail[..option_end].chars().count(),
+        ));
+        let lines = wrap_visible(detail, 8);
+        let selected = lines
+            .iter()
+            .filter(|(_, start)| is_selected_option_line(*start, range))
+            .map(|(line, _)| line.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            selected.len() > 2,
+            "long option wraps across several rows: {selected:?}"
+        );
+        assert!(selected
+            .first()
+            .is_some_and(|line| line.starts_with("> 1.")));
+        assert!(selected.iter().any(|line| line.contains("鳥")));
+        assert!(selected.iter().any(|line| line.contains("👩‍💻")));
+        assert!(!selected.iter().any(|line| line.contains("next option")));
+        let next_start = detail[..detail.find("  2.").expect("next option")]
+            .chars()
+            .count();
+        assert!(!is_selected_option_line(next_start, range));
     }
 
     #[test]
