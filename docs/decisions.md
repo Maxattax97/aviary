@@ -413,3 +413,7 @@ The current scheme uses terminal-controlled basic ANSI cyan for focus and select
 ## Retained-record search (2026-11-12)
 
 The terminal now searches retained decisions, messages and completion notices, including answered decisions and dismissed notices. The new `search_records` operation searches decision agent, question, explanation, context, activity, options, recommendation reason and answer value; message sender, body, context and activity; and notice agent, work, result and activity. It returns bounded previews in decision, message, notice order, then ID order, with an exclusive kind-and-ID cursor. Matching and query limits remain as in the message-search decision. Search result pages are separate snapshots, and scans have no latency bound. Search results open their own kind of history with the selected root first; notice roots can also be looked up by ID. The existing `search_messages` operation remains available. Labels do not authenticate and search exposes retained records to trusted clients.
+
+## Custom answer cursor editing
+
+The custom-answer editor tracks its cursor in Unicode grapheme clusters, so left/right, insertion, backspace and delete do not split a combining sequence or emoji cluster. Home and End move to the line boundaries. The cursor remains part of a suspended custom draft when temporarily navigating elsewhere. Enter still submits the exact nonempty draft; Esc retains its existing cancel behavior.
