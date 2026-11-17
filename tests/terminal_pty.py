@@ -152,12 +152,14 @@ def exercise_instructions(service: Service) -> None:
         terminal.send("m")
         terminal.expect("Compose instruction")
         terminal.send("Start work?")
+        terminal.send("\x1b[D" * 5 + "very ")
+        terminal.send("\x1b[C\x1b[Dgood ")
         terminal.send("\x07")
         terminal.expect("Keyboard help")
         terminal.send("\x1b")
-        assert b"Start work?" in terminal.expect("Compose instruction")
+        assert b"Start very good work?" in terminal.expect("Compose instruction")
         review = terminal.expect("Destination: all")
-        assert b"group" in review and b"Start work?" in review
+        assert b"group" in review and b"Start very good work?" in review
         assert service.call({"op": "inbox", "participant": "a"})["messages"] == []
         terminal.send("\r")
         terminal.expect("Rejected:")
@@ -172,8 +174,9 @@ def exercise_instructions(service: Service) -> None:
         terminal.expect("Instruction sent")
         inbox_a = service.call({"op": "inbox", "participant": "a"})["messages"]
         inbox_b = service.call({"op": "inbox", "participant": "b"})["messages"]
-        assert [item["message"]["body"] for item in inbox_a] == ["Start work?", "Second instruction"]
-        assert [item["message"]["body"] for item in inbox_b] == ["Start work?", "Second instruction"]
+        expected = ["Start very good work?", "Second instruction"]
+        assert [item["message"]["body"] for item in inbox_a] == expected
+        assert [item["message"]["body"] for item in inbox_b] == expected
         assert len({item["message"]["identity"] for item in inbox_a}) == 2
         terminal.quit()
     print("Confirmed group instructions and retry after rejection passed")
