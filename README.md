@@ -140,3 +140,13 @@ python3 tests/tmux_smoke.py  # requires tmux
 Build first for the Python 3.10+ smoke tests. They use an isolated temporary database and loopback sockets; the terminal test requires a POSIX pseudo-terminal. The tmux smoke test starts its own isolated tmux server; the interoperability test requires a system libzmq shared library. These checks exercise actual client workflows but do not replace the two-machine, OS-crash, platform and operator checks in the [verification plan](docs/verification.md).
 
 Further project documents: [requirements](docs/requirements.md), [architecture](docs/architecture.md), [decisions](docs/decisions.md), [verification](docs/verification.md), and [implementation backlog](docs/tickets.md).
+
+## Projects
+
+Projects are managed labels independent of agents and workspaces. Create and list projects with `create_project` and `list_projects`; update status and default priority with `update_project`. Status is `in_progress`, `blocked` or `completed`; priority is 0–5. Associate an existing decision using `associate_decision` and `project_id` (pass `null` to remove the association). Unoverridden decisions inherit project priority; explicit `set_importance` overrides continue to win when the project default changes. Use `clear_importance` to remove a decision override and return it to inherited priority.
+
+```sh
+./target/debug/aviary call 127.0.0.1:7432 '{"op":"create_project","id":"launch","description":"Launch work","status":"in_progress","priority":4}'
+./target/debug/aviary call 127.0.0.1:7432 '{"op":"list_projects"}'
+./target/debug/aviary call 127.0.0.1:7432 '{"op":"associate_decision","id":1,"project_id":"launch"}'
+```

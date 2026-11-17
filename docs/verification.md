@@ -625,3 +625,7 @@ The workflow now has a `macos-latest` Rust test job, but this local run did not 
 ## Long decision option rendering (2026-11-17)
 
 `cargo fmt --check`, `cargo test --locked`, and the focused `selected_option_style_covers_wrapped_unicode_lines_only` test passed. `cargo build --locked --bins`, `python3 tests/terminal_option_wrap.py`, `python3 tests/terminal_render.py`, and `python3 tests/terminal_pty.py` passed on the local Linux host. The tmux regression uses a 42×14 pane, displays long selected and unselected options, changes selection between them, and confirms neither answer was submitted. The focused rendering test verifies wrapped grapheme-aware rows, including a CJK character and joined emoji, remain within the selected option's scalar range and exclude the following option. This does not establish behavior across other terminal implementations or representative operator acceptance.
+
+## Managed projects
+
+On Linux, `cargo test --locked` passed (24 unit tests and 25 integration tests). `project_priority_inheritance_and_decision_override` exercises project creation/list/update, association, project default inheritance, inherited reprioritization when the project default changes, and a durable explicit decision override that remains effective. It also checks project status and associated decision count. The test does not establish operator preference for the status vocabulary or broader project navigation; the terminal shows an associated project ID, while management and listing use the documented JSON CLI operations.

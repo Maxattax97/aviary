@@ -77,7 +77,7 @@ impl Storage {
     }
 
     async fn migrate(pool: &SqlitePool) -> Result<()> {
-        const CURRENT_SCHEMA_VERSION: i64 = 1;
+        const CURRENT_SCHEMA_VERSION: i64 = 2;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)
@@ -123,6 +123,15 @@ impl Storage {
                 .execute(&mut *tx)
                 .await?;
         }
+        if version < 2 {
+            sqlx::query("CREATE TABLE projects (id TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL CHECK(status IN ('in_progress','blocked','completed')), priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 5), created_at INTEGER NOT NULL DEFAULT (unixepoch()), updated_at INTEGER NOT NULL DEFAULT (unixepoch()))")
+                .execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE decision_projects (request_id INTEGER PRIMARY KEY REFERENCES requests(id), project_id TEXT NOT NULL REFERENCES projects(id))")
+                .execute(&mut *tx).await?;
+            sqlx::query("PRAGMA user_version = 2")
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -133,6 +142,28 @@ impl Storage {
             Operation::ServiceInfo => Err(AppError::InvalidRequest),
             Operation::Overview => self.overview().await,
             Operation::Submit { request } => self.submit(request).await,
+            Operation::CreateProject {
+                id,
+                description,
+                status,
+                priority,
+            } => {
+                self.save_project(id, description, status, priority, true)
+                    .await
+            }
+            Operation::UpdateProject {
+                id,
+                description,
+                status,
+                priority,
+            } => {
+                self.save_project(id, description, status, priority, false)
+                    .await
+            }
+            Operation::ListProjects => self.list_projects().await,
+            Operation::AssociateDecision { id, project_id } => {
+                self.associate_decision(id, project_id).await
+            }
             Operation::List => self.list(false).await,
             Operation::ListDeferred => self.list(true).await,
             Operation::ListPage {
@@ -161,6 +192,7 @@ impl Storage {
             Operation::SetImportance { id, importance } => {
                 self.set_importance(id, importance).await
             }
+            Operation::ClearImportance { id } => self.clear_importance(id).await,
             Operation::SetDeferred { id, deferred } => self.set_deferred(id, deferred).await,
             Operation::Get { id } => self.get(id).await,
             Operation::Answer { id, index } => self.answer(id, index).await,
@@ -193,6 +225,94 @@ impl Storage {
                     .await
             }
         }
+    }
+
+    async fn save_project(
+        &self,
+        id: String,
+        description: String,
+        status: String,
+        priority: u8,
+        create: bool,
+    ) -> Result<Value> {
+        if id.trim().is_empty()
+            || id.len() > 128
+            || priority > 5
+            || !matches!(status.as_str(), "in_progress" | "blocked" | "completed")
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let query = if create {
+            "INSERT INTO projects(id,description,status,priority) VALUES(?,?,?,?)"
+        } else {
+            "UPDATE projects SET description=?,status=?,priority=?,updated_at=unixepoch() WHERE id=?"
+        };
+        let result = if create {
+            sqlx::query(query)
+                .bind(&id)
+                .bind(&description)
+                .bind(&status)
+                .bind(priority)
+                .execute(&self.pool)
+                .await?
+        } else {
+            sqlx::query(query)
+                .bind(&description)
+                .bind(&status)
+                .bind(priority)
+                .bind(&id)
+                .execute(&self.pool)
+                .await?
+        };
+        if !create && result.rows_affected() == 0 {
+            return Err(AppError::RequestNotFound);
+        }
+        sqlx::query("UPDATE decision_queue_positions SET version=version+1 WHERE request_id IN (SELECT request_id FROM decision_projects WHERE project_id=?)")
+            .bind(&id).execute(&self.pool).await?;
+        Ok(json!({"id":id,"description":description,"status":status,"priority":priority}))
+    }
+
+    async fn list_projects(&self) -> Result<Value> {
+        let rows: Vec<(String,String,String,i64,i64,i64)> = sqlx::query_as("SELECT p.id,p.description,p.status,p.priority,COUNT(dp.request_id),p.updated_at FROM projects p LEFT JOIN decision_projects dp ON dp.project_id=p.id GROUP BY p.id ORDER BY CASE p.status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,p.priority DESC,p.id")
+            .fetch_all(&self.pool).await?;
+        let projects: Vec<Value> = rows.into_iter().map(|(id,description,status,priority,decision_count,updated_at)| json!({"id":id,"description":description,"status":status,"priority":priority,"decision_count":decision_count,"updated_at":updated_at})).collect();
+        Ok(json!({"projects":projects}))
+    }
+
+    async fn associate_decision(&self, id: i64, project_id: Option<String>) -> Result<Value> {
+        if id <= 0 {
+            return Err(AppError::InvalidRequest);
+        }
+        let mut tx = self.pool.begin().await?;
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM requests WHERE id=?)")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if !exists {
+            return Err(AppError::RequestNotFound);
+        }
+        if let Some(ref project) = project_id {
+            let project_exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id=?)")
+                    .bind(project)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if !project_exists {
+                return Err(AppError::RequestNotFound);
+            }
+            sqlx::query("INSERT INTO decision_projects(request_id,project_id) VALUES(?,?) ON CONFLICT(request_id) DO UPDATE SET project_id=excluded.project_id").bind(id).bind(project).execute(&mut *tx).await?;
+        } else {
+            sqlx::query("DELETE FROM decision_projects WHERE request_id=?")
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("UPDATE decision_queue_positions SET version=version+1 WHERE request_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(json!({"id":id,"project_id":project_id}))
     }
 
     async fn overview(&self) -> Result<Value> {
@@ -778,18 +898,22 @@ impl Storage {
         };
         let mut more = false;
         if let Ok(sql_offset) = i64::try_from(offset) {
-            let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>, bool)>("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ? ORDER BY COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0) DESC, r.id LIMIT -1 OFFSET ?")
+            let mut rows = sqlx::query_as::<_, (i64, String, Option<i64>, bool, Option<String>, Option<i64>)>("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0), dp.project_id, p.priority FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id LEFT JOIN decision_projects dp ON dp.request_id=r.id LEFT JOIN projects p ON p.id=dp.project_id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ? ORDER BY COALESCE(a.importance, p.priority, json_extract(r.payload, '$.importance'), 0) DESC, r.id LIMIT -1 OFFSET ?")
             .bind(deferred).bind(sql_offset).fetch(&mut *tx);
-            while let Some((id, payload, override_value, deferred)) = rows.try_next().await? {
+            while let Some((id, payload, override_value, deferred, project_id, project_priority)) =
+                rows.try_next().await?
+            {
                 let request: DecisionRequest = serde_json::from_str(&payload)?;
                 let importance = override_value
                     .map(|value| value as u8)
+                    .or(project_priority.map(|value| value as u8))
                     .unwrap_or(request.importance);
                 let item = serde_json::to_value(PendingRequest {
                     id,
                     request,
                     importance,
                     deferred,
+                    project_id,
                 })?;
                 if !page.push(item)? {
                     more = true;
@@ -824,21 +948,23 @@ impl Storage {
     }
 
     async fn list(&self, deferred: bool) -> Result<Value> {
-        let rows: Vec<(i64, String, Option<i64>, bool)> = sqlx::query_as("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0) FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ?")
+        let rows: Vec<(i64, String, Option<i64>, bool, Option<String>, Option<i64>)> = sqlx::query_as("SELECT r.id, r.payload, a.importance, COALESCE(a.deferred, 0), dp.project_id, p.priority FROM requests r LEFT JOIN request_attention a ON a.request_id = r.id LEFT JOIN decision_projects dp ON dp.request_id=r.id LEFT JOIN projects p ON p.id=dp.project_id WHERE r.answer IS NULL AND COALESCE(a.deferred, 0) = ?")
             .bind(deferred).fetch_all(&self.pool).await?;
         let mut requests = rows
             .into_iter()
             .map(
-                |(id, payload, override_value, deferred)| -> Result<PendingRequest> {
+                |(id, payload, override_value, deferred, project_id, project_priority)| -> Result<PendingRequest> {
                     let request: DecisionRequest = serde_json::from_str(&payload)?;
                     let importance = override_value
                         .map(|value| value as u8)
+                        .or(project_priority.map(|value| value as u8))
                         .unwrap_or(request.importance);
                     Ok(PendingRequest {
                         id,
                         request,
                         importance,
                         deferred,
+                        project_id,
                     })
                 },
             )
@@ -865,6 +991,35 @@ impl Storage {
         .await?;
         tx.commit().await?;
         Ok(json!({"id": id, "importance": importance}))
+    }
+
+    async fn clear_importance(&self, id: i64) -> Result<Value> {
+        let mut tx = self.pool.begin().await?;
+        let result = sqlx::query("UPDATE request_attention SET importance=NULL WHERE request_id=? AND EXISTS(SELECT 1 FROM requests WHERE id=? AND answer IS NULL)")
+            .bind(id).bind(id).execute(&mut *tx).await?;
+        if result.rows_affected() == 0 {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM requests WHERE id=? AND answer IS NULL)",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !exists {
+                return Err(AppError::RequestNotFound);
+            }
+        }
+        let (project_priority, submitted): (Option<i64>, String) = sqlx::query_as("SELECT p.priority,r.payload FROM requests r LEFT JOIN decision_projects dp ON dp.request_id=r.id LEFT JOIN projects p ON p.id=dp.project_id WHERE r.id=? AND r.answer IS NULL")
+            .bind(id).fetch_optional(&mut *tx).await?.ok_or(AppError::RequestNotFound)?;
+        sqlx::query("UPDATE decision_queue_positions SET version=version+1 WHERE request_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let request: DecisionRequest = serde_json::from_str(&submitted)?;
+        let importance = project_priority
+            .map(|value| value as u8)
+            .unwrap_or(request.importance);
+        Ok(json!({"id":id,"importance":importance,"inherited":true}))
     }
 
     async fn set_deferred(&self, id: i64, deferred: bool) -> Result<Value> {
@@ -1114,7 +1269,7 @@ mod tests {
         )
         .fetch_one(&second.pool)
         .await?;
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
         assert_eq!(keys, 1);
         assert_eq!(positions, 1);
         first.pool.close().await;

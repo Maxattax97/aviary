@@ -58,6 +58,23 @@ pub enum Operation {
     Submit {
         request: DecisionRequest,
     },
+    CreateProject {
+        id: String,
+        description: String,
+        status: String,
+        priority: u8,
+    },
+    UpdateProject {
+        id: String,
+        description: String,
+        status: String,
+        priority: u8,
+    },
+    ListProjects,
+    AssociateDecision {
+        id: i64,
+        project_id: Option<String>,
+    },
     List,
     ListDeferred,
     ListPage {
@@ -102,6 +119,9 @@ pub enum Operation {
     SetImportance {
         id: i64,
         importance: u8,
+    },
+    ClearImportance {
+        id: i64,
     },
     SetDeferred {
         id: i64,
@@ -179,6 +199,8 @@ pub struct PendingRequest {
     pub request: DecisionRequest,
     pub importance: u8,
     pub deferred: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -166,3 +166,11 @@ Queue and deferral changes have local implementation and partial evidence; async
 | US-056, US-069 | SYS-067; SYS-057 | T-067, T-057 | P-05 |
 | US-073 | Revised SYS-059; SYS-060; SYS-069 | T-059, T-060, T-069 | P-01 |
 | US-080, US-081 | SYS-070–071 | T-070–071 | P-06 |
+
+## Project overview traceability
+
+| Story | Requirement | Planned verification | Ticket |
+|---|---|---|---|
+| Project overview request | SYS-072 | T-072: create, list and update project fields and persistence | P-08 |
+| Project overview request | SYS-073 | T-073: decision association, removal, queue metadata and project counts | P-08 |
+| Project overview request | SYS-074 | T-074: project priority inheritance, project-default changes, explicit override and reset | P-08 |

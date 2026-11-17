@@ -34,10 +34,12 @@ impl Storage {
         let mut page = PageBuilder::new(offset);
         let mut more = false;
         if let Ok(offset) = i64::try_from(offset) {
-            let mut rows = sqlx::query_as::<_, (i64, String, i64, i64, i64)>("SELECT r.id, r.payload, COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0), p.position, p.version FROM requests r JOIN decision_queue_positions p ON p.request_id = r.id LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.answer IS NULL ORDER BY 3 DESC, p.position, r.id LIMIT -1 OFFSET ?").bind(offset).fetch(&self.pool);
-            while let Some((id, payload, importance, position, version)) = rows.try_next().await? {
+            let mut rows = sqlx::query_as::<_, (i64, String, i64, i64, i64, Option<String>)>("SELECT r.id, r.payload, COALESCE(a.importance, pr.priority, json_extract(r.payload, '$.importance'), 0), p.position, p.version, dp.project_id FROM requests r JOIN decision_queue_positions p ON p.request_id = r.id LEFT JOIN request_attention a ON a.request_id = r.id LEFT JOIN decision_projects dp ON dp.request_id=r.id LEFT JOIN projects pr ON pr.id=dp.project_id WHERE r.answer IS NULL ORDER BY 3 DESC, p.position, r.id LIMIT -1 OFFSET ?").bind(offset).fetch(&self.pool);
+            while let Some((id, payload, importance, position, version, project_id)) =
+                rows.try_next().await?
+            {
                 let request: DecisionRequest = serde_json::from_str(&payload)?;
-                if !page.push(json!({"id": id, "request": request, "importance": importance, "position": position, "version": version, "deferred": false}))? { more = true; break; }
+                if !page.push(json!({"id": id, "request": request, "importance": importance, "position": position, "version": version, "deferred": false, "project_id": project_id}))? { more = true; break; }
             }
         }
         let newest: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM requests")
@@ -116,7 +118,7 @@ impl Storage {
         let inserted = sqlx::query("INSERT INTO submission_keys(identity, kind, payload) VALUES (?, 'swap_decisions', ?) ON CONFLICT(identity) DO NOTHING").bind(&identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
         if inserted {
             let read = |id| {
-                sqlx::query_as::<_, (i64, i64, i64)>("SELECT p.position, p.version, COALESCE(a.importance, json_extract(r.payload, '$.importance'), 0) FROM requests r JOIN decision_queue_positions p ON p.request_id = r.id LEFT JOIN request_attention a ON a.request_id = r.id WHERE r.id = ? AND r.answer IS NULL").bind(id)
+                sqlx::query_as::<_, (i64, i64, i64)>("SELECT p.position, p.version, COALESCE(a.importance, pr.priority, json_extract(r.payload, '$.importance'), 0) FROM requests r JOIN decision_queue_positions p ON p.request_id = r.id LEFT JOIN request_attention a ON a.request_id = r.id LEFT JOIN decision_projects dp ON dp.request_id=r.id LEFT JOIN projects pr ON pr.id=dp.project_id WHERE r.id = ? AND r.answer IS NULL").bind(id)
             };
             let a = read(first)
                 .fetch_optional(&mut *tx)

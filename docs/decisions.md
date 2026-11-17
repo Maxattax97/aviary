@@ -421,3 +421,7 @@ The terminal now searches retained decisions, messages and completion notices, i
 ## Custom answer cursor editing
 
 The custom-answer editor tracks its cursor in Unicode grapheme clusters, so left/right, insertion, backspace and delete do not split a combining sequence or emoji cluster. Home and End move to the line boundaries. The cursor remains part of a suspended custom draft when temporarily navigating elsewhere. Enter still submits the exact nonempty draft; Esc retains its existing cancel behavior.
+
+## Managed projects (2026-11-17)
+
+Projects are explicit service records identified by a caller-chosen stable string ID, independent of agent/workspace identity and distinct from the existing activity correlation field. V1 status values are `in_progress`, `blocked` and `completed`; default priority is 0–5. Existing decisions can be associated or disassociated explicitly. Their effective priority is decision override, then associated project's default, then the request's submitted importance; changing a project default therefore reprioritizes only decisions without explicit overrides. Completion is descriptive project status and does not answer or archive decisions. New operations and optional queue response metadata preserve existing decision payloads and operations. Schema v2 adds project and association tables transactionally; existing records remain unassociated.

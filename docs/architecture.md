@@ -6,7 +6,7 @@
 
 Aviary provides durable messaging and a human attention interface for agents working across processes and, on a trusted local network, machines. Agents manage their own execution; the service manages communications; the operator makes decisions. The system is independent of any model or orchestration framework. A CLI and portable skill are the intended agent integration; MCP and a particular agent hierarchy are not required.
 
-V1 is a single-user deployment centered on one service. It includes operator decisions and instructions, targeted agent messages and request/reply through channels, completion notices, and recoverable history. Project management, agent lifecycle control, public deployment, application authentication and multi-user isolation are outside V1. The first-slice prototype implements only a narrow decision path; see [prototype status](#first-slice-and-evidence).
+V1 is a single-user deployment centered on one service. It includes operator decisions and instructions, targeted agent messages and request/reply through channels, completion notices, recoverable history, and a lightweight project overview with decision association. Projects are service records independent of agent and workspace lifecycle; agent lifecycle control, public deployment, application authentication and multi-user isolation remain outside V1. The first-slice prototype implements only a narrow decision path; see [prototype status](#first-slice-and-evidence).
 
 ## Context and boundaries
 
