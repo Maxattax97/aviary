@@ -66,6 +66,16 @@
 | SYS-069 | US-003, US-072, US-073 | V1 proposed | T-069 (test) | P-01 | Implemented / local tests; concurrency acceptance open |
 | SYS-070 | US-030, US-080, US-081 | V1 proposed | T-070 (test) | P-06 | Partial local evidence; broader saturation and remote validation open |
 | SYS-071 | US-053, US-080, US-081 | V1 proposed | T-071 (test) | P-06 | Partial local restart and reconciliation evidence |
+| SYS-075 | US-082 | V1 proposed | T-083 (test) | P-09 | Proposed; interaction and paste priority need review |
+| SYS-076 | US-083 | V1 proposed | T-084 (test) | P-09 | Proposed; Markdown subset and terminal limits open |
+| SYS-077 | US-083, US-087 | V1 proposed | T-085 (test) | P-09 | Proposed; compact properties and time format open |
+| SYS-078 | US-084 | V1 proposed | T-086 (test) | P-09 | Proposed; conflicts with SYS-008 no-recommendation behavior |
+| SYS-079 | US-086 | V1 proposed | T-087 (test) | P-09 | Proposed; command-request handling unresolved |
+| SYS-080 | US-084, US-085 | V1 proposed | T-088 (inspection/test) | P-09 | Proposed; priority mapping and skill policy open |
+| SYS-081 | US-080, US-087 | V1 proposed | T-089 (test) | P-09 | Proposed; latency bound not selected |
+| SYS-082 | US-087 | V1 proposed | T-090 (test) | P-09 | Proposed; reported defect not reproduced |
+| SYS-083 | US-088, US-090 | V1 proposed | T-091 (test) | P-09 | Proposed; coordinated protocol change required |
+| SYS-084 | US-056, US-075, US-091 | V1 proposed | T-093 (demonstration) | P-09 | Proposed; conflicts with current explicit provisioning direction |
 
 ## Stories to requirements and disposition
 
@@ -174,3 +184,20 @@ Queue and deferral changes have local implementation and partial evidence; async
 | Project overview request | SYS-072 | T-072: create, list and update project fields and persistence | P-08 |
 | Project overview request | SYS-073 | T-073: decision association, removal, queue metadata and project counts | P-08 |
 | Project overview request | SYS-074 | T-074: project priority inheritance, project-default changes, explicit override and reset | P-08 |
+
+## Accumulated operator feedback traceability (2026-11-18; proposed)
+
+| Story | Candidate requirement | Planned verification | Ticket / disposition |
+|---|---|---|---|
+| US-082 | SYS-075 | T-083 | P-09; proposed terminal editing behavior |
+| US-083 | SYS-076, SYS-077 | T-084, T-085 | P-09; rendering, property layout and age format open |
+| US-084 | SYS-078, SYS-080 | T-086, T-088 | P-09; complements existing SYS-008; skill wording and custom-field behavior open |
+| US-085 | SYS-080 | T-088 | P-09; priority and ticket mappings require operator choice |
+| US-086 | SYS-079 | T-087 | P-09; keep notices and action decisions distinct; command execution unresolved |
+| US-087 | SYS-081, SYS-082 | T-089, T-090 | P-09; latency target open; reported terminal styling defect not reproduced |
+| US-088 | SYS-083 | T-091 | P-09; current reason/recommendation protocol contract needs coordinated change |
+| US-089 | No Aviary SYS requirement | T-092 (integration) | P-09; Firstmate-owned read-only supervision behavior; observed symptom, cause unconfirmed |
+| US-090 | SYS-083 plus Firstmate validation | T-091, T-092 | P-09; stage validation is Firstmate-owned and must reject malformed input before durable outbox staging |
+| US-091 | SYS-084 | T-093 | P-09; conflicts with explicit provisioning and immutable membership direction; setup and `all` semantics require decision |
+
+Every item in the 2026-11-18 notes and both handoffs is represented above or in the linked story/requirement/test rows. Handoff 19 traces to an integration test rather than an Aviary product requirement because it concerns Firstmate session ownership and wake prompts. Handoff 20 spans both Aviary protocol/display behavior and Firstmate pre-staging validation.
