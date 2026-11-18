@@ -620,6 +620,18 @@ impl RenderedScreen {
         self.cells.get(index).map(String::as_str)
     }
 
+    fn clamp_position(&self, position: Position) -> Option<Position> {
+        if self.area.width == 0 || self.area.height == 0 {
+            return None;
+        }
+        let right = self.area.x.saturating_add(self.area.width - 1);
+        let bottom = self.area.y.saturating_add(self.area.height - 1);
+        Some(Position::new(
+            position.x.clamp(self.area.x, right),
+            position.y.clamp(self.area.y, bottom),
+        ))
+    }
+
     fn text_between(&self, first: Position, last: Position) -> String {
         let (start, end) = if position_before(first, last) {
             (first, last)
@@ -650,7 +662,7 @@ impl RenderedScreen {
                 }
                 x += 1;
             }
-            result.push_str(line.trim_end_matches(' '));
+            result.push_str(line.trim_matches(' '));
             if y != end.y {
                 result.push('\n');
             }
@@ -690,7 +702,7 @@ fn apply_mouse_selection(frame: &mut Frame<'_>, selection: Option<&MouseSelectio
     } else {
         (selection.end, selection.start)
     };
-    let area = frame.area();
+    let area = selection.screen.area;
     let right = area.x.saturating_add(area.width.saturating_sub(1));
     let mut y = start.y;
     while y <= end.y {
@@ -721,16 +733,30 @@ fn draw_with_selection<F>(
 where
     F: FnOnce(&mut Frame<'_>),
 {
+    let size = screen.size()?;
+    let area = Rect::new(0, 0, size.width, size.height);
+    draw_with_selection_area(screen, selection, area, draw)
+}
+
+fn draw_with_selection_area<F>(
+    screen: &mut Screen,
+    selection: Option<MouseSelection>,
+    area: Rect,
+    draw: F,
+) -> Result<RenderedScreen>
+where
+    F: FnOnce(&mut Frame<'_>),
+{
     let frame = screen.draw(|frame| {
         draw(frame);
         apply_mouse_selection(frame, selection.as_ref());
     })?;
-    Ok(RenderedScreen::capture(frame.buffer, frame.area))
+    Ok(RenderedScreen::capture(frame.buffer, area))
 }
 
 enum ClipboardResult {
     System,
-    TerminalRequest,
+    TerminalRequest(String),
 }
 
 fn copy_with_command(name: &str, args: &[&str], text: &str) -> io::Result<bool> {
@@ -738,7 +764,7 @@ fn copy_with_command(name: &str, args: &[&str], text: &str) -> io::Result<bool> 
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::null())
         .spawn()
     {
         Ok(child) => child,
@@ -749,18 +775,17 @@ fn copy_with_command(name: &str, args: &[&str], text: &str) -> io::Result<bool> 
         .stdin
         .take()
         .ok_or_else(|| io::Error::other("clipboard command has no stdin"))?;
-    stdin.write_all(text.as_bytes())?;
+    let write_result = stdin.write_all(text.as_bytes());
     drop(stdin);
     let result = child.wait_with_output()?;
+    write_result?;
     if result.status.success() {
         Ok(true)
     } else {
-        let error = String::from_utf8_lossy(&result.stderr).trim().to_owned();
-        Err(io::Error::other(if error.is_empty() {
-            format!("{name} exited with {}", result.status)
-        } else {
-            format!("{name}: {error}")
-        }))
+        Err(io::Error::other(format!(
+            "{name} exited with {}",
+            result.status
+        )))
     }
 }
 
@@ -786,11 +811,47 @@ fn copy_to_clipboard(text: &str) -> io::Result<ClipboardResult> {
     }
 
     let encoded = BASE64.encode(text.as_bytes());
-    let request = format!("\x1b]52;c;{encoded}\x07");
+    Ok(ClipboardResult::TerminalRequest(format!(
+        "\x1b]52;c;{encoded}\x07"
+    )))
+}
+
+fn send_terminal_clipboard_request(request: &str) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     stdout.write_all(request.as_bytes())?;
-    stdout.flush()?;
-    Ok(ClipboardResult::TerminalRequest)
+    stdout.flush()
+}
+
+fn queue_detail_content_area(area: Rect, footer_height: u16) -> Rect {
+    if area.width < 40 || area.height < 12 {
+        return Rect::default();
+    }
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(footer_height),
+        ])
+        .split(area);
+    let panes = if area.width >= 70 {
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+            .split(sections[1])
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(4), Constraint::Min(3)])
+            .split(sections[1])
+    };
+    let pane = panes[1];
+    Rect::new(
+        pane.x.saturating_add(1),
+        pane.y.saturating_add(1),
+        pane.width.saturating_sub(2),
+        pane.height.saturating_sub(2),
+    )
 }
 impl Arrivals {
     fn observe(&mut self, newest: Option<i64>) -> bool {
@@ -875,10 +936,14 @@ impl View {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.mouse_selection = None;
+                let position = Position::new(mouse.column, mouse.row);
                 self.mouse_start = Some(MouseStart {
-                    position: Position::new(mouse.column, mouse.row),
+                    position,
                     modifiers: mouse.modifiers,
-                    screen: self.rendered.clone(),
+                    screen: self
+                        .rendered
+                        .clone()
+                        .filter(|screen| screen.symbol(position.x, position.y).is_some()),
                 });
                 Action::None
             }
@@ -889,12 +954,10 @@ impl View {
                 let Some(screen) = start.screen.clone() else {
                     return Action::None;
                 };
-                let end = Position::new(mouse.column, mouse.row);
-                if screen.symbol(start.position.x, start.position.y).is_none()
-                    || screen.symbol(end.x, end.y).is_none()
-                {
+                let Some(end) = screen.clamp_position(Position::new(mouse.column, mouse.row))
+                else {
                     return Action::None;
-                }
+                };
                 self.mouse_selection = Some(MouseSelection {
                     start: start.position,
                     end,
@@ -2232,6 +2295,8 @@ pub async fn terminal(address: &str) -> Result<()> {
         }
     });
     let _guard = TerminalGuard { input };
+    let (clipboard_sender, mut clipboard_results) =
+        mpsc::unbounded_channel::<io::Result<ClipboardResult>>();
     let (_watch, mut changes) = network::watch_changes(address);
     let refresh_trigger = Notify::new();
     let overview_trigger = Notify::new();
@@ -2268,6 +2333,20 @@ pub async fn terminal(address: &str) -> Result<()> {
             }
             _ = interrupt.recv() => return Ok(()),
             _ = terminate.recv() => return Ok(()),
+            result = clipboard_results.recv() => {
+                if let Some(result) = result {
+                    view.status = Some(match result {
+                        Ok(ClipboardResult::System) => "Copied selection to system clipboard".into(),
+                        Ok(ClipboardResult::TerminalRequest(request)) => match send_terminal_clipboard_request(&request) {
+                            Ok(()) => "Clipboard request sent to terminal".into(),
+                            Err(error) => format!("Clipboard request failed: {error}"),
+                        },
+                        Err(error) => format!("Clipboard copy failed: {error}"),
+                    });
+                    view.status_expires = Some(Instant::now() + Duration::from_secs(4));
+                    display(&mut screen, &mut view)?;
+                }
+            }
             changed = changes.changed() => {
                 if changed.is_err() { return Err(crate::error::AppError::Task("change subscription closed".into())); }
                 let state = *changes.borrow_and_update();
@@ -2487,12 +2566,18 @@ pub async fn terminal(address: &str) -> Result<()> {
                     Action::None => {},
                     Action::Redraw => display(&mut screen, &mut view)?,
                     Action::CopySelection(text) => {
-                        view.status = Some(match copy_to_clipboard(&text) {
-                            Ok(ClipboardResult::System) => "Copied selection to system clipboard".into(),
-                            Ok(ClipboardResult::TerminalRequest) => "Clipboard request sent to terminal".into(),
-                            Err(error) => format!("Clipboard copy failed: {error}"),
-                        });
-                        view.status_expires = Some(Instant::now() + Duration::from_secs(4));
+                        view.status = Some("Copying selection to clipboard".into());
+                        view.status_expires = None;
+                        let sender = clipboard_sender.clone();
+                        if let Err(error) = std::thread::Builder::new()
+                            .name("aviary-clipboard".into())
+                            .spawn(move || {
+                                let _ = sender.send(copy_to_clipboard(&text));
+                            })
+                        {
+                            view.status = Some(format!("Clipboard copy failed: {error}"));
+                            view.status_expires = Some(Instant::now() + Duration::from_secs(4));
+                        }
                         display(&mut screen, &mut view)?;
                     }
                     Action::Quit => return Ok(()),
@@ -3512,26 +3597,30 @@ fn display_queue(screen: &mut Screen, view: &mut View) -> Result<()> {
     let use_color = std::env::var_os("NO_COLOR").is_none()
         && std::env::var("TERM").ok().as_deref() != Some("dumb");
     let accent = if use_color { Color::Cyan } else { Color::Reset };
-    view.rendered = Some(draw_with_selection(
+    let footer_height = if refresh_status.is_some() && action_status.is_some() {
+        3
+    } else {
+        2
+    } + u16::from(
+        view.draft_request_missing
+            && (view.busy
+                || view.status.is_some()
+                || view.suspended_instruction.is_some()
+                || view.suspended_answer.is_some()),
+    );
+    let size = screen.size()?;
+    let selection_area =
+        queue_detail_content_area(Rect::new(0, 0, size.width, size.height), footer_height);
+    view.rendered = Some(draw_with_selection_area(
         screen,
         view.mouse_selection.clone(),
+        selection_area,
         |frame| {
             let area = frame.area();
             if area.width < 40 || area.height < 12 {
                 frame.render_widget(Paragraph::new("Resize terminal to at least 40 x 12"), area);
                 return;
             }
-            let footer_height = if refresh_status.is_some() && action_status.is_some() {
-                3
-            } else {
-                2
-            } + u16::from(
-                view.draft_request_missing
-                    && (view.busy
-                        || view.status.is_some()
-                        || view.suspended_instruction.is_some()
-                        || view.suspended_answer.is_some()),
-            );
             let sections = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([

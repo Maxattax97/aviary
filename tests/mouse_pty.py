@@ -2,6 +2,9 @@
 """Exercise terminal mouse navigation without submitting queue actions."""
 
 import os
+import signal
+import termios
+import time
 from pathlib import Path
 
 from support import Service, Terminal
@@ -37,19 +40,32 @@ def locate(terminal: Terminal, marker: str, minimum_column: int = 0) -> tuple[in
 
 def main() -> None:
     with Service() as service:
-        marker = "RIGHT_COLUMN_COPY_MARKER_9b87c3fe"
+        top_marker = "RIGHT_COLUMN_TOP_9b87c3fe"
+        bottom_marker = "RIGHT_COLUMN_BOTTOM_9b87c3fe"
+        filler = "X" * 15
+        expected_copy = f"Question: {top_marker}{filler}\n{bottom_marker}"
         clipboard_dir = Path(service.directory.name) / "clipboard-bin"
         clipboard_dir.mkdir()
         clipboard_file = Path(service.directory.name) / "clipboard.txt"
+        helper_pid_file = Path(service.directory.name) / "clipboard-helper.pid"
         clipboard = clipboard_dir / "wl-copy"
-        clipboard.write_text("#!/bin/sh\ncat > \"$AVIARY_TEST_CLIPBOARD\"\n")
+        clipboard.write_text(
+            "#!/bin/sh\n"
+            "cat > \"$AVIARY_TEST_CLIPBOARD\"\n"
+            "echo $$ > \"$AVIARY_TEST_CLIPBOARD_PID\"\n"
+            "exec sleep 30\n"
+        )
         clipboard.chmod(0o755)
         env = os.environ.copy()
         env["PATH"] = f"{clipboard_dir}{os.pathsep}{env.get('PATH', '')}"
         env["WAYLAND_DISPLAY"] = "aviary-test-wayland"
         env["AVIARY_TEST_CLIPBOARD"] = str(clipboard_file)
+        env["AVIARY_TEST_CLIPBOARD_PID"] = str(helper_pid_file)
         ids = []
-        for name, question in (("mouse-first", marker), ("mouse-second", "mouse-second")):
+        for name, question in (
+            ("mouse-first", f"{top_marker}{filler}{bottom_marker}"),
+            ("mouse-second", "mouse-second"),
+        ):
             ids.append(
                 service.call(
                     {
@@ -95,33 +111,48 @@ def main() -> None:
             }
         )
 
-        with Terminal(service, env=env) as terminal:
-            terminal.expect(marker)
-            start = locate(terminal, marker, minimum_column=30)
-            end = (start[0] + len(marker) - 1, start[1])
-            drag(terminal, start, end)
-            terminal.expect("Copied selection to system clipboard")
-            assert clipboard_file.read_text() == marker
+        try:
+            with Terminal(service, env=env) as terminal:
+                terminal.expect(top_marker)
+                top = locate(terminal, top_marker, minimum_column=30)
+                bottom = locate(terminal, bottom_marker, minimum_column=29)
+                # Begin at the lower line, then drag up into the list pane.
+                # Selection must stay in the original detail content area.
+                drag(terminal, (bottom[0] + len(bottom_marker) - 1, bottom[1]), (4, top[1]))
+                terminal.expect("Copying selection to clipboard")
+                deadline = time.monotonic() + 2
+                while not clipboard_file.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                copied_text = clipboard_file.read_text()
+                assert copied_text == expected_copy, repr(copied_text)
+                assert "|" not in copied_text
 
-            click(terminal, 4, 3)
-            terminal.expect("mouse-second")
-            assert service.call({"op": "get", "id": ids[1]})["answer"] is None
+                # Clipboard ownership can keep the helper alive. The UI must
+                # still process mouse and keyboard events while it does.
+                click(terminal, 55, 5)
+                terminal.expect("[Decision]")
+                assert service.call({"op": "get", "id": ids[1]})["answer"] is None
 
-            # Clicking the detail pane moves focus without changing selection.
-            click(terminal, 55, 5)
-            terminal.send("j")
-            assert service.call({"op": "get", "id": ids[1]})["answer"] is None
+                click(terminal, 4, 3)
+                terminal.expect("mouse-second")
+                assert service.call({"op": "get", "id": ids[1]})["answer"] is None
 
-            # The header labels navigate directly to inbox and notices.
-            click(terminal, 22, 0)
-            terminal.expect("Mouse inbox message")
-            click(terminal, 36, 0)
-            terminal.expect("Mouse notice work")
-            terminal.send("q")
-            terminal.expect("mouse-second")
-            terminal.quit()
+                # The header labels navigate directly to inbox and notices.
+                click(terminal, 22, 0)
+                terminal.expect("Mouse inbox message")
+                click(terminal, 36, 0)
+                terminal.expect("Mouse notice work")
+                terminal.send("\x03")
+                assert terminal.process.wait(timeout=2) == 0
+                assert termios.tcgetattr(terminal.slave) == terminal.settings
+        finally:
+            if helper_pid_file.exists():
+                try:
+                    os.kill(int(helper_pid_file.read_text()), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
 
-    print("Mouse drag copied only the right-column text; click navigation and no-submit checks passed")
+    print("Detail-pane drag copied clean multiline text; UI stayed responsive during clipboard ownership")
 
 
 if __name__ == "__main__":

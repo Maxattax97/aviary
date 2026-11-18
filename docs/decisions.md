@@ -344,7 +344,7 @@ History displays records together and scrolls by rendered lines; it loads the ne
 
 ## Pane text selection and clipboard (2026-11-17)
 
-Left-button dragging selects the rendered cell range under the pointer, highlights it while dragging, and copies it on release. This allows selection to stay within one Aviary column while preserving existing click navigation. Copying uses `wl-copy` when a Wayland display is available, then `xclip` or `xsel` for an X11 display; if no system helper succeeds, Aviary sends an OSC 52 clipboard request to the terminal. Direct system helpers make local st/tmux/Herdr nesting independent of mouse-passthrough behavior. The terminal-request fallback depends on the terminal and mux accepting OSC 52 and cannot confirm the resulting clipboard contents.
+Left-button dragging in a queue view selects only the originating detail pane's content area, excluding its border and the decision list. The selection is clamped to that area when the pointer crosses its edge, trims pane-padding spaces per line, highlights while dragging, and copies on release. Clipboard helper execution runs off the terminal event loop because X11 owners such as `xclip` can remain alive for the lifetime of the selection; this keeps keyboard, mouse and Ctrl-C handling responsive. Copying uses `wl-copy` on Wayland, then `xclip` or `xsel` on X11; if no system helper succeeds, Aviary sends an OSC 52 request through the UI thread. That fallback depends on terminal and mux support and cannot confirm clipboard contents.
 
 ## Unified decision queue and durable deferral events (2026-11-10)
 
