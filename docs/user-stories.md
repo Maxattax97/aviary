@@ -18,7 +18,7 @@ The human must not have to monitor a First Mate agent's scrolling output or indi
 - **V2:** Desired near-term follow-up.
 - **Future:** Preserve as a design consideration; not a V1 commitment.
 
-**Counts:** 80 stories: 57 V1, 14 V2, 9 Future (including ten proposed V1 stories).
+**Counts:** 90 stories: 65 V1, 14 V2, 9 Future, and 2 Integration proposals (including ten earlier proposed V1 stories and eight new V1 proposals).
 
 ## User stories
 
@@ -174,3 +174,20 @@ These amendments supersede neither the existing acceptance baseline nor current 
 - **Deferral:** Remove it, or retain it while notifying the requester and moving the item lower? Its exact placement, repeated deferral, restoration, agent visibility and behavior after answer remain open. Do not silently equate deferral with an answer.
 - **Ordering:** Decide what happens if priorities or queue contents change between listing and swapping; preserve explicit operator importance overrides. Define how a swap is validated and persisted, and how stale callers reconcile without accidentally moving a different item.
 - **Continuous interface:** Background pagination remains allowed and necessary for bounded resource use. Define behavior for loading failures, partial data and concurrent insertions/removals without claiming a complete snapshot. Verify legibility and non-color cues across supported panes.
+
+## Accumulated operator feedback (2026-11-18; proposals for review)
+
+The following stories capture the operator notes in `/home/max/src/aviary/notes.md` and the two integration handoffs in `/home/max/src/aviary/handoffs.md`. They are proposals; this documentation records requests and observations, not implementation evidence or blanket approval of unresolved interaction and policy choices.
+
+- **US-082 [V1, proposed]** As a human operator, I want predictable block-cursor editing, familiar beginning/end keys, readable multiline composition, and to discard a composed message without a confirmation prompt, so that editing messages and answers feels natural in a terminal. Cleaner paste handling is a low-priority improvement because paste works today, though awkwardly.
+- **US-083 [V1, proposed]** As a human operator, I want decision text to preserve paragraphs and lists, with readable wrapping and clearly organized properties, so that I can understand a request without reading one long line.
+- **US-084 [V1, proposed]** As a human operator, I want the first answer choice to be the recommended default when one is supplied, a first available choice selected even when no recommendation is supplied, and a clean custom-answer field, so that the choice list carries the meaning without redundant recommendation labels or stale input prefixes.
+- **US-085 [V1, proposed]** As an agent using Aviary, I want guidance for assigning importance and proposing useful answer choices, so that the operator receives a ranked workload and choices that support a real decision. Candidate guidance may consider urgent versus important work, external ticket priorities, and dependency/blocking relationships; it may treat the first choice as the semantically recommended choice without a textual marker. The mapping and the suggested rule that higher-priority work blocks lower-priority work remain open for review.
+- **US-086 [V1, proposed]** As a human operator, I want requests that require action to be distinguished clearly from informational completion notices, so that dismissal is not confused with approval or execution of a requested command. For a command request, candidate interactions are a decision with an option confirming it was run and another dismissing it, or direct execution by Aviary on acceptance; these alternatives remain unresolved.
+- **US-087 [V1, proposed]** As a human operator, I want new requests and messages surfaced promptly and terminal text rendered without accidental styling, so that I can respond in time and trust the displayed content.
+- **US-088 [V1, proposed]** As an agent, I want to provide decision context independently of an optional recommended answer, so that useful context is not lost when I have no recommendation.
+- **US-089 [Integration proposal]** As an operator of a read-only Firstmate session, I want supervision prompts not to ask that session to drain or acknowledge another session's wake queue, so that read-only ownership boundaries remain intact.
+- **US-090 [Integration proposal]** As a Firstmate operator, I want an invalid decision request rejected before it is staged for Aviary, so that malformed work cannot remain in a retry outbox.
+- **US-091 [V1, proposed]** As an operator and agent using Aviary, I want the shared `all` channel provisioned and joined through the agreed setup, with its behavior explained in the portable skill, so that routine instruction routing does not depend on undocumented manual setup.
+
+**Disposition notes:** the `<Recommendation>`/first-option semantics, command-as-decision versus command execution, suggested priority scheme, decision Markdown subset, line-length policy, and update-latency target need operator review. The observed green line beginning with `>` is a rendering defect report, not proof of its cause. Handoff 19 reports wake prompts in a read-only session; its possible hook paths are diagnostic hypotheses, not confirmed causes. Handoff 20 requests that reason/context be accepted without a recommendation; Firstmate-side validation remains coordinated work outside this repository.
