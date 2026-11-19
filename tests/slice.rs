@@ -2057,3 +2057,154 @@ fn subscriptions_are_bounded_and_disconnects_release_capacity() -> TestResult<()
     std::fs::remove_dir_all(directory)?;
     Ok(())
 }
+
+#[test]
+fn shared_work_claim_recovery_and_group_coexistence() -> TestResult<()> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?.to_string();
+    drop(listener);
+    let directory = std::env::temp_dir().join(format!("aviary-shared-work-{}", std::process::id()));
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("test.sqlite");
+    let database = path.to_str().ok_or("database path is not UTF-8")?;
+    let server = start_server(database, &address)?;
+    let work = json!({"op":"submit_work","work":{"identity":"work-one","body":"Build the artifact","activity":"release"}});
+    let id = call(&address, work.clone())?["id"]
+        .as_i64()
+        .ok_or("missing work id")?;
+    assert_eq!(call(&address, work)?["id"], json!(id));
+    assert_eq!(
+        call(&address, json!({"op":"work_page"}))?["items"][0]["status"],
+        "available"
+    );
+    let claim = json!({"op":"claim_work","id":id,"participant":"agent-a","identity":"claim-a"});
+    let receipt = call(&address, claim.clone())?;
+    assert_eq!(receipt["generation"], 1);
+    assert_eq!(call(&address, claim)?, receipt);
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"submit_work","work":{"identity":"claim-a","body":"conflicting namespace reuse"}})
+        )?["error"],
+        "identity conflict"
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"claim_work","id":id,"participant":"agent-b","identity":"claim-b"})
+        )?["error"],
+        "identity conflict"
+    );
+    let race_id = call(
+        &address,
+        json!({"op":"submit_work","work":{"identity":"work-race","body":"Only one claimant wins"}}),
+    )?["id"]
+        .as_i64()
+        .ok_or("missing race work id")?;
+    let barrier = Arc::new(Barrier::new(2));
+    let racers = ["racer-a", "racer-b"]
+        .into_iter()
+        .map(|participant| {
+            let address = address.clone();
+            let barrier = Arc::clone(&barrier);
+            thread::spawn(move || {
+                barrier.wait();
+                call(&address, json!({"op":"claim_work","id":race_id,"participant":participant,"identity":format!("claim-{participant}")}))
+            })
+        })
+        .collect();
+    let results = collect_results(racers)?;
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.get("generation").is_some())
+            .count(),
+        1
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|result| result.get("error").is_some())
+            .count(),
+        1
+    );
+    drop(server);
+    let server = start_server(database, &address)?;
+    assert_eq!(
+        call(&address, json!({"op":"get_work","id":id}))?["claimant"],
+        "agent-a"
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"release_work","id":id,"participant":"agent-a","generation":1,"identity":"release-a"})
+        )?["released"],
+        true
+    );
+    let newer = call(
+        &address,
+        json!({"op":"claim_work","id":id,"participant":"agent-b","identity":"claim-b2"}),
+    )?;
+    assert_eq!(newer["generation"], 2);
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"resolve_work","id":id,"participant":"agent-a","generation":1,"identity":"stale","result":"wrong"})
+        )?["error"],
+        "identity conflict"
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"resolve_work","id":id,"participant":"agent-b","generation":2,"identity":"resolve-b","result":"built"})
+        )?["resolved"],
+        true
+    );
+    assert_eq!(
+        call(&address, json!({"op":"get_work","id":id}))?["result"],
+        "built"
+    );
+    assert_eq!(
+        call(&address, json!({"op":"work_page"}))?["items"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    let stranded = call(
+        &address,
+        json!({"op":"submit_work","work":{"identity":"work-stranded","body":"Recover safely"}}),
+    )?["id"]
+        .as_i64()
+        .ok_or("missing second work id")?;
+    let old_claim = call(
+        &address,
+        json!({"op":"claim_work","id":stranded,"participant":"agent-a","identity":"claim-stranded"}),
+    )?;
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"recover_work","id":stranded,"identity":"operator-recovery"})
+        )?["released"],
+        true
+    );
+    assert_eq!(
+        call(
+            &address,
+            json!({"op":"claim_work","id":stranded,"participant":"agent-b","identity":"claim-after-recovery"})
+        )?["generation"],
+        old_claim["generation"].as_i64().unwrap() + 1
+    );
+    let channel = json!({"op":"create_channel","channel":{"name":"all","members":["operator","agent-a","agent-b"]}});
+    call(&address, channel)?;
+    let message = json!({"op":"send_message","message":{"identity":"old-group","channel":"all","sender":"operator","target":{"kind":"group"},"body":"Broadcast remains distinct"}});
+    let message_id = call(&address, message.clone())?["id"].clone();
+    assert_eq!(call(&address, message)?["id"], message_id);
+    assert_eq!(
+        call(&address, json!({"op":"inbox","participant":"agent-a"}))?["messages"][0]["message"]
+            ["body"],
+        "Broadcast remains distinct"
+    );
+    drop(server);
+    std::fs::remove_dir_all(directory)?;
+    Ok(())
+}

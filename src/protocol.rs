@@ -144,6 +144,38 @@ pub enum Operation {
     SendMessage {
         message: Message,
     },
+    SubmitWork {
+        work: SharedWork,
+    },
+    WorkPage {
+        #[serde(default)]
+        offset: usize,
+    },
+    GetWork {
+        id: i64,
+    },
+    ClaimWork {
+        id: i64,
+        participant: String,
+        identity: String,
+    },
+    ReleaseWork {
+        id: i64,
+        participant: String,
+        generation: i64,
+        identity: String,
+    },
+    RecoverWork {
+        id: i64,
+        identity: String,
+    },
+    ResolveWork {
+        id: i64,
+        participant: String,
+        generation: i64,
+        identity: String,
+        result: String,
+    },
     Inbox {
         participant: String,
     },
@@ -191,6 +223,17 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         root_first: bool,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SharedWork {
+    pub identity: String,
+    pub body: String,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub activity: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

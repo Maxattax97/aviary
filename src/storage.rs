@@ -77,7 +77,7 @@ impl Storage {
     }
 
     async fn migrate(pool: &SqlitePool) -> Result<()> {
-        const CURRENT_SCHEMA_VERSION: i64 = 2;
+        const CURRENT_SCHEMA_VERSION: i64 = 3;
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)
@@ -129,6 +129,13 @@ impl Storage {
             sqlx::query("CREATE TABLE decision_projects (request_id INTEGER PRIMARY KEY REFERENCES requests(id), project_id TEXT NOT NULL REFERENCES projects(id))")
                 .execute(&mut *tx).await?;
             sqlx::query("PRAGMA user_version = 2")
+                .execute(&mut *tx)
+                .await?;
+        }
+        if version < 3 {
+            sqlx::query("CREATE TABLE IF NOT EXISTS shared_work (id INTEGER PRIMARY KEY, identity TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'available', claimant TEXT, generation INTEGER NOT NULL DEFAULT 0, result TEXT)").execute(&mut *tx).await?;
+            sqlx::query("CREATE TABLE IF NOT EXISTS shared_work_actions (identity TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL, result TEXT NOT NULL)").execute(&mut *tx).await?;
+            sqlx::query("PRAGMA user_version = 3")
                 .execute(&mut *tx)
                 .await?;
         }
@@ -199,6 +206,34 @@ impl Storage {
             Operation::AnswerCustom { id, value } => self.answer_custom(id, value).await,
             Operation::CreateChannel { channel } => self.create_channel(channel).await,
             Operation::SendMessage { message } => self.send_message(message).await,
+            Operation::SubmitWork { work } => self.submit_work(work).await,
+            Operation::WorkPage { offset } => self.work_page(offset).await,
+            Operation::GetWork { id } => self.get_work(id).await,
+            Operation::ClaimWork {
+                id,
+                participant,
+                identity,
+            } => self.claim_work(id, participant, identity).await,
+            Operation::ReleaseWork {
+                id,
+                participant,
+                generation,
+                identity,
+            } => {
+                self.release_work(id, participant, generation, identity, false)
+                    .await
+            }
+            Operation::RecoverWork { id, identity } => self.recover_work(id, identity).await,
+            Operation::ResolveWork {
+                id,
+                participant,
+                generation,
+                identity,
+                result,
+            } => {
+                self.resolve_work(id, participant, generation, identity, result)
+                    .await
+            }
             Operation::Inbox { participant } => self.inbox(participant).await,
             Operation::InboxPage {
                 participant,
@@ -422,6 +457,229 @@ impl Storage {
             return Err(AppError::RequestNotFound);
         }
         Ok(json!({"id":id, "dismissed":true}))
+    }
+
+    async fn action_retry(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identity: &str,
+        kind: &str,
+        payload: &str,
+    ) -> Result<Option<Value>> {
+        let reserved: Option<(String, String)> =
+            sqlx::query_as("SELECT kind,payload FROM submission_keys WHERE identity=?")
+                .bind(identity)
+                .fetch_optional(&mut **tx)
+                .await?;
+        if let Some((reserved_kind, reserved_payload)) = reserved {
+            if reserved_kind != format!("work_{kind}") || reserved_payload != payload {
+                return Err(AppError::IdentityConflict);
+            }
+        }
+        let old: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT kind, payload, result FROM shared_work_actions WHERE identity = ?",
+        )
+        .bind(identity)
+        .fetch_optional(&mut **tx)
+        .await?;
+        match old {
+            Some((k, p, r)) if k == kind && p == payload => Ok(Some(serde_json::from_str(&r)?)),
+            Some(_) => Err(AppError::IdentityConflict),
+            None => Ok(None),
+        }
+    }
+
+    async fn reserve_work_action(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        identity: &str,
+        kind: &str,
+        payload: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO submission_keys(identity,kind,payload,record_id) VALUES (?, ?, ?, NULL)",
+        )
+        .bind(identity)
+        .bind(format!("work_{kind}"))
+        .bind(payload)
+        .execute(&mut **tx)
+        .await?;
+        Ok(())
+    }
+
+    async fn submit_work(&self, work: crate::protocol::SharedWork) -> Result<Value> {
+        if work.identity.is_empty() || work.body.is_empty() || work.activity.as_deref() == Some("")
+        {
+            return Err(AppError::InvalidRequest);
+        }
+        let payload = serde_json::to_string(&work)?;
+        let mut tx = self.pool.begin().await?;
+        let inserted = sqlx::query("INSERT INTO submission_keys(identity,kind,payload) VALUES (?,'shared_work',?) ON CONFLICT(identity) DO NOTHING").bind(&work.identity).bind(&payload).execute(&mut *tx).await?.rows_affected() == 1;
+        if !inserted {
+            let id = Self::retry_id(&mut tx, &work.identity, "shared_work", &payload).await?;
+            tx.commit().await?;
+            return Ok(json!({"id":id}));
+        }
+        let id = sqlx::query("INSERT INTO shared_work(identity,payload) VALUES (?,?)")
+            .bind(&work.identity)
+            .bind(&payload)
+            .execute(&mut *tx)
+            .await?
+            .last_insert_rowid();
+        sqlx::query("UPDATE submission_keys SET record_id=? WHERE identity=?")
+            .bind(id)
+            .bind(&work.identity)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(json!({"id":id}))
+    }
+
+    async fn work_page(&self, offset: usize) -> Result<Value> {
+        let rows: Vec<(i64,String,String,Option<String>,i64)> = sqlx::query_as("SELECT id,payload,status,claimant,generation FROM shared_work WHERE status != 'resolved' ORDER BY id LIMIT 101 OFFSET ?").bind(i64::try_from(offset).map_err(|_| AppError::InvalidRequest)?).fetch_all(&self.pool).await?;
+        let more = rows.len() > 100;
+        let items: Vec<Value> = rows.into_iter().take(100).map(|(id,payload,status,claimant,generation)| {
+            let work: crate::protocol::SharedWork = serde_json::from_str(&payload).expect("stored shared work payload is valid JSON");
+            let preview: String = work.body.chars().take(160).collect();
+            json!({"id":id,"identity":work.identity,"preview":preview,"status":status,"claimant":claimant,"generation":generation})
+        }).collect();
+        Ok(json!({"items":items,"next_offset":if more {Some(offset+100)} else {None}}))
+    }
+
+    async fn get_work(&self, id: i64) -> Result<Value> {
+        let row: Option<(String, String, Option<String>, i64, Option<String>)> = sqlx::query_as(
+            "SELECT payload,status,claimant,generation,result FROM shared_work WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let (payload, status, claimant, generation, result) =
+            row.ok_or(AppError::InvalidRequest)?;
+        Ok(
+            json!({"id":id,"work":serde_json::from_str::<Value>(&payload)?,"status":status,"claimant":claimant,"generation":generation,"result":result}),
+        )
+    }
+
+    async fn claim_work(&self, id: i64, participant: String, identity: String) -> Result<Value> {
+        if identity.is_empty() || participant.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let op = json!({"id":id,"participant":participant});
+        let p = op.to_string();
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        if let Some(mut v) = Self::action_retry(&mut tx, &identity, "claim", &p).await? {
+            let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM shared_work WHERE id=? AND status='claimed' AND claimant=? AND generation=? )")
+                .bind(id).bind(&participant).bind(v["generation"].as_i64().unwrap_or(-1))
+                .fetch_one(&mut *tx).await?;
+            v["current"] = json!(current);
+            tx.commit().await?;
+            return Ok(v);
+        }
+        Self::reserve_work_action(&mut tx, &identity, "claim", &p).await?;
+        let row: Option<(String, i64)> =
+            sqlx::query_as("SELECT status,generation FROM shared_work WHERE id=?")
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        let (status, generation) = row.ok_or(AppError::InvalidRequest)?;
+        if status != "available" {
+            return Err(AppError::IdentityConflict);
+        }
+        let generation = generation + 1;
+        sqlx::query("UPDATE shared_work SET status='claimed',claimant=?,generation=? WHERE id=? AND status='available'").bind(&participant).bind(generation).bind(id).execute(&mut *tx).await?;
+        let v = json!({"id":id,"participant":participant,"generation":generation,"current":true});
+        sqlx::query("INSERT INTO shared_work_actions VALUES (?, 'claim', ?, ?)")
+            .bind(identity)
+            .bind(p)
+            .bind(v.to_string())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(v)
+    }
+
+    async fn release_work(
+        &self,
+        id: i64,
+        participant: String,
+        generation: i64,
+        identity: String,
+        recovery: bool,
+    ) -> Result<Value> {
+        if identity.is_empty() || participant.is_empty() && !recovery {
+            return Err(AppError::InvalidRequest);
+        }
+        let op = json!({"id":id,"participant":participant,"generation":generation});
+        let p = op.to_string();
+        let kind = if recovery { "recover" } else { "release" };
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        if let Some(v) = Self::action_retry(&mut tx, &identity, kind, &p).await? {
+            tx.commit().await?;
+            return Ok(v);
+        }
+        Self::reserve_work_action(&mut tx, &identity, kind, &p).await?;
+        let where_clause = if recovery {
+            "status='claimed'"
+        } else {
+            "status='claimed' AND claimant=? AND generation=?"
+        };
+        let query = if recovery {
+            format!("UPDATE shared_work SET status='available',claimant=NULL WHERE id=? AND {where_clause}")
+        } else {
+            format!("UPDATE shared_work SET status='available',claimant=NULL WHERE id=? AND {where_clause}")
+        };
+        let mut q = sqlx::query(&query).bind(id);
+        if !recovery {
+            q = q.bind(participant).bind(generation)
+        }
+        if q.execute(&mut *tx).await?.rows_affected() != 1 {
+            return Err(AppError::IdentityConflict);
+        }
+        let v = json!({"id":id,"released":true});
+        sqlx::query("INSERT INTO shared_work_actions VALUES (?, ?, ?, ?)")
+            .bind(identity)
+            .bind(kind)
+            .bind(p)
+            .bind(v.to_string())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(v)
+    }
+    async fn recover_work(&self, id: i64, identity: String) -> Result<Value> {
+        self.release_work(id, String::new(), 0, identity, true)
+            .await
+    }
+    async fn resolve_work(
+        &self,
+        id: i64,
+        participant: String,
+        generation: i64,
+        identity: String,
+        result: String,
+    ) -> Result<Value> {
+        if identity.is_empty() || participant.is_empty() || result.is_empty() {
+            return Err(AppError::InvalidRequest);
+        }
+        let op = json!({"id":id,"participant":participant,"generation":generation,"result":result});
+        let p = op.to_string();
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        if let Some(v) = Self::action_retry(&mut tx, &identity, "resolve", &p).await? {
+            tx.commit().await?;
+            return Ok(v);
+        }
+        Self::reserve_work_action(&mut tx, &identity, "resolve", &p).await?;
+        let changed=sqlx::query("UPDATE shared_work SET status='resolved',result=? WHERE id=? AND status='claimed' AND claimant=? AND generation=?").bind(&result).bind(id).bind(&participant).bind(generation).execute(&mut *tx).await?.rows_affected();
+        if changed != 1 {
+            return Err(AppError::IdentityConflict);
+        }
+        let v = json!({"id":id,"resolved":true});
+        sqlx::query("INSERT INTO shared_work_actions VALUES (?, 'resolve', ?, ?)")
+            .bind(identity)
+            .bind(p)
+            .bind(v.to_string())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(v)
     }
 
     async fn create_channel(&self, mut channel: Channel) -> Result<Value> {
@@ -1269,7 +1527,7 @@ mod tests {
         )
         .fetch_one(&second.pool)
         .await?;
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert_eq!(keys, 1);
         assert_eq!(positions, 1);
         first.pool.close().await;

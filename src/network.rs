@@ -329,6 +329,11 @@ pub async fn serve(database_path: &str, address: &str, ready: bool) -> Result<()
                 | Operation::AnswerCustom { .. }
                 | Operation::CreateChannel { .. }
                 | Operation::SendMessage { .. }
+                | Operation::SubmitWork { .. }
+                | Operation::ClaimWork { .. }
+                | Operation::ReleaseWork { .. }
+                | Operation::RecoverWork { .. }
+                | Operation::ResolveWork { .. }
                 | Operation::ReplyMessage { .. }
                 | Operation::SubmitNotice { .. }
                 | Operation::DismissNotice { .. }

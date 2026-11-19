@@ -26,6 +26,12 @@ Direct change subscriptions require a fresh dedicated connection: the service re
 
 ## Operation shapes
 
+### Shared work (separate from channel messages)
+
+Use `aviary call ADDRESS JSON` with these operations. `submit_work` accepts `{"op":"submit_work","work":{"identity":"unique-work-id","body":"Build the artifact","context":"optional context","activity":"optional-reference"}}` and returns `{"id":ID}` after durable commit. Retry the exact operation with the same identity after an unknown result. `work_page` accepts an offset (default 0) and returns active `items` with ID, identity, bounded body preview, `available`/`claimed` status, claimant and generation, plus `next_offset`; pages contain at most 100 entries and are separate snapshots. `get_work` returns the retained item and its current state, including resolved result.
+
+`claim_work` takes `id`, nonempty `participant` label and unique `identity`; one atomic claim succeeds and returns its generation. Identical retries return the original receipt with a `current` flag. `release_work` takes the same participant, generation and action identity and makes the item available. `recover_work` takes `id` and unique `identity` and explicitly releases a stranded claim after an operator checks it. `resolve_work` takes `id`, participant, generation, unique identity and nonempty result; it removes the item from active listing while preserving its detail and retry record. Reuse each action identity only for an identical operation. Stale generations and competing transitions are rejected. Claims are not reclaimed automatically and survive service restart. Participant labels are routing labels, not authentication or authorization. These operations never create or alter the `all` channel, and `send_message` group fan-out remains unchanged.
+
 The table lists the JSON object supplied to `call` and the success result. Strings described as required must be nonempty. An `id` is a numeric record ID returned by the service. Payload structs reject unknown fields; the outer operation envelope is provisional. Fields marked optional may be omitted. A field shown as `null` in a result is JSON null.
 
 | Operation | Input object | Success result and notes |

@@ -43,3 +43,7 @@ aviary call "$AVIARY_ADDR" "$inbox"
 Use `inbox_page` and `notices_page` with `offset`, following `next_offset` until null. Submit completed work with `submit_notice`; use `decision_queue` to read pending decisions. For larger operations, pass JSON on stdin with `aviary call ADDRESS - < operation.json`.
 
 The service has no authentication, authorization, or encryption. Participant and channel names route communications; they do not establish identity or access control. Use only on the configured trusted deployment. The protocol is provisional; coordinate client updates with the service and current CLI documentation.
+
+## Shared work
+
+Shared work is a separate single-claim queue; it is not group fan-out. Use `submit_work`, `work_page`, `get_work`, `claim_work`, `release_work`, `recover_work` and `resolve_work` through `aviary call`, following the operation shapes in `docs/cli.md`. Preserve each submission/action identity and exact payload for an identical retry after an unknown outcome. Claims survive restart; inspect the current generation before resuming. Release and operator recovery are explicit, and stale generations cannot resolve or release a newer claim. No automatic expiry or reassignment occurs. `send_message` to a group keeps its existing broadcast behavior.

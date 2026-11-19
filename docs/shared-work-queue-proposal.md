@@ -1,6 +1,6 @@
-# Shared `all` work queue: proposed P-03 contract
+# Shared `all` work queue: P-03 contract
 
-This is a concrete proposed contract for US-056 and US-075–076, SYS-061–063 and T-061–063. It is not implemented or an approved change to the existing `all` group channel. The current composer still sends a group message to a provisioned channel. Do not reinterpret or remove existing messages, channels, recipient snapshots, history or retry keys.
+Decision 16 selected support for group fan-out and shared work as distinct constructs. This contract applies to US-056 and US-075–076, SYS-061–063 and T-061–063. Shared work does not change the existing `all` group channel or current composer default. Existing messages, channels, recipient snapshots, history and retry keys are preserved.
 
 ## Distribution and lifecycle
 
@@ -18,7 +18,7 @@ All acceptance, claim, release and resolution records are transactional with the
 
 ## Access and bounded reads
 
-Agents discover active instructions through a bounded, stable-order, cursor-paged operation. Each entry includes an ID, a bounded text preview, available/claimed state and, if claimed, its participant label and generation. A separate bounded detail operation returns the full instruction and relevant current state; framing limits and oversized legacy data are handled explicitly. Pages are independent snapshots; a cursor must make forward progress, and changes while paging can affect what is observed. An agent must reconcile after reconnect and before acting on an old claim. Routing labels are neither access control nor authentication.
+Agents discover active instructions through a bounded, stable-order, offset-paged operation. Each entry includes an ID, identity, a bounded text preview, available/claimed state and, if claimed, its participant label and generation. A separate bounded detail operation returns the full instruction and relevant current state; framing limits and oversized legacy data are handled explicitly. Pages are independent snapshots; offsets advance by the returned page size, and changes while paging can affect what is observed. An agent must reconcile after reconnect and before acting on an old claim. Routing labels are neither access control nor authentication.
 
 The normal operator composer retains its generated stable identity, exact draft, visible destination and explicit Enter send. The UI must identify the destination as **shared work queue `all`** before the send; an accepted response must be checked against the specific new operation. A rejected or unknown result retains the exact draft and identity for a user-initiated identical retry, with no automatic send. A service that lacks the operation must produce a clear rejection or unconfirmed result, not silently fall back to group fan-out. Direct and group message operations and the `all` channel continue to work as before when explicitly used.
 
@@ -38,6 +38,6 @@ Before changing the composer default, define how operators identify old versus n
 - Use an existing database containing an `all` channel, group messages, direct messages and retry keys. Verify all remain readable and identical retries still work. Exercise old/new service and client combinations explicitly.
 - Drive the real composer, CLI and portable skill: show the shared destination before Enter, do not submit before Enter, preserve unknown-outcome identity and text, and retrieve the resulting item from an agent. Document local process-kill versus OS-crash and remote-test limits.
 
-## Choices needing operator review
+## Selected policy and current slice
 
-The proposed single-claim policy and manual recovery are substantive workflow choices. Confirm whether work should instead be delivered to every agent, whether claims need timed expiry or heartbeat-based recovery, and whether failure should remain active or have a separate terminal outcome. Until those choices are settled, P-03 remains a proposal; current group fan-out must not be represented as shared work.
+The selected policy is one current claim with explicit release and manual recovery; no expiry, heartbeat or automatic reassignment. Failure leaves work active until its claimant releases it or explicitly resolves it with a result. The service stores submission, claim, release, recovery and resolution identities durably and fences stale generations. The first implementation exposes submit, bounded active listing, detail, claim, release, recovery and resolve through protocol operations and `aviary call`. The terminal composer remains group fan-out; no UI path currently submits shared work. Listing is capped at 100 records per offset page; pages are separate snapshots. Process restart is tested, but OS crash, power loss and remote operation are not established by this slice.
