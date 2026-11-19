@@ -36,7 +36,7 @@ use crate::{
     network,
     protocol::{
         HistoryKind, HistorySection, InboxItem, InboxPage, Message, MessageReply, NoticeItem,
-        NoticePage, Operation, PendingRequest, RequestPage, SearchCursor, Target,
+        NoticePage, Operation, PendingRequest, RequestPage, SearchCursor, SharedWork, Target,
     },
 };
 
@@ -52,6 +52,7 @@ async fn submit_checked(address: &str, operation: &Operation) -> Result<serde_js
     let id = response.get("id").and_then(serde_json::Value::as_i64);
     let valid = match operation {
         Operation::SendMessage { .. } => id.is_some_and(|id| id > 0),
+        Operation::SubmitWork { .. } => id.is_some_and(|id| id > 0),
         Operation::ReplyMessage { reply } => {
             id.is_some_and(|id| id > 0)
                 && response
@@ -521,6 +522,7 @@ impl Drop for TerminalGuard {
 #[derive(Default)]
 struct Composer {
     reply_to: Option<i64>,
+    shared_work: bool,
     stage: usize,
     review_page: usize,
     fields: [String; 4],
@@ -530,6 +532,14 @@ struct Composer {
 }
 impl Composer {
     fn instruction() -> io::Result<Self> {
+        Self::with_identity("tui-")
+    }
+    fn shared_work() -> io::Result<Self> {
+        let mut composer = Self::with_identity("tui-work-")?;
+        composer.shared_work = true;
+        Ok(composer)
+    }
+    fn with_identity(prefix: &str) -> io::Result<Self> {
         let mut random = [0u8; 16];
         std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
         let identity = random
@@ -538,12 +548,23 @@ impl Composer {
             .collect::<String>();
         Ok(Self {
             fields: [
-                format!("tui-{identity}"),
+                format!("{prefix}{identity}"),
                 "all".into(),
                 String::new(),
                 String::new(),
             ],
             ..Self::default()
+        })
+    }
+    fn work(&self) -> Option<SharedWork> {
+        if !self.shared_work || self.fields[0].is_empty() || self.fields[3].is_empty() {
+            return None;
+        }
+        Some(SharedWork {
+            identity: self.fields[0].clone(),
+            body: self.fields[3].clone(),
+            context: None,
+            activity: None,
         })
     }
     fn review_stage(&self) -> usize {
@@ -1430,7 +1451,10 @@ impl View {
         }
         if let Some(composer) = &mut self.composer {
             if composer.reply_to.is_none() {
-                if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                if key.code == KeyCode::Char('o')
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !composer.shared_work
+                {
                     self.suspended_instruction = self.composer.take();
                     return Action::Redraw;
                 }
@@ -1446,7 +1470,9 @@ impl View {
                     KeyCode::Esc if composer.error.is_some() => composer.confirm_discard = true,
                     KeyCode::Esc => self.composer = None,
                     KeyCode::Enter => {
-                        if let Some(message) = composer.message() {
+                        if let Some(work) = composer.work() {
+                            return Action::SendWork(work);
+                        } else if let Some(message) = composer.message() {
                             return Action::SendInstruction(message);
                         }
                     }
@@ -1511,6 +1537,8 @@ impl View {
                         if let Some(reply) = composer.reply() {
                             return Action::SendReply(reply);
                         }
+                    } else if let Some(work) = composer.work() {
+                        return Action::SendWork(work);
                     } else if let Some(message) = composer.message() {
                         return Action::SendInstruction(message);
                     }
@@ -2230,6 +2258,20 @@ impl View {
             }
             return Action::Redraw;
         }
+        if key.code == KeyCode::Char('w') {
+            match Composer::shared_work() {
+                Ok(composer) => {
+                    self.composer = Some(composer);
+                    self.status = None;
+                    self.status_expires = None;
+                }
+                Err(error) => {
+                    self.status_expires = None;
+                    self.status = Some(format!("Cannot create shared-work identity: {error}"));
+                }
+            }
+            return Action::Redraw;
+        }
         if key.code == KeyCode::Char('n') {
             return Action::ToggleNotices;
         }
@@ -2401,6 +2443,7 @@ enum Action {
     LoadOverview,
     CloseOverview,
     SendInstruction(Message),
+    SendWork(SharedWork),
     SendReply(MessageReply),
     Submit(Operation),
 }
@@ -2647,7 +2690,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                 if is_instruction {
                     match result {
                         Ok(_response) => {
-                            let label = if view.composer.as_ref().is_some_and(|composer| composer.reply_to.is_some()) { "Reply" } else { "Instruction" };
+                            let label = if view.composer.as_ref().is_some_and(|composer| composer.reply_to.is_some()) { "Reply" } else if view.composer.as_ref().is_some_and(|composer| composer.shared_work) { "Shared work" } else { "Instruction" };
                             view.composer = None;
                             view.status = Some(format!("{label} sent"));
                             view.status_expires = Some(Instant::now() + Duration::from_secs(4));
@@ -2655,7 +2698,7 @@ pub async fn terminal(address: &str) -> Result<()> {
                         Err(error) => { if let Some(composer) = &mut view.composer {
                             composer.error = Some(match error {
                                 crate::error::AppError::Remote(message) if matches!(message.as_str(), "invalid request" | "identity conflict" | "request not found" | "request already answered" | "invalid option") => {
-                                    if composer.reply_to.is_none() && message == "invalid request" {
+                                    if composer.reply_to.is_none() && !composer.shared_work && message == "invalid request" {
                                         format!("Rejected: {message}. Ensure channel all includes operator and at least one other member.")
                                     } else { format!("Rejected: {message}") }
                                 },
@@ -2801,6 +2844,16 @@ pub async fn terminal(address: &str) -> Result<()> {
                         let address = address.to_owned();
                         submission = Some(tokio::spawn(async move {
                             (true, false, false, submit_checked(&address, &Operation::SendMessage { message }).await)
+                        }));
+                    },
+                    Action::SendWork(work) => {
+                        generation = generation.wrapping_add(1);
+                        if let Some(composer) = &mut view.composer { composer.error = None; }
+                        view.busy = true;
+                        display(&mut screen, &mut view)?;
+                        let address = address.to_owned();
+                        submission = Some(tokio::spawn(async move {
+                            (true, false, false, submit_checked(&address, &Operation::SubmitWork { work }).await)
                         }));
                     },
                     Action::SendReply(reply) => {
@@ -2959,6 +3012,18 @@ fn composer_pages(composer: &Composer) -> Vec<String> {
             safe(channel)
         ));
     }
+    if composer.shared_work {
+        let content = format!(
+            "Identity: {}   Destination: shared work queue all (single claim)   Text: {}",
+            safe(identity),
+            safe(body)
+        );
+        let chars: Vec<char> = content.chars().collect();
+        return chars
+            .chunks(detail_page_size())
+            .map(|part| part.iter().collect())
+            .collect();
+    }
     let content = format!(
         "Identity: {}   Channel: {}   To: {}   Text: {}",
         safe(identity),
@@ -3012,7 +3077,7 @@ fn display(screen: &mut Screen, view: &mut View) -> Result<()> {
 Decisions: h/l request; j/k or 1-9 choose; Enter confirms
 d defer; U retry unconfirmed deferral; p importance; c context; o answer detail
 Tab focus; d defers to queue bottom
-i inbox; n notices; m instruction
+i inbox; n notices; m group instruction; w shared work
 v overview; p projects/status/priority
 / search retained records
 Inbox: Tab focus; arrows move; r reply; H history
@@ -3066,7 +3131,17 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
     if let Some(composer) = &view.composer {
         if composer.reply_to.is_none() {
             if composer.confirm_discard {
-                println!("Discard this uncertain instruction?\r\nDestination: all · group\r\nID: {}\r\ny discards; any other key keeps it.", safe(&composer.fields[0]));
+                let destination = if composer.shared_work {
+                    "shared work queue all · one claim"
+                } else {
+                    "all · group"
+                };
+                let label = if composer.shared_work {
+                    "shared work"
+                } else {
+                    "instruction"
+                };
+                println!("Discard this uncertain {label}?\r\nDestination: {destination}\r\nID: {}\r\ny discards; any other key keeps it.", safe(&composer.fields[0]));
                 return render(screen, view, &output);
             }
             let body = &composer.fields[3];
@@ -3074,7 +3149,20 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             let capacity = usize::from(width.saturating_sub(4)).max(1) / 2;
             let start = composer.cursor.saturating_sub(capacity.saturating_sub(1));
             let visible: String = body.chars().skip(start).take(capacity).collect();
-            println!("Compose instruction\r\nDestination: all · group\r\nSend to other channel members\r\n{}{}{}\r\n{}^\r\nEnter sends; ←/→ moves; Ctrl-O suspends; Esc discards.",
+            let (title, destination, target) = if composer.shared_work {
+                (
+                    "Compose shared work",
+                    "Destination: shared work queue all · one claim",
+                    "Agents can claim it once",
+                )
+            } else {
+                (
+                    "Compose instruction",
+                    "Destination: all · group",
+                    "Send to other channel members",
+                )
+            };
+            println!("{title}\r\n{destination}\r\n{target}\r\n{}{}{}\r\n{}^\r\nEnter sends; ←/→ moves; Esc discards.",
                 if start > 0 { "…" } else { "" }, safe(&visible),
                 if start + capacity < body.chars().count() { "…" } else { "" },
                 " ".repeat(composer.cursor.saturating_sub(start) + usize::from(start > 0)));
@@ -3114,6 +3202,8 @@ Ctrl-G opens help anywhere; Ctrl-C quits";
             let page = composer.review_page.min(pages.len().saturating_sub(1));
             let title = if composer.reply_to.is_some() {
                 "Review reply"
+            } else if composer.shared_work {
+                "Review shared work"
             } else {
                 "Review instruction"
             };
@@ -4166,6 +4256,38 @@ mod tests {
                     && matches!(message.target, Target::Group) && message.body == "Do work?")
             );
         }
+    }
+
+    #[test]
+    fn shared_work_composer_is_explicit_and_distinct_from_group_message() {
+        let mut view = View::new();
+        view.key(key(KeyCode::Char('w')));
+        let identity = view.composer.as_ref().expect("shared-work composer").fields[0].clone();
+        assert!(identity.starts_with("tui-work-"));
+        for c in "Build release".chars() {
+            assert!(matches!(view.key(key(KeyCode::Char(c))), Action::Redraw));
+        }
+        assert!(
+            matches!(view.key(key(KeyCode::Enter)), Action::SendWork(work)
+            if work.identity == identity && work.body == "Build release")
+        );
+        assert!(
+            matches!(view.key(key(KeyCode::Enter)), Action::SendWork(work)
+            if work.identity == identity && work.body == "Build release")
+        );
+
+        view.composer = None;
+        view.key(key(KeyCode::Char('m')));
+        assert!(view
+            .composer
+            .as_ref()
+            .is_some_and(|composer| !composer.shared_work));
+        assert_eq!(
+            view.composer
+                .as_ref()
+                .map(|composer| composer.fields[1].as_str()),
+            Some("all")
+        );
     }
 
     #[test]
