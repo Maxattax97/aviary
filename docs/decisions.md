@@ -1,5 +1,9 @@
 # Open product and engineering decisions
 
+## Mouse-wheel terminal interaction (2026-11-19; proposed)
+
+US-092 / SYS-085 proposes mouse-wheel scrolling for the focused scrollable list or content region, with keyboard operation preserved and no selection/action side effects at boundaries or over non-scrollable controls. Keep this in the terminal presentation layer. T-094 must validate behavior in agreed terminal and tmux configurations, including when mouse reporting is unavailable; supported modes, scroll step and focus indication remain open. No implementation or compatibility claim is recorded here.
+
 ## CI scope (2026-11-12)
 
 Add GitHub Actions CI for pull requests and pushes to `main`, using Ubuntu, stable Rust, locked dependencies, and Python 3.12. Run `cargo test --locked`, build the binaries, then execute the documented terminal pseudo-terminal and portable-skill smoke checks. This is a Linux CI baseline, not a supported-platform claim. The repository has no approved deployment target or release process; this workflow does not publish artifacts or deploy Aviary. Revisit additional platform jobs and deployment only after those targets are decided.

@@ -26,6 +26,7 @@
 | SYS-055 | US-067 | V1 | T-055 (test) | V1-29 | Local Unicode resize evidence; broader acceptance open |
 | SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Local draft and interruption evidence; broader acceptance open |
 | SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Local target and concurrent-answer checks; broader validation open |
+| SYS-085 | US-092 | V1 proposed | T-094 (demonstration/test) | V1-32 | Proposed; terminal mouse-reporting support and behavior not verified |
 | SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
 | SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |
 | SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Local help and draft checks; platform matrix open |
@@ -199,5 +200,6 @@ Queue and deferral changes have local implementation and partial evidence; async
 | US-089 | No Aviary SYS requirement | T-092 (integration) | P-09; Firstmate-owned read-only supervision behavior; observed symptom, cause unconfirmed |
 | US-090 | SYS-083 plus Firstmate validation | T-091, T-092 | P-09; stage validation is Firstmate-owned and must reject malformed input before durable outbox staging |
 | US-091 | SYS-084 | T-093 | P-09; conflicts with explicit provisioning and immutable membership direction; setup and `all` semantics require decision |
+| US-092 | SYS-085 | T-094 | V1-32; proposed; terminal mouse-reporting support and focus/boundary behavior require validation |
 
 Every item in the 2026-11-18 notes and both handoffs is represented above or in the linked story/requirement/test rows. Handoff 19 traces to an integration test rather than an Aviary product requirement because it concerns Firstmate session ownership and wake prompts. Handoff 20 spans both Aviary protocol/display behavior and Firstmate pre-staging validation.

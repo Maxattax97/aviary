@@ -92,6 +92,7 @@ The following map identifies principal architectural responsibilities and planne
 | Decision presentation and structured response | SYS-006–011, SYS-036; T-006–011, T-036 | V1-05–06, V1-16 |
 | Channels, targeted messages and correlated responses | SYS-012–016, SYS-040, SYS-045, SYS-084; T-012–016, T-040, T-045, T-093 | V1-07–10, P-09 |
 | Agent integration, terminal operation and lifecycle | SYS-022–024, SYS-028–029, SYS-039, SYS-046–057, SYS-072–084; T-022–024, T-028–029, T-039, T-046–057, T-072–074, T-083–093 | V1-12, V1-14, V1-18, V1-22, V1-24–31, P-08, P-09 |
+| Terminal mouse-wheel navigation | SYS-019–020, SYS-022, SYS-064–065, SYS-085; T-094 | V1-12, V1-26, V1-32 |
 | Durability, history, identity and recovery | SYS-025–027, SYS-033, SYS-041–042; T-025–027, T-033, T-041–042 | V1-15, V1-17, V1-21 |
 | Distribution, context and listener boundaries | SYS-030–032, SYS-043–044; T-030–032, T-043–044 | V1-19–20, SL-05 |
 | Future authentication, authorization and user isolation | SYS-034–035, SYS-037; T-034–035, T-037 | L-13–15; future security design |
@@ -111,6 +112,8 @@ The proposed decision ordering is effective importance followed by FIFO age with
 A future terminal can render a vertically navigable list and detail regions, fetch bounded chunks invisibly as needed, and scroll text by visible lines. It must surface loading, fetch errors and partial data without treating cached pages as a complete snapshot; remain operable in reviewed narrow panes; preserve focus, selection and draft as specified; and distinguish unconfirmed outcomes from acceptance. Colors should follow the chosen terminal-aware scheme with non-color cues. These are candidates for review and prototyping, not current runtime claims.
 
 ## Accumulated terminal and decision feedback (2026-11-18; proposals)
+
+The proposed mouse-wheel interaction (US-092 / SYS-085) belongs to the terminal presentation layer: wheel events should act on the focused scrollable region, while existing keyboard interaction remains available and boundary events cannot trigger an adjacent action. Treat terminal mouse reporting as a capability to validate against the support matrix; this is a requirement proposal, not implemented behavior or a claim of universal terminal support. See T-094.
 
 New operator feedback proposes a terminal presentation layer that preserves line breaks, wraps content to pane width, exposes labeled decision properties and a human-readable received age, and uses a visible block cursor with familiar line-editing controls. These are interface obligations to evaluate; they do not select a Markdown renderer, a universal line-length limit, a specific color/table layout, or behavior for every terminal emulator. User-supplied text must remain data and must not change terminal styles. The report that a line beginning with `>` appeared green is an unverified defect report with no established cause.
 
