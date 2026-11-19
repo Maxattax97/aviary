@@ -41,7 +41,7 @@ impl DecisionRequest {
                 .recommendation
                 .is_some_and(|index| index >= self.options.len())
             || self.recommendation.is_some() && self.reason.as_deref().is_none_or(str::is_empty)
-            || self.recommendation.is_none() && self.reason.is_some()
+            || self.reason.as_deref() == Some("")
         {
             return Err(AppError::InvalidRequest);
         }

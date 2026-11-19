@@ -2978,12 +2978,14 @@ fn detail_pages(request: &crate::protocol::DecisionRequest, option: Option<usize
             safe(reason)
         )
     } else {
+        let reason = request.reason.as_deref().unwrap_or("(none supplied)");
         format!(
-            "Agent: {}\nQuestion: {}\nExplanation: {}\nSupporting context: {}",
+            "Agent: {}\nQuestion: {}\nExplanation: {}\nSupporting context: {}\nAgent reason/context: {}",
             safe(&request.agent),
             safe(&request.question),
             safe(explanation),
-            safe(context)
+            safe(context),
+            safe(reason)
         )
     };
     let chars: Vec<char> = content.chars().collect();
@@ -4234,6 +4236,16 @@ mod tests {
         assert_eq!(
             view.composer.as_ref().map(|c| c.fields[3].as_str()),
             Some("x?")
+        );
+    }
+
+    #[test]
+    fn decision_detail_shows_reason_without_recommendation() {
+        let mut request = request(None, 2).request;
+        request.reason = Some("Inspect the generated diff before applying it.".into());
+        let detail = detail_pages(&request, None).concat();
+        assert!(
+            detail.contains("Agent reason/context: Inspect the generated diff before applying it.")
         );
     }
 

@@ -13,6 +13,8 @@ Aviary separates three kinds of work:
 - **Messages** are targeted communications between participants or groups. They appear in the recipient's inbox, not the decision queue.
 - **Notices** report completed work and its result. They appear in the operator's completion notices, not as a request for a decision.
 
+A decision may include a nonempty `reason` as agent context even when it has no recommendation. If you provide a `recommendation`, also provide a nonempty `reason` explaining it; the index must identify an existing option. The operator can inspect standalone reason/context in full decision details.
+
 Pending decisions have importance 0–5 (default 0). Higher importance appears first; items of equal importance retain their queue order. The operator can change importance, and deferral keeps a decision pending while moving it to the bottom of its importance group. Do not use a decision as a general status message.
 
 ## Submit and retrieve a decision

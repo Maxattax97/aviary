@@ -74,7 +74,7 @@
 | SYS-080 | US-084, US-085 | V1 proposed | T-088 (inspection/test) | P-09 | Proposed; priority mapping and skill policy open |
 | SYS-081 | US-080, US-087 | V1 proposed | T-089 (test) | P-09 | Proposed; latency bound not selected |
 | SYS-082 | US-087 | V1 proposed | T-090 (test) | P-09 | Proposed; reported defect not reproduced |
-| SYS-083 | US-088, US-090 | V1 proposed | T-091 (test) | P-09 | Proposed; coordinated protocol change required |
+| SYS-083 | US-088, US-090 | V1 proposed | T-091 (test) | P-09 | Implemented in Aviary; Firstmate staging validation remains separate |
 | SYS-084 | US-056, US-075, US-091 | V1 proposed | T-093 (demonstration) | P-09 | Proposed; conflicts with current explicit provisioning direction |
 
 ## Stories to requirements and disposition
@@ -195,7 +195,7 @@ Queue and deferral changes have local implementation and partial evidence; async
 | US-085 | SYS-080 | T-088 | P-09; priority and ticket mappings require operator choice |
 | US-086 | SYS-079 | T-087 | P-09; keep notices and action decisions distinct; command execution unresolved |
 | US-087 | SYS-081, SYS-082 | T-089, T-090 | P-09; latency target open; reported terminal styling defect not reproduced |
-| US-088 | SYS-083 | T-091 | P-09; current reason/recommendation protocol contract needs coordinated change |
+| US-088 | SYS-083 | T-091 | P-09; Aviary accepts standalone reason/context and displays it; Firstmate validation remains coordinated |
 | US-089 | No Aviary SYS requirement | T-092 (integration) | P-09; Firstmate-owned read-only supervision behavior; observed symptom, cause unconfirmed |
 | US-090 | SYS-083 plus Firstmate validation | T-091, T-092 | P-09; stage validation is Firstmate-owned and must reject malformed input before durable outbox staging |
 | US-091 | SYS-084 | T-093 | P-09; conflicts with explicit provisioning and immutable membership direction; setup and `all` semantics require decision |

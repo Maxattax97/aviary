@@ -414,6 +414,7 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
     let server = start_server(database, &address)?;
     let requests = [
         json!({"identity":"none","agent":"agent","question":"What next?","explanation":"Why","context":"Supporting context","options":[]}),
+        json!({"identity":"reason-only","agent":"agent","question":"What next?","options":["Continue","Stop"],"reason":"The migration is reversible; inspect the output before continuing."}),
         json!({"identity":"two","agent":"agent","question":"Choose","options":["Yes","No"]}),
         json!({"identity":"many","agent":"agent","question":"Choose","options":["0","1","2","3","4","5","6","7","8","9","10"],"recommendation":10,"reason":"Last is best"}),
     ];
@@ -426,7 +427,7 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
     let invalid = [
         json!({"identity":"bad-index","agent":"agent","question":"Choose","options":[],"recommendation":0,"reason":"Bad"}),
         json!({"identity":"bad-reason","agent":"agent","question":"Choose","options":["Yes"],"recommendation":0}),
-        json!({"identity":"orphan-reason","agent":"agent","question":"Choose","options":[],"reason":"Unattached"}),
+        json!({"identity":"empty-reason","agent":"agent","question":"Choose","options":["Yes"],"reason":""}),
     ];
     for request in invalid {
         assert_eq!(
@@ -448,15 +449,25 @@ fn decision_suggestions_and_optional_recommendation() -> TestResult<()> {
         Some(&json!("Supporting context"))
     );
     assert_eq!(
-        listed.pointer("/requests/1/request/options"),
-        Some(&json!(["Yes", "No"]))
+        listed.pointer("/requests/1/request/reason"),
+        Some(&json!(
+            "The migration is reversible; inspect the output before continuing."
+        ))
     );
     assert_eq!(
         listed.pointer("/requests/2/request/recommendation"),
+        Some(&Value::Null)
+    );
+    assert_eq!(
+        listed.pointer("/requests/2/request/options"),
+        Some(&json!(["Yes", "No"]))
+    );
+    assert_eq!(
+        listed.pointer("/requests/3/request/recommendation"),
         Some(&json!(10))
     );
     assert_eq!(
-        listed.pointer("/requests/2/request/reason"),
+        listed.pointer("/requests/3/request/reason"),
         Some(&json!("Last is best"))
     );
     let id = listed
