@@ -181,19 +181,58 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
     let server = start_server(database, &address)?;
     let first = call(&address, json!({"op":"submit","request":request}))?;
     let id = first["id"].as_i64().ok_or("missing request ID")?;
+    let assert_original_request = || -> TestResult<()> {
+        let history = call(
+            &address,
+            json!({"op":"history_page","kind":"decision","id":id,"section":"decisions"}),
+        )?;
+        let decisions = history["decisions"]
+            .as_array()
+            .ok_or("missing decision history")?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0]["request"], request);
+        Ok(())
+    };
+    assert_original_request()?;
     assert_eq!(
         call(&address, json!({"op":"submit","request":request}))?["id"],
         id
     );
-    let mut changed = request.clone();
-    changed["question"] = json!("Changed");
-    assert_eq!(
-        call(&address, json!({"op":"submit","request":changed}))?["error"],
-        "identity conflict"
-    );
+    for changed in [
+        {
+            let mut changed = request.clone();
+            changed["question"] = json!("Changed question");
+            changed
+        },
+        {
+            let mut changed = request.clone();
+            changed["options"] = json!(["Wait", "Cancel"]);
+            changed
+        },
+    ] {
+        assert_eq!(
+            call(&address, json!({"op":"submit","request":changed}))?["error"],
+            "identity conflict"
+        );
+        assert_original_request()?;
+    }
     drop(server);
 
     let server = start_server(database, &address)?;
+    assert_original_request()?;
+    let mut changed_question = request.clone();
+    changed_question["question"] = json!("Changed after restart");
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":changed_question}))?["error"],
+        "identity conflict"
+    );
+    let mut changed_options = request.clone();
+    changed_options["options"] = json!(["Later", "Never"]);
+    assert_eq!(
+        call(&address, json!({"op":"submit","request":changed_options}))?["error"],
+        "identity conflict"
+    );
+    assert_original_request()?;
     let pending = call(&address, json!({"op":"list"}))?;
     assert_eq!(
         pending["requests"]
@@ -244,6 +283,24 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
         .iter()
         .all(|result| result["id"] == concurrent_id));
 
+    let id_text = concurrent_id.to_string();
+    let mut first_waiter = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["wait", &address, &id_text])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::sleep(Duration::from_millis(200));
+    assert!(first_waiter.try_wait()?.is_none());
+    first_waiter.kill()?;
+    first_waiter.wait()?;
+    let mut restarted_waiter = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["wait", &address, &id_text])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    thread::sleep(Duration::from_millis(200));
+    assert!(restarted_waiter.try_wait()?.is_none());
+
     let barrier = Arc::new(Barrier::new(8));
     let answers = (0..8)
         .map(|index| {
@@ -285,15 +342,37 @@ fn durable_retry_and_single_answer() -> TestResult<()> {
     } else {
         json!({"type":"custom", "value":format!("custom {winner}")})
     };
+    let assert_retrieval_surfaces = |expected: &Value| -> TestResult<()> {
+        let current = call(&address, json!({"op":"get", "id":concurrent_id}))?;
+        assert_eq!(current.get("answer"), Some(expected));
+        let history = call(
+            &address,
+            json!({"op":"history_page","kind":"decision","id":concurrent_id,"section":"decisions"}),
+        )?;
+        let decisions = history["decisions"]
+            .as_array()
+            .ok_or("missing decision history")?;
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].get("answer"), Some(expected));
+        Ok(())
+    };
+    assert_retrieval_surfaces(&expected)?;
+    let waiter_result = restarted_waiter.wait_with_output()?;
+    assert!(waiter_result.status.success());
     assert_eq!(
-        call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"],
-        expected
+        serde_json::from_slice::<Value>(&waiter_result.stdout)?,
+        json!({"id":concurrent_id,"answer":expected})
     );
     drop(server);
     let server = start_server(database, &address)?;
+    assert_retrieval_surfaces(&expected)?;
+    let restarted_service_waiter = Command::new(env!("CARGO_BIN_EXE_aviary"))
+        .args(["wait", &address, &id_text])
+        .output()?;
+    assert!(restarted_service_waiter.status.success());
     assert_eq!(
-        call(&address, json!({"op":"get", "id":concurrent_id}))?["answer"],
-        expected
+        serde_json::from_slice::<Value>(&restarted_service_waiter.stdout)?,
+        json!({"id":concurrent_id,"answer":expected})
     );
     let retry = if winner % 2 == 0 {
         json!({"op":"answer", "id":concurrent_id, "index":winner / 4})

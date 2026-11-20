@@ -37,6 +37,15 @@ def main() -> None:
                 time.sleep(0.05)
             raise AssertionError(f"Missing {marker!r} in tmux pane: {result!r}")
 
+        def wait_for_screen_change(previous: str) -> str:
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                result = tmux("capture-pane", "-p", "-t", "aviary:", check=False)
+                if result.returncode == 0 and result.stdout != previous:
+                    return result.stdout
+                time.sleep(0.05)
+            raise AssertionError(f"tmux pane did not change from: {previous!r}")
+
         request_id = service.call(
             {
                 "op": "submit",
@@ -317,6 +326,11 @@ def main() -> None:
             tmux("resize-window", "-t", "aviary:", "-x", "40", "-y", "12")
             tmux("send-keys", "-t", "aviary:", "?")
             wait_for_screen("Keyboard help")
+            before_help_scroll = tmux("capture-pane", "-p", "-t", "aviary:").stdout
+            tmux("send-keys", "-t", "aviary:", "j")
+            first_help_scroll = wait_for_screen_change(before_help_scroll)
+            assert "Keyboard help" in first_help_scroll, first_help_scroll
+            assert "Inbox:" not in first_help_scroll, first_help_scroll
             tmux("send-keys", "-t", "aviary:", "j")
             wait_for_screen("Inbox:")
             for _ in range(30):

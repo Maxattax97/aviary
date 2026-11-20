@@ -8,9 +8,13 @@ Use unit and integration tests for structured data, correlation, deduplication, 
 
 Measure update delay, setup effort, accessibility, payload limits and retention once their acceptance thresholds are agreed. Until then, these remain verification gaps, not implicit performance promises. Test terminal environments and platform support against a reviewed support matrix. Validate attention reduction, one-confirmation acceptance, context switching and resumed agent work with representative operators; record observations and review findings instead of treating subjective satisfaction as a unit-test result. The proposed [operator session](operator-validation.md) provides a concrete, unexecuted protocol.
 
-## Planned terminal mouse-wheel scrolling verification (T-094)
+## T-094 local mouse-wheel verification evidence (proposed V1 baseline)
 
-Not run; proposed for US-092 / SYS-085. In each agreed supported terminal and tmux configuration, exercise wheel input with focus on decision, inbox and notice lists and on long detail, context and history content. Verify only the focused scrollable region moves; test both boundaries for no unintended selection change or action; then use keyboard navigation to confirm it remains available. Send wheel input over non-scrollable controls and verify it does not activate them. Repeat with mouse reporting unavailable or disabled and verify the documented keyboard path remains usable. Record terminal/emulator, tmux and mouse-reporting settings, pane dimensions, observed focus and scroll behavior, and any limitations. This planned check does not assert current implementation or universal terminal compatibility.
+The local implementation increment was exercised with `python3 tests/mouse_wheel.py` and `python3 tests/tmux_wheel.py`. The direct PTY is 80×24 with inherited `TERM=tmux-256color`; injected SGR wheel events exercised decision, inbox and notice lists, their details, the expanded decision-context pages, and message history. Both upper and lower boundaries were checked in each of those views. Content scrolling left list rows unchanged; list scrolling moved the selected row and its associated preview without answering or dismissing anything. Non-focused panes, the pane border, the navigation header, and footer coordinates were inert. PageUp restored detail reading position. All eight decisions remained unanswered, all seven inbox messages remained available, and all seven notices remained open. A `TERM=dumb` PTY with no injected mouse reports still navigated the decision list by keyboard.
+
+The isolated tmux check used tmux 3.8, an attached PTY with `TERM=xterm-256color` at 100×30, and tmux mouse mode enabled for synthetic SGR wheel events. Detail and list input were exercised in both directions through both boundaries; wheel movement did not submit a decision. After setting tmux mouse mode off, keyboard list navigation still worked. These PTY injections establish application behavior when SGR reports are delivered, not physical emulator support. The keyboard-only `TERM=dumb` case did not force a physical terminal's mouse-reporting mode off. Physical `st`, other emulator versions, mouse-reporting-disabled behavior on a physical terminal, and representative operator validation remain unverified. Help, search, and overview views were not in T-094 and remain unverified for wheel input. This evidence does not approve the proposed US-092 / SYS-085 V1 baseline.
+
+The original `tests/tmux_smoke.py` expected `Inbox:` after one `j` at 40×12, but the help view scrolls one visual line per key and `Inbox:` starts two lines below the initial viewport. The unchanged-`HEAD` archive reproduced that test failure with the same keyboard-help screen, confirming this was a stale test expectation rather than a product regression. The test now asserts the first key scrolls help without exposing `Inbox:`, then checks that a second key exposes it. The corrected smoke passed on both the task worktree and an unchanged-`HEAD` archive built with the corrected test script.
 
 ## Planned default instruction verification (T-045)
 
@@ -314,6 +318,18 @@ The local tmux test additionally checks a failed notice refresh at 40×12: the c
 ## Local decision and recovery slice (2026-11-10)
 
 `python3 tests/decision_slice.py` submitted a recommended decision over local ZeroMQ, started and killed a waiting CLI before an answer, restarted that waiter, and confirmed the recommendation in a pseudo-terminal. The waiter received the structured answer. After a service-process kill and restart, the original submission identity returned the same ID, conflicting content was rejected, a new waiter recovered the answer, and the database contained one request with that identity. This is automated local evidence; it does not demonstrate a real remote machine, OS crash or representative human operator.
+
+## Local decision retry conflict integrity (SYS-041 / T-041)
+
+`cargo test --locked --test slice durable_retry_and_single_answer` passed on the local Linux host over IPv4 loopback. The decision retry test now submits the original request, then retries its identity with a changed question and with changed options; both return `identity conflict`. After each conflict, a decision-history read compares the complete stored request with the original JSON. The same exact comparison passes after service-process termination/restart, and both changed-content conflicts are repeated after restart. Existing assertions also verify identical-content retry returns the original ID, only one pending request exists, one of eight competing answers succeeds, and the winning structured answer remains retrievable after restart.
+
+The test's service restart is a local service-process kill with the SQLite database left intact. It does not establish host OS-crash, power-loss or device-loss durability, remote behavior, multiple-service-instance behavior, or representative operator acceptance.
+
+## Local competing-answer retrieval consistency (SYS-036 / T-036)
+
+`cargo test --locked --test slice durable_retry_and_single_answer` passed on the local Linux host over IPv4 loopback. The test retains its eight-client answer race and asserts one winner and seven `request already answered` results. It now starts a waiter while the request is pending, kills and restarts that waiter, then compares the winning structured answer through `get`, decision history and the restarted waiter's output. After killing and restarting the service against the same SQLite database, it repeats the `get` and history comparisons and starts a new waiter; all three surfaces return the exact same structured answer.
+
+This is one serialized local service and an intact local database. It does not establish behavior across service instances, remote hosts or an OS crash/power loss. The neighboring SQLite and process-restart checks remain distinct from those failure modes.
 
 ## Clap and Ratatui migration (2026-11-10)
 

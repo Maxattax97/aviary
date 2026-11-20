@@ -26,7 +26,7 @@
 | SYS-055 | US-067 | V1 | T-055 (test) | V1-29 | Local Unicode resize evidence; broader acceptance open |
 | SYS-056 | US-068 | V1 | T-056 (test) | V1-30 | Local draft and interruption evidence; broader acceptance open |
 | SYS-057 | US-069 | V1 | T-057 (test) | V1-31 | Local target and concurrent-answer checks; broader validation open |
-| SYS-085 | US-092 | V1 proposed | T-094 (demonstration/test) | V1-32 | Proposed; terminal mouse-reporting support and behavior not verified |
+| SYS-085 | US-092 | V1 proposed | T-094 (demonstration/test) | V1-32 | Proposed baseline; direct PTY and tmux 3.8 synthetic SGR evidence; physical terminal support and operator validation open |
 | SYS-048 | US-060 | V1 | T-048 (test) | V1-22 | Planned / not implemented |
 | SYS-049 | US-061, US-060 | V1 | T-049 (test) | V1-22 | Planned / not implemented |
 | SYS-046 | US-058, US-029 | V1 | T-046 (test) | V1-12 | Local help and draft checks; platform matrix open |
@@ -55,12 +55,12 @@
 | SYS-033 | US-053 | V1 | T-033 (test) | V1-21 | Draft / not run |
 | SYS-034 | US-054 | Future | T-034 (test) | L-13 | Deferred / not run |
 | SYS-035 | US-054, US-020, US-021 | Future | T-035 (test) | L-14 | Deferred / not run |
-| SYS-036 | US-016, US-036, US-037 | V1 | T-036 (test) | SL-02, V1-16 | Partial / full acceptance not run |
+| SYS-036 | US-016, US-036, US-037 | V1 | T-036 (test) | SL-02, V1-16 | Local T-036 passes eight-client race; `get`, history, a waiter restarted before answer, and a fresh waiter after service-process restart agree; broader V1-16 acceptance remains open |
 | SYS-037 | US-055 | Future | T-037 (test) | L-15 | Deferred / not run |
 | SYS-038 | US-003; stakeholder clarification | V1 | T-038 (test) | V1-02 | Draft / not run |
 | SYS-039 | Stakeholder platform constraint | V1 | T-039 (demonstration) | V1-22 | Draft / not run |
 | SYS-040 | US-020, US-021; stakeholder clarification | V1 | T-040 (test) | V1-07 | Draft / not run |
-| SYS-041 | US-037; stakeholder clarification | V1 | T-041 (test) | SL-01, V1-15 | Partial / full acceptance not run |
+| SYS-041 | US-037; stakeholder clarification | V1 | T-041 (test) | SL-01, V1-15 | Local T-041 passes changed question/options conflict and original-request comparison before/after service-process restart; broader V1-15 remains open |
 | SYS-042 | US-037; stakeholder clarification | V1 | T-042 (test) | SL-01, V1-15 | Partial / full acceptance not run |
 | SYS-043 | Stakeholder deployment constraint | V1 | T-043 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
 | SYS-044 | US-042; stakeholder clarification | V1 | T-044 (test) | SL-02, SL-05, V1-19 | Partial / full acceptance not run |
@@ -200,6 +200,6 @@ Queue and deferral changes have local implementation and partial evidence; async
 | US-089 | No Aviary SYS requirement | T-092 (integration) | P-09; Firstmate-owned read-only supervision behavior; observed symptom, cause unconfirmed |
 | US-090 | SYS-083 plus Firstmate validation | T-091, T-092 | P-09; stage validation is Firstmate-owned and must reject malformed input before durable outbox staging |
 | US-091 | SYS-084 | T-093 | P-09; conflicts with explicit provisioning and immutable membership direction; setup and `all` semantics require decision |
-| US-092 | SYS-085 | T-094 | V1-32; proposed; terminal mouse-reporting support and focus/boundary behavior require validation |
+| US-092 | SYS-085 | T-094 | V1-32; proposed; implementation increment and local PTY/tmux checks recorded; physical terminal support and operator validation open |
 
 Every item in the 2026-11-18 notes and both handoffs is represented above or in the linked story/requirement/test rows. Handoff 19 traces to an integration test rather than an Aviary product requirement because it concerns Firstmate session ownership and wake prompts. Handoff 20 spans both Aviary protocol/display behavior and Firstmate pre-staging validation.

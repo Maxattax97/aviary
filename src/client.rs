@@ -980,6 +980,9 @@ struct View {
 impl View {
     fn mouse(&mut self, mouse: MouseEvent, width: u16, height: u16) -> Action {
         match mouse.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                self.mouse_scroll(mouse, width, height)
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 self.mouse_selection = None;
                 let position = Position::new(mouse.column, mouse.row);
@@ -1039,6 +1042,187 @@ impl View {
             }
             _ => Action::None,
         }
+    }
+
+    fn mouse_scroll(&mut self, mouse: MouseEvent, width: u16, height: u16) -> Action {
+        const SCROLL_STEP: usize = 3;
+
+        let down = match mouse.kind {
+            MouseEventKind::ScrollDown => true,
+            MouseEventKind::ScrollUp => false,
+            _ => return Action::None,
+        };
+
+        if self.busy
+            || self.help
+            || self.composer.is_some()
+            || self.suspended_instruction.is_some()
+            || self.editing
+            || self.priority_edit
+            || self.history_lookup.is_some()
+            || self.search.is_some()
+            || self.overview.is_some()
+            || width < 40
+            || height < 12
+        {
+            return Action::None;
+        }
+
+        if let Some(history) = &self.history {
+            if mouse.row == 0 || mouse.row >= height.saturating_sub(2) {
+                return Action::None;
+            }
+            let current = history.scroll.get();
+            let max = history.max_scroll.get();
+            let next = if down {
+                current.saturating_add(SCROLL_STEP).min(max)
+            } else {
+                current.saturating_sub(SCROLL_STEP)
+            };
+            if next == current {
+                return Action::None;
+            }
+            history.scroll.set(next);
+            self.mouse_start = None;
+            self.mouse_selection = None;
+            return Action::Redraw;
+        }
+
+        if let Some(page) = self.detail_page {
+            if mouse.row <= 1 || mouse.row >= height.saturating_sub(2) {
+                return Action::None;
+            }
+            let max_page = self
+                .current()
+                .map(|request| {
+                    detail_pages(&request.request, self.detail_option)
+                        .len()
+                        .saturating_sub(1)
+                })
+                .unwrap_or(0);
+            let next = if down {
+                page.saturating_add(1).min(max_page)
+            } else {
+                page.saturating_sub(1)
+            };
+            if next == page {
+                return Action::None;
+            }
+            self.detail_page = Some(next);
+            self.mouse_start = None;
+            self.mouse_selection = None;
+            return Action::Redraw;
+        }
+
+        let has_refresh = self.connection_unavailable
+            || if width < 60 {
+                self.poll_summary.is_some()
+            } else {
+                self.poll_error.is_some()
+            };
+        let has_status = self.busy
+            || self.status.is_some()
+            || self.suspended_instruction.is_some()
+            || self.suspended_answer.is_some();
+        let footer_height = 2
+            + u16::from(has_refresh && (has_status || self.draft_request_missing))
+            + u16::from(self.draft_request_missing && has_status);
+        let content_height = height.saturating_sub(1 + footer_height);
+        if mouse.row <= 1 || mouse.row >= content_height {
+            return Action::None;
+        }
+
+        let horizontal = width >= 70;
+        let list_width = if horizontal { width * 35 / 100 } else { width };
+        let list_height = if horizontal {
+            content_height.saturating_sub(1)
+        } else {
+            4
+        };
+        let list_pane = if horizontal {
+            mouse.column > 0
+                && mouse.column < list_width.saturating_sub(1)
+                && mouse.row < content_height
+        } else {
+            mouse.column > 0
+                && mouse.column < width.saturating_sub(1)
+                && mouse.row > 1
+                && mouse.row < list_height
+        };
+        let detail_pane = if horizontal {
+            mouse.column > list_width
+                && mouse.column < width.saturating_sub(1)
+                && mouse.row < content_height
+        } else {
+            mouse.column > 0
+                && mouse.column < width.saturating_sub(1)
+                && mouse.row > list_height + 1
+        };
+
+        if self.list_focus {
+            if !list_pane {
+                return Action::None;
+            }
+            let len = if self.inbox_view {
+                self.inbox.len()
+            } else if self.notice_view {
+                self.notices.len()
+            } else {
+                self.requests.len()
+            };
+            if len == 0 {
+                return Action::None;
+            }
+            let current = self.selected_index().min(len.saturating_sub(1));
+            let next = if down {
+                current
+                    .saturating_add(SCROLL_STEP)
+                    .min(len.saturating_sub(1))
+            } else {
+                current.saturating_sub(SCROLL_STEP)
+            };
+            if next == current {
+                return Action::None;
+            }
+            if self.inbox_view {
+                self.inbox_current = next;
+                self.inbox_page = 0;
+            } else if self.notice_view {
+                self.notice_current = next;
+                self.notice_page = 0;
+            } else {
+                self.current = next;
+                self.reset_selection();
+            }
+            self.mouse_start = None;
+            self.mouse_selection = None;
+            return Action::Redraw;
+        }
+
+        if !detail_pane {
+            return Action::None;
+        }
+        let current = self.detail_actual.get();
+        let max = self.detail_max.get();
+        let next = if down {
+            current.saturating_add(SCROLL_STEP).min(max)
+        } else {
+            current.saturating_sub(SCROLL_STEP)
+        };
+        if next == current {
+            return Action::None;
+        }
+        if self.inbox_view {
+            self.inbox_scroll.set(next);
+        } else if self.notice_view {
+            self.notice_scroll.set(next);
+        } else {
+            self.detail_scroll.set(next);
+            self.follow_answer = false;
+        }
+        self.mouse_start = None;
+        self.mouse_selection = None;
+        Action::Redraw
     }
 
     fn mouse_click(&mut self, mouse: MouseEvent, width: u16, height: u16) -> Action {
